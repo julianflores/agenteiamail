@@ -364,6 +364,20 @@ The working pattern is the inverse: `watch.sh` **pushes** into the session with
 The one piece that may need adapting to your harness version is the output payload
 of `session_start.py` — it is marked in the file.
 
+**Check the watcher can actually reach `openclaw`.** A systemd user service gets a
+minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
+invisible to it even though your shell finds it. `watch.sh` looks in the usual
+per-user locations and **says so on stderr if it finds nothing** — that message is
+in the error log the watcher itself tails, so it will reach you. If it appears, set
+the full path in the unit:
+
+```ini
+Environment=OPENCLAW=/home/you/.npm-global/bin/openclaw
+```
+
+Without this the watcher runs, the log fills, every check in §7 passes, and no
+notification is ever delivered.
+
 ---
 
 ## 7. Verification
