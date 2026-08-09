@@ -19,6 +19,15 @@ roster="$tmp/roster.txt"
 body="$tmp/body.txt"
 echo "hi" >"$body"
 
+fakebin="$tmp/bin"
+mkdir -p "$fakebin"
+cat >"$fakebin/himalaya" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$fakebin/himalaya"
+export PATH="$fakebin:$PATH"
+
 cat >"$roster" <<'EOF'
 # Comment that should never match.
 #
@@ -32,13 +41,8 @@ EOF
 
 pass=0; fail=0
 
-# Returns 0 only when the address got past the roster check. Sending itself is
-# expected to fail here (no configured account), so the exit code is what
-# matters, not success: send.sh uses 1 for a usage error and 2 for a blocked
-# recipient or a missing roster. Anything else means it reached the send.
-#
-# Matching on the word REFUSED instead would have called two correct refusals
-# failures, because send.sh phrases those two differently.
+# Returns 0 only when the address got past the roster check. A fake Himalaya is
+# first in PATH so the test never sends real mail on a configured machine.
 allowed() {
     "$SEND" "$1" "subject" "$body" >/dev/null 2>&1
     case $? in
