@@ -26,7 +26,7 @@ BACKOFF_MIN, BACKOFF_MAX = 5, 300
 
 # Optional: collapse GitHub notification subjects into something scannable.
 # Delete this and the branch in describe() if you do not get GitHub mail.
-GH_SUBJECT = re.compile(r"^\s*(?:Re:\s*)?\[([\w.\-]+/[\w.\-]+)\]\s*(.+?)\s*(?:\(([#!]\d+)\))?\s*$")
+GH_SUBJECT = re.compile(r"^\s*(?:Re:\s*)?\[([\w.\-]+/[\w.\-]+)\]\s*(.+?)\s*(?:\((?:(?:Issue|PR|Pull Request|Discussion)\s+)?([#!]\d+)\)\s*)?$")
 
 _stop = False
 
@@ -62,9 +62,10 @@ def decode_hdr(value):
     if not value:
         return ""
     try:
-        return str(make_header(decode_header(value))).replace("\n", " ").strip()
+        text = str(make_header(decode_header(value)))
     except Exception:
-        return str(value).replace("\n", " ").strip()
+        text = str(value)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def describe(sender, subject, date):
