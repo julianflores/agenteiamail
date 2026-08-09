@@ -9,7 +9,10 @@
 
 set -euo pipefail
 
-ROSTER="$(dirname "$0")/roster.txt"
+# The roster lives at the repository root, not beside this script. Resolve it
+# from here rather than from the caller's working directory, and allow an
+# override so a test can point somewhere else.
+ROSTER="${ROSTER:-$(cd "$(dirname "$0")/.." && pwd)/roster.txt}"
 ACCOUNT="agenteiamail"
 
 to=${1:?usage: send.sh <to> <subject> <body-file>}
@@ -18,7 +21,16 @@ bodyfile=${3:?missing body file}
 
 [ -f "$bodyfile" ] || { echo "no such body file: $bodyfile" >&2; exit 1; }
 
-if ! grep -qixF -- "$to" <(grep -vE '^\s*(#|$)' "$ROSTER"); then
+[ -f "$ROSTER" ] || { echo "no roster at $ROSTER — refusing to send" >&2; exit 2; }
+
+# Roster lines are "Name | email". Take the field after the last "|", strip
+# blanks, and match the whole thing exactly: -x so a substring cannot pass,
+# -F so nothing in an address is read as a pattern, -i because addresses are
+# case-insensitive. A line holding only an address still works.
+if ! grep -vE '^[[:space:]]*(#|$)' "$ROSTER" \
+     | sed 's/.*|//' \
+     | tr -d '[:blank:]' \
+     | grep -qixF -- "$to"; then
     echo "REFUSED: $to is not in $ROSTER" >&2
     echo "Add it deliberately, or ask your human to send this one." >&2
     exit 2
