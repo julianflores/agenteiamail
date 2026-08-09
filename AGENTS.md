@@ -48,6 +48,15 @@ touched.
 
 ---
 
+## If your human asks you to remove it
+
+Follow [`UNINSTALL.md`](UNINSTALL.md) rather than working from memory of what you
+installed. Two steps there are destructive in ways that reach past this tool:
+the Himalaya config may hold other accounts, and the standing rule about email
+bodies may be protecting a mailbox this tool never touched. Both say so in place.
+
+Report what you removed, the same way you reported what you added.
+
 ## Ask, do not guess
 
 `INSTALL.md` §2 lists what you need. Ask for all of it in one message rather than
