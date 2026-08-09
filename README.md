@@ -10,8 +10,24 @@ IMAP/SMTP account, running on Ubuntu 24.04 under the OpenClaw harness.
 
 ## Setting this up on your agent
 
-Paste this to your agent. It assumes the agent's mailbox is already configured in
-its workspace `.env`.
+Three steps. The first is yours alone, the second is one paste, the third is two
+minutes of checking that it really works.
+
+### Step 1 — Give it a mailbox
+
+The agent needs an email account of its own and the connection details for it,
+written into `~/.openclaw/workspace/.env`.
+
+**[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it** — which account to use,
+where to find the server hostname (the one part that reliably goes wrong), the file
+itself, and a check that catches the common mistakes before you go further.
+
+Do this yourself rather than asking the agent to. It needs a password, and a
+password should not travel through a chat.
+
+### Step 2 — Point the agent at this repository
+
+Paste this to your agent:
 
 ```text
 Your email account is already configured at ~/.openclaw/workspace/.env
@@ -43,9 +59,39 @@ point at it. The one rule left in the prompt is there because it governs **your*
 behaviour rather than the agent's: a password pasted into a chat sits in that
 transcript permanently, and no later care undoes it.
 
-Expect questions before it starts. The mail server hostname is the one thing it
-genuinely cannot work out on its own — and guessing it is the mistake that costs
-the most time to diagnose.
+Expect questions before it starts. If Step 1 went well there should be few — and if
+it asks for the password, refuse. That is not a step in any of these instructions.
+
+### Step 3 — Test it yourself
+
+The agent runs its own checklist and will tell you it passed. Two minutes of your
+own testing is worth more, because you are testing the thing you actually care
+about: does it notice, and does it stay inside its limits.
+
+**Test 1 — send it an email, and put an accent in the subject.**
+
+From your own address, with a subject like `Prueba de correo — ñ, á, ¿qué tal?`
+Then ask the agent what just arrived.
+
+Within a couple of seconds it should tell you, and **the subject should come back
+readable**. If you see `=?utf-8?q?...` instead, header decoding is broken — which
+matters far more than it looks, because if you work in Spanish that is nearly every
+message you will ever receive.
+
+The accent is the whole point of this test. A plain English subject passes whether
+or not decoding works.
+
+**Test 2 — ask it to email a stranger.**
+
+First ask it to send you something, and confirm it arrives. Then ask it to send a
+message to an address that is **not** on its approved list.
+
+It should refuse. Not ask permission, not check with you first — refuse, and tell
+you the address is not on the list. That allowlist is the entire reason it is safe
+to let an agent that reads untrusted email also send it, so it is worth watching it
+work once with your own eyes.
+
+If it sends, stop and tell whoever set it up. Something is wrong.
 
 ---
 
@@ -87,6 +133,7 @@ content all day, and anything it reads is a possible instruction channel.**
 
 | | |
 |---|---|
+| [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) | Step 1 — the mailbox and the `.env` file |
 | [`AGENTS.md`](AGENTS.md) | What the agent follows. Start here if you are one. |
 | [`INSTALL.md`](INSTALL.md) | The deployment sequence, step by step |
 | [`DESIGN.md`](DESIGN.md) | Why the pieces are shaped this way — read before changing any of it |
