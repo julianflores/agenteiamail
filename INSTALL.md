@@ -80,23 +80,43 @@ touch ~/.config/agenteiamail/env
 chmod 600 ~/.config/agenteiamail/env
 ```
 
-Keys are listed in [`.env.example`](.env.example). Fill them in that file's shape.
+Keys are listed in [`.env.example`](.env.example).
 
 **If your environment already keeps credentials somewhere** — commonly
-`~/.openclaw/workspace/.env` — do not move or rewrite that file. Point at it:
+`~/.openclaw/workspace/.env` — do not move, rewrite or copy that file. Point at it:
 
 ```bash
 python3 idle_listener.py --env ~/.openclaw/workspace/.env
 ```
 
-Two things must line up, and both fail loudly but only at runtime:
+**You do not need to add keys.** The listener reads either schema:
 
-- **Key names.** `connect()` requires the `AGENTEIAMAIL_*` names and exits 1 on a
-  missing one. Add the keys to the existing file rather than renaming them in code
-  — renaming leaves the next reader with a guide and a codebase that disagree.
-- **The systemd unit must pass the same `--env`.** If it does not, a hand-run test
-  succeeds while the service dies at startup with `no env file at ...`. Put the
-  flag in the unit even when the path is the default.
+| Field | This tool's name | OpenClaw workspace name |
+|---|---|---|
+| Address | `AGENTEIAMAIL_EMAIL` | `AGENT_EMAIL_ACCOUNT` |
+| Password | `AGENTEIAMAIL_PASSWORD` | the matching `AGENT_EMAIL_` key |
+| IMAP host | `AGENTEIAMAIL_IMAP_HOST` | `AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST` |
+| IMAP port | `AGENTEIAMAIL_IMAP_PORT` | `AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT` |
+
+Where both are set, `AGENTEIAMAIL_*` wins. Port defaults to 993 if absent.
+Duplicating values across the two schemas is the one thing to avoid — two copies
+of a hostname drift, and the one you are not looking at is the one that is wrong.
+
+**The systemd unit must pass the same `--env`.** If it does not, a hand-run test
+succeeds while the service dies at startup with `no env file at ...`. Put the flag
+in the unit even when the path is the default.
+
+### 3.1 If the listener exits complaining about the old schema
+
+An earlier version of the workspace `.env` named three keys after servers and
+stored **ports** in them — `AGENT_EMAIL_INCOMING_SERVER_IMAP=993` — and used
+`AGENT_EMAIL_HOST` for the mail *domain* rather than the server.
+
+The listener refuses to start on that, by design, and tells you which key to
+split. Read literally those names send you to the wrong host, and often to one the
+mail server's TLS certificate does not cover — which surfaces as an endless
+reconnect loop rather than an error, because a certificate failure arrives as a
+network error. Split them into `_HOST` and `_PORT` and it will start.
 
 Check the file's mode while you are there: `stat -c '%a %n' <path>`. If it is not
 `600`, say so to your human rather than fixing it silently — a credential file that
