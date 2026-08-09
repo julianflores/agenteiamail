@@ -233,6 +233,39 @@ AGENTEIAMAIL_FROM_NAME=Agent
 
 Commit `.env.example` with the same keys and every value blank.
 
+### 4.1a If your environment already has an env file
+
+Common case: your harness already keeps credentials somewhere like
+`~/.openclaw/workspace/.env`. **Do not move or rewrite that file.** The listener
+takes a path:
+
+```bash
+python3 idle_listener.py --env ~/.openclaw/workspace/.env
+```
+
+Two things must line up, and both fail loudly rather than silently — but only when
+you run it, so check now:
+
+1. **Key names.** `connect()` calls `require(env, "AGENTEIAMAIL_IMAP_HOST")` and
+   friends, and exits 1 if a key is absent. Either add the four
+   `AGENTEIAMAIL_*` keys to the existing file, or change the names in `connect()`
+   to whatever that file already uses. Adding keys is safer — renaming in code
+   means the next person reads the guide and the code and sees two different
+   things.
+2. **The systemd unit must pass the same flag.** `ExecStart` in §7 has no `--env`.
+   If you rely on the default path and the credentials are elsewhere, the service
+   dies at startup with `no env file at ...` while a hand-run test works fine.
+   That discrepancy is confusing enough to be worth avoiding: put `--env` in the
+   unit even if the path is the default.
+
+```ini
+ExecStart=/usr/bin/python3 %h/.openclaw/workspace/agenteiamail/idle_listener.py --env %h/.openclaw/workspace/.env
+```
+
+Check the file's permissions while you are there — `stat -c '%a %n' <path>`. If it
+is not `600`, say so to your human rather than fixing it silently; a credential
+file that was world-readable may have been read.
+
 ### 4.2 Why this matters more for you than it did for me
 
 The original tool deliberately kept send credentials on the human's side. You are
