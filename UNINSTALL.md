@@ -10,7 +10,38 @@ provider, which is the only step that cannot be undone from this machine.
 
 ---
 
+## 0. First, if you intend to reinstall
+
+**Copy your unit files out before touching anything.** They are the only working
+ones you have, and step 1 deletes them.
+
+```bash
+mkdir -p ~/agenteiamail-units-kept
+cp ~/.config/systemd/user/agenteiamail-*.service ~/agenteiamail-units-kept/ 2>/dev/null
+cp ~/.config/systemd/user/agenteiamail-*.timer   ~/agenteiamail-units-kept/ 2>/dev/null
+ls -1 ~/agenteiamail-units-kept/
+```
+
+**Note the clone URL too**, because step 6 deletes the repository and with it any
+memory of where it came from:
+
+```bash
+git -C ~/.openclaw/workspace/agenteiamail remote get-url origin
+```
+
 ## 1. Stop and remove the services
+
+**Take an inventory first.** The names below are the usual ones, not necessarily
+yours, and everything after this point is destructive:
+
+```bash
+systemctl --user list-unit-files | grep -i agentei
+```
+
+A full install has four: `idle.service`, `watch.service`, `logrotate.service` and
+`logrotate.timer`. The logrotate *service* is typically `static` — it has no
+`[Install]` section, so `disable` does nothing and it is simply deleted with the
+rest. That is expected, not an error.
 
 ```bash
 systemctl --user stop    agenteiamail-idle.service agenteiamail-watch.service
@@ -29,10 +60,6 @@ Confirm nothing is left:
 systemctl --user list-unit-files 'agenteiamail-*'    # expect no rows
 pgrep -af idle_listener.py                           # expect nothing
 ```
-
-**Names vary.** Yours may differ if the install named them otherwise — check
-`systemctl --user list-unit-files | grep -i agentei` before assuming these three
-are all of them.
 
 ## 2. Remove the credentials
 
@@ -69,7 +96,22 @@ only the `[accounts.agenteiamail]` block**, not the file.
 
 ```bash
 cp ~/.config/himalaya/config.toml ~/.config/himalaya/config.toml.bak.$(date +%F)
-# then edit, deleting only that block
+```
+
+Then delete the block. A reproducible way, rather than editing by eye — it removes
+from the `[accounts.agenteiamail]` header up to the next top-level `[` and leaves
+everything else untouched:
+
+```bash
+python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path.home() / ".config/himalaya/config.toml"
+text = p.read_text()
+out = re.sub(r'(?ms)^\[accounts\.agenteiamail(?:\.[^\]]+)?\].*?(?=^\[(?!accounts\.agenteiamail)|\Z)', '', text)
+p.write_text(out)
+print("removed" if out != text else "nothing matched — check the account name")
+PY
+
 himalaya account list       # every other account must still be there
 ```
 
@@ -85,6 +127,10 @@ being human decisions.
 **Leave it if the agent handles mail by any other route.** The rule is about
 reading untrusted content, not about this tool. Remove it only if this was the
 agent's only path to a mailbox.
+
+**And leave it if you are uninstalling in order to reinstall.** The rule is about
+to be true again in a few minutes, and removing it creates a window where the
+agent is reading mail without it.
 
 ## 6. Remove the repository
 
@@ -127,7 +173,9 @@ may be useful on its own.
 
 ```bash
 systemctl --user list-unit-files 'agenteiamail-*'   # no rows
-pgrep -af idle_listener.py                          # nothing
+pgrep -af "[i]dle_listener.py"                      # nothing — brackets stop
+                                                    # pgrep matching its own
+                                                    # command line
 ls ~/.config/agenteiamail 2>&1                      # no such file or directory
 ls ~/.local/state/agenteiamail 2>&1                 # no such file or directory
 himalaya account list                               # agenteiamail absent, others intact

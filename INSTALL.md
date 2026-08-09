@@ -154,6 +154,16 @@ mail server's TLS certificate does not cover — which surfaces as an endless
 reconnect loop rather than an error, because a certificate failure arrives as a
 network error. Split them into `_HOST` and `_PORT` and it will start.
 
+**Parse it, do not source it.** `. ~/.openclaw/workspace/.env` breaks on any value
+containing shell metacharacters, and passwords routinely have them. Read it as
+`KEY=VALUE` data — which is what `idle_listener.py` and `preflight.py` both do.
+
+**A mixed file is fine.** Resolution is per field, not per schema, so a `.env`
+holding host and ports as `AGENTEIAMAIL_*` and account and password as
+`AGENT_EMAIL_*` works without any tidying. Each field independently prefers the
+`AGENTEIAMAIL_*` name and falls back to the other. You do not need to make it
+consistent before it will run.
+
 Check the file's mode while you are there: `stat -c '%a %n' <path>`. If it is not
 `600`, say so to your human rather than fixing it silently — a credential file that
 was world-readable may already have been read.
@@ -328,6 +338,11 @@ Set up rotation too — `harness/rotate_logs.py` driven by a user timer. It uses
 
 `harness/watch.sh` and `harness/session_start.py` are in this repo and working.
 
+**`harness/watch_service.sh` is the wrapper a systemd unit should call**, not
+`watch.sh` directly. It works out the byte offset to resume from — the stored one,
+or the current log size on a first run — and then execs `watch.sh` with it. A
+template is in [`systemd/agenteiamail-watch.service`](systemd/agenteiamail-watch.service).
+
 **OpenClaw has no facility for consuming a script's stdout as an event stream** —
 there is no `--stream-command` in its cron. Do not go looking for one; that search
 has already been done and it is a dead end.
@@ -371,6 +386,10 @@ echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt
 systemctl --user restart agenteiamail-idle.service
 tail -2 ~/.local/state/agenteiamail/idle.err.log  # expect "resuming from uid N"
 ```
+
+**A restart can take up to 30 seconds.** The listener is usually blocked waiting
+on the IMAP socket, and it only notices the stop signal when that wait ends. It is
+finishing, not hanging — `systemctl` returns when it is done.
 
 **Test 7 is the one that matters.** *"resuming from uid N"* rather than *"baseline
 uid N"* proves state persistence. If it says baseline after a restart, the state
