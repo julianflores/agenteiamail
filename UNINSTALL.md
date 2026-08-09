@@ -86,6 +86,14 @@ agent's only path to a mailbox.
 rm -rf ~/.openclaw/workspace/agenteiamail
 ```
 
+**`roster.txt` lives in there and is not in git**, so this deletes it and no
+`git clone` brings it back. If the list took any effort to assemble, copy it out
+first:
+
+```bash
+cp ~/.openclaw/workspace/agenteiamail/roster.txt ~/roster.txt.kept
+```
+
 Do this **last**. Everything above references paths inside it, and removing it
 first leaves you working from memory.
 

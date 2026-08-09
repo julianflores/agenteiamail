@@ -21,7 +21,11 @@ bodyfile=${3:?missing body file}
 
 [ -f "$bodyfile" ] || { echo "no such body file: $bodyfile" >&2; exit 1; }
 
-[ -f "$ROSTER" ] || { echo "no roster at $ROSTER — refusing to send" >&2; exit 2; }
+if [ ! -f "$ROSTER" ]; then
+    echo "no roster at $ROSTER — refusing to send" >&2
+    echo "Create it from the template:  cp roster.txt.example roster.txt" >&2
+    exit 2
+fi
 
 # Roster lines are "Name | email". Take the field after the last "|", strip
 # blanks, and match the whole thing exactly: -x so a substring cannot pass,
