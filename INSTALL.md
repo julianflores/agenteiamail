@@ -41,7 +41,10 @@ hour of setup.
 ```bash
 systemctl --user status >/dev/null 2>&1 && echo "systemd --user: OK" || echo "systemd --user: NOT AVAILABLE"
 command -v loginctl >/dev/null && echo "loginctl: present" || echo "loginctl: MISSING"
-command -v logrotate >/dev/null && echo "logrotate: present" || echo "logrotate: absent — harness/rotate_logs.py covers it"
+# logrotate usually lives in /usr/sbin, which is often not on a user PATH,
+# so `command -v` alone reports it missing on a machine that has it.
+command -v logrotate >/dev/null 2>&1 || [ -x /usr/sbin/logrotate ] || [ -x /sbin/logrotate ] \
+  && echo "logrotate: present" || echo "logrotate: absent — harness/rotate_logs.py covers it"
 ```
 
 **If `systemd --user` is not available, stop and tell your human.** If OpenClaw runs
@@ -203,18 +206,71 @@ whose config schema you are writing against.
 
 ### 4.3 Configure
 
-**Check the schema against your installed version.** Himalaya's TOML layout has
-changed across releases, and instructions written for the wrong major version fail
-confusingly. Prefer `himalaya account configure` if your version has the wizard.
+**Check your version first — the schema is completely different across majors.**
 
-**Use a command-based secret, not the keyring.** On a headless box there is no
-unlocked keyring, and a systemd service failing to reach `secret-service` looks
-exactly like an auth error. A `600` file read by a command works everywhere and
-survives reboot:
+```bash
+himalaya --version
+```
+
+There is no `himalaya account configure` in v2; the wizard is bare `himalaya`.
+Both schemas below were verified against a running binary, not read from docs.
+
+### v2.x
+
+Backends are named sections, the host and port are one URL, and TLS is implied by
+the scheme. Auth is SASL.
 
 ```toml
-backend.auth.command = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+[accounts.agenteiamail]
+email = "agent@example.com"
+default = true
+
+[accounts.agenteiamail.imap]
+server = "imaps://mail.example.com:993"
+[accounts.agenteiamail.imap.sasl.plain]
+authcid = "agent@example.com"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+
+[accounts.agenteiamail.smtp]
+server = "smtps://mail.example.com:465"
+[accounts.agenteiamail.smtp.sasl.plain]
+authcid = "agent@example.com"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
 ```
+
+Confirm both backends registered — an empty `BACKENDS` column means the config
+parsed but nothing is wired, which then fails later with
+`No backend matching 'auto' is configured`:
+
+```bash
+himalaya account list        # BACKENDS must read "imap, smtp"
+himalaya account check -a agenteiamail
+```
+
+### v1.x
+
+Flat `backend` keys, separate host and port, explicit encryption. **The secret key
+is `auth.cmd`, not `auth.command`** — `command` is silently ignored.
+
+```toml
+[accounts.agenteiamail]
+email = "agent@example.com"
+backend = "imap"
+imap-host = "mail.example.com"
+imap-port = 993
+imap-ssl = true
+imap-login = "agent@example.com"
+imap-auth = "passwd"
+imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+```
+
+Field names moved between 1.x releases too, so if a key is rejected, the error
+names the ones it expected — that is the fastest way to the right shape.
+
+**Use a command-based secret in either version, not the keyring.** On a headless
+box there is no unlocked keyring, and a systemd service failing to reach
+`secret-service` looks exactly like an auth error. A `600` file read by a command
+works everywhere and survives reboot.
 
 ### 4.4 Prove it
 
@@ -228,8 +284,20 @@ Do not continue until that returns real output.
 
 ## 5. Run the listener as a service
 
-Create `~/.config/systemd/user/agenteiamail-idle.service` pointing at
-`scripts/idle_listener.py` in your clone. Three things it must get right:
+**Templates are in [`systemd/`](systemd/).** Copy them and replace the two
+placeholders — `REPO` with the absolute path to your clone, `ENVFILE` with your
+credentials file. systemd does not expand `~`, so use `%h` or a full path.
+
+```bash
+install -Dm644 systemd/agenteiamail-idle.service       ~/.config/systemd/user/
+install -Dm644 systemd/agenteiamail-logrotate.service  ~/.config/systemd/user/
+install -Dm644 systemd/agenteiamail-logrotate.timer    ~/.config/systemd/user/
+# then edit the placeholders in the two .service files
+```
+
+They were added after a clean-room reinstall showed that composing them from the
+prose below took real work and got no help from the repository. The prose stays,
+because it is what the templates are for:
 
 - `Restart=always`, `RestartSec=10`
 - `StandardOutput=append:` the event log, `StandardError=append:` the error log —

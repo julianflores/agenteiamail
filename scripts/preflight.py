@@ -4,10 +4,48 @@
 import getpass
 import imaplib
 import os
+import socket
 import ssl
 from pathlib import Path
 
 ENV = Path(os.environ.get("AGENTEIAMAIL_ENV", "~/.config/agenteiamail/env")).expanduser()
+
+# Both key schemas, same order of preference as idle_listener.py. INSTALL.md tells
+# you to point at an existing workspace .env, so this has to read one.
+KEYS = {
+    "host": ("AGENTEIAMAIL_IMAP_HOST", "AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST"),
+    "port": ("AGENTEIAMAIL_IMAP_PORT", "AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT"),
+    "user": ("AGENTEIAMAIL_EMAIL", "AGENT_EMAIL_ACCOUNT"),
+    "password": ("AGENTEIAMAIL_PASSWORD", "AGENT_EMAIL_PASSWORD"),
+}
+
+LEGACY_AMBIGUOUS = (
+    "AGENT_EMAIL_INCOMING_SERVER_IMAP",
+    "AGENT_EMAIL_OUTGOING_SERVER_SMTP",
+    "AGENT_EMAIL_INCOMING_SERVER_POP",
+)
+
+
+def lookup(env, field):
+    """First non-empty value among the accepted names, or None to prompt."""
+    for key in KEYS[field]:
+        value = env.get(key, "").strip()
+        if value:
+            return value
+    return None
+
+
+def ask(prompt, secret=False):
+    """Prompt, but fail with a sentence rather than a traceback when there is
+    no terminal. An agent runs this non-interactively, and EOFError reads as a
+    broken tool instead of a missing setting."""
+    try:
+        return getpass.getpass(prompt) if secret else input(prompt).strip()
+    except EOFError:
+        print()
+        print(f"needed {prompt.strip()} and there is no terminal to ask on.")
+        print(f"Put it in {ENV}, or set AGENTEIAMAIL_ENV to the file that has it.")
+        raise SystemExit(1)
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -24,20 +62,63 @@ def load_env(path: Path) -> dict[str, str]:
 
 def main() -> int:
     env = load_env(ENV)
-    host = env.get("AGENTEIAMAIL_IMAP_HOST") or input("IMAP host: ").strip()
-    port = int(env.get("AGENTEIAMAIL_IMAP_PORT") or input("IMAP port [993]: ").strip() or 993)
-    user = env.get("AGENTEIAMAIL_EMAIL") or input("username (full email): ").strip()
-    pw = env.get("AGENTEIAMAIL_PASSWORD") or getpass.getpass("password: ")
 
-    c = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=30)
-    c.login(user, pw)
+    # Named for a server, holding a port. Say so rather than dialling it.
+    for key in LEGACY_AMBIGUOUS:
+        if env.get(key, "").strip().isdigit():
+            print(f"{key} holds a port, not a hostname — that is the old schema.")
+            print(f"Split it into {key}_HOST and {key}_PORT.")
+            return 1
+
+    host = lookup(env, "host") or ask("IMAP host: ")
+    if host.isdigit():
+        print(f"IMAP host is {host!r}, which is a port, not a hostname")
+        return 1
+    port = int(lookup(env, "port") or ask("IMAP port [993]: ") or 993)
+    user = lookup(env, "user") or ask("username (full email): ")
+    pw = lookup(env, "password") or ask("password: ", secret=True)
+
+    print(f"checking {user} at {host}:{port} (from {ENV if env else 'prompts'})")
+
+    # This is the first thing a new install runs. Each failure gets a sentence
+    # saying what to do, because a traceback here reads as "the tool is broken"
+    # rather than "the hostname is wrong".
+    try:
+        c = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=30)
+    except ssl.SSLCertVerificationError as exc:
+        print(f"TLS certificate does not cover {host!r}: {exc}")
+        print("Mail servers often present a certificate for the underlying host")
+        print("rather than for mail.<yourdomain>. Read the names it does cover:")
+        print(f"  openssl s_client -connect {host}:{port} -servername {host} </dev/null \\")
+        print("    2>/dev/null | openssl x509 -noout -subject -ext subjectAltName")
+        return 1
+    except socket.gaierror:
+        print(f"cannot resolve {host!r} — check the hostname")
+        return 1
+    except (OSError, socket.timeout) as exc:
+        print(f"cannot reach {host}:{port} — {exc}")
+        return 1
+
+    try:
+        c.login(user, pw)
+    except imaplib.IMAP4.error as exc:
+        print(f"login rejected for {user}: {exc}")
+        print("If the provider offers app-passwords, use one rather than the account password.")
+        return 1
+
     caps = [x.decode() if isinstance(x, bytes) else str(x) for x in c.capabilities]
-    print("IDLE advertised:", "IDLE" in caps)
+    idle = "IDLE" in caps
+    print("IDLE advertised:", idle)
     c.select("INBOX")
     typ, data = c.status("INBOX", "(UIDVALIDITY MESSAGES)")
     print("status:", data)
     c.logout()
-    return 0 if "IDLE" in caps and typ == "OK" else 1
+
+    if not idle:
+        print()
+        print("This server does not advertise IDLE. agenteiamail is push-based and")
+        print("does not fall back to polling — stop here and tell your human.")
+    return 0 if idle and typ == "OK" else 1
 
 
 if __name__ == "__main__":

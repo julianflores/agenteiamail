@@ -38,8 +38,14 @@ are all of them.
 
 ```bash
 rm -f ~/.config/agenteiamail/env
+rm -f ~/.config/agenteiamail/logrotate.conf
 rmdir ~/.config/agenteiamail 2>/dev/null
 ```
+
+The install may have put a `logrotate.conf` beside the credentials. Leaving it
+behind makes the `rmdir` fail silently and the final check at the bottom of this
+page report a directory that should be gone — found by a real uninstall, not by
+reading.
 
 If your credentials live in a shared file instead — commonly
 `~/.openclaw/workspace/.env` — **do not delete it.** Other things use it. Remove
