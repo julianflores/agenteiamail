@@ -1,5 +1,7 @@
 # Setting up the mailbox file
 
+**English** · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
+
 Step 1 of [the README](README.md#setting-this-up-on-your-agent). You do this
 yourself, before involving the agent, because it needs a password and a password
 should not travel through a chat.

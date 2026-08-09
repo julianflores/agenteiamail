@@ -25,7 +25,7 @@ tercero son dos minutos para comprobar que funciona de verdad.
 El agente necesita su propia cuenta de correo, y los datos de conexión de esa
 cuenta escritos en `~/.openclaw/workspace/.env`.
 
-**[MAILBOX_SETUP.md](MAILBOX_SETUP.md) lo explica paso a paso**: qué cuenta usar,
+**[MAILBOX_SETUP.es-ES.md](MAILBOX_SETUP.es-ES.md) lo explica paso a paso**: qué cuenta usar,
 dónde encontrar el nombre del servidor (la parte que falla siempre), cómo queda el
 fichero, y una comprobación que detecta los errores habituales antes de seguir.
 
@@ -132,7 +132,7 @@ Estos documentos están en inglés.
 
 | | |
 |---|---|
-| [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) | Paso 1 — el buzón y el fichero `.env` |
+| [`MAILBOX_SETUP.es-ES.md`](MAILBOX_SETUP.es-ES.md) | Paso 1 — el buzón y el fichero `.env` |
 | [`AGENTS.md`](AGENTS.md) | Lo que sigue el agente. Empieza aquí si eres uno. |
 | [`INSTALL.md`](INSTALL.md) | La secuencia de instalación, paso a paso |
 | [`DESIGN.md`](DESIGN.md) | Por qué las piezas son así — léelo antes de cambiar nada |
