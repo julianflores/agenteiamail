@@ -1,5 +1,7 @@
 # agenteiamail
 
+**English** · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · [Português (BR)](README.pt-BR.md)
+
 Push-style email for an AI agent. It finds out about new mail within about a
 second, without polling, and can read and send under a recipient allowlist.
 
