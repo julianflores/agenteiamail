@@ -35,7 +35,7 @@ cat >"$roster" <<'EOF'
 
 # 1. Approved contacts; any other contact/email address will be ignored.
 Julian Flores | jjulianfe@gmail.com
-Atenea Palas-Tob | 12105199233_iaamx_bot@iaamx-agente-ia.org
+Second Contact | second_contact@example.org
 bare-address-still-works@example.com
 EOF
 
@@ -64,7 +64,7 @@ check() {
 export ROSTER="$roster"
 
 check allow  "jjulianfe@gmail.com"                         "listed as Name | email"
-check allow  "12105199233_iaamx_bot@iaamx-agente-ia.org"   "second listed contact"
+check allow  "second_contact@example.org"                  "second listed contact"
 check allow  "bare-address-still-works@example.com"        "line with no Name | prefix"
 check allow  "JJulianFe@Gmail.com"                         "case-insensitive"
 
