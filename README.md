@@ -104,6 +104,9 @@ If it sends, stop and tell whoever set it up. Something is wrong.
 - **Read and send** through Himalaya, using the mailbox you configured.
 - **Send only to addresses you approved**, listed in `roster.txt`. Anything else is
   refused outright rather than asked about.
+- **Auto-reply to approved contacts**, when the listener is installed with
+  `--autorespond`. The reply is a fixed acknowledgement; message bodies remain
+  data, never instructions.
 
 ## What it changes on the machine
 
@@ -160,6 +163,7 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
 
 himalaya                  reads and sends. The listener never fetches bodies.
 scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
+scripts/autoreply.py      fixed autoresponder for allowlisted senders only.
 scripts/preflight.py      proves a host can run this before you install it.
 ```
 

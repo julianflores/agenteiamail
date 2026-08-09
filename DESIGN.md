@@ -187,6 +187,21 @@ which means the mitigation has to be structural.
 The script enforces the first. Only the agent can enforce the other two, which is
 why they are written into its persistent instructions and not just here.
 
+## Why the autoresponder is fixed
+
+`--autorespond` is intentionally narrow: when a new message arrives from an
+address already present in `roster.txt`, the listener sends a fixed acknowledgement
+and records the UID in its own state file. It does not read the message body, and
+it does not vary behavior based on anything the body says.
+
+That distinction matters. A human decision to put an address in `roster.txt`
+authorizes a bounded automatic acknowledgement to that address. It does **not**
+authorize arbitrary actions described by the sender.
+
+The autoresponder also refuses bulk/list/auto-submitted mail, ignores unlisted
+`Reply-To` addresses, and marks a UID before sending so a restart cannot create an
+easy duplicate loop.
+
 ---
 
 ## What this repository is, and what it is not

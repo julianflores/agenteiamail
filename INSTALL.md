@@ -324,6 +324,8 @@ because it is what the templates are for:
 - `StandardOutput=append:` the event log, `StandardError=append:` the error log —
   **they must be separate files** (see DESIGN.md)
 - `--env` on `ExecStart` if your credentials are not at the default path
+- `--autorespond` on `ExecStart` if this install should send fixed automatic
+  acknowledgements to senders listed in `roster.txt`
 
 ```bash
 mkdir -p ~/.local/state/agenteiamail
@@ -403,6 +405,9 @@ tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
 # 6. The allowlist behaves — 11 cases, including substring and prefix attacks
 scripts/test_roster.sh
+
+# 6a. The autoresponder is fixed and roster-gated
+python3 scripts/test_autoreply.py
 
 # 6b. And against your real roster: a stranger is refused with exit 2
 echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"

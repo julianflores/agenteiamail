@@ -9,13 +9,15 @@ on stdout.
 One stdout line == one harness notification. Output is line-buffered and never
 contains credentials.
 
-Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once]
+Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once] [--autorespond]
 Exit:   0 clean shutdown · 1 configuration or login failure (not retryable)
 """
 
 import argparse, email, email.utils, imaplib, json, os, pathlib, re
 import select, signal, socket, ssl, sys, time
 from email.header import decode_header, make_header
+
+from autoreply import DEFAULT_ACCOUNT, DEFAULT_ROSTER, DEFAULT_STATE as DEFAULT_AUTOREPLY_STATE, maybe_autoreply
 
 DEFAULT_ENV   = "~/.config/agenteiamail/env"
 DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
@@ -196,7 +198,7 @@ def newest_uid(conn):
 
 
 def fetch_since(conn, last_uid):
-    """[(uid, line)] for every message with UID > last_uid."""
+    """[(uid, line, headers)] for every message with UID > last_uid."""
     typ, data = conn.uid("search", None, f"UID {last_uid + 1}:*")
     if typ != "OK" or not data or not data[0]:
         return []
@@ -211,7 +213,8 @@ def fetch_since(conn, last_uid):
         msg = email.message_from_bytes(payload[0][1])
         out.append((uid, describe(decode_hdr(msg.get("From")),
                                   decode_hdr(msg.get("Subject")),
-                                  msg.get("Date", ""))))
+                                  msg.get("Date", "")),
+                    msg))
     return out
 
 
@@ -247,7 +250,7 @@ def idle(conn, timeout):
                 break
 
 
-def run(env_path, mailbox, once, state_path):
+def run(env_path, mailbox, once, state_path, autorespond, roster_path, autoreply_state, account):
     env = load_env(env_path)
     backoff = BACKOFF_MIN
     state = load_state(state_path)
@@ -284,8 +287,11 @@ def run(env_path, mailbox, once, state_path):
             pending = fetch_since(conn, last_uid)
             if len(pending) > 1:
                 emit(f"[mail] catching up — {len(pending)} messages arrived while offline")
-            for uid, line in pending:
+            for uid, line, headers in pending:
                 emit(line)
+                if autorespond:
+                    status, detail = maybe_autoreply(uid, headers, env, roster_path, autoreply_state, account)
+                    log(f"autoreply {status} for uid {uid}: {detail}")
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
@@ -297,8 +303,11 @@ def run(env_path, mailbox, once, state_path):
                 # mail landing between DONE and the next IDLE produces no EXISTS we
                 # can see, and would sit unnoticed until the *next* message arrived.
                 found = False
-                for uid, line in fetch_since(conn, last_uid):
+                for uid, line, headers in fetch_since(conn, last_uid):
                     emit(line)
+                    if autorespond:
+                        status, detail = maybe_autoreply(uid, headers, env, roster_path, autoreply_state, account)
+                        log(f"autoreply {status} for uid {uid}: {detail}")
                     last_uid = uid
                     found = True
                     # Persist per message, not per batch: a crash mid-batch must
@@ -332,6 +341,14 @@ def main():
     p.add_argument("--once", action="store_true", help="exit after the first batch")
     p.add_argument("--state", default=DEFAULT_STATE,
                    help="where to persist the last reported UID ('none' to disable)")
+    p.add_argument("--autorespond", action="store_true",
+                   help="send fixed automatic replies to allowlisted senders in roster.txt")
+    p.add_argument("--roster", default=str(DEFAULT_ROSTER),
+                   help="allowlist for automatic replies and sends")
+    p.add_argument("--autoreply-state", default=DEFAULT_AUTOREPLY_STATE,
+                   help="where to persist automatic-reply attempts")
+    p.add_argument("--account", default=DEFAULT_ACCOUNT,
+                   help="Himalaya account used for automatic replies")
     args = p.parse_args()
 
     signal.signal(signal.SIGTERM, _handle_stop)
@@ -341,7 +358,16 @@ def main():
     if not env_path.is_file():
         log(f"no env file at {env_path}")
         return 1
-    return run(env_path, args.mailbox, args.once, pathlib.Path(args.state).expanduser())
+    return run(
+        env_path,
+        args.mailbox,
+        args.once,
+        pathlib.Path(args.state).expanduser(),
+        args.autorespond,
+        pathlib.Path(args.roster).expanduser(),
+        pathlib.Path(args.autoreply_state).expanduser(),
+        args.account,
+    )
 
 
 if __name__ == "__main__":

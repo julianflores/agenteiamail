@@ -11,7 +11,7 @@ Documentation=file:///path/to/agenteiamail/DESIGN.md
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /path/to/agenteiamail/scripts/idle_listener.py --env /path/to/env
+ExecStart=/usr/bin/python3 /path/to/agenteiamail/scripts/idle_listener.py --env /path/to/env --autorespond
 WorkingDirectory=/path/to/agenteiamail
 
 # The listener retries with backoff on its own, so this only matters if the
