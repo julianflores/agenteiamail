@@ -423,7 +423,14 @@ BACKOFF_MIN, BACKOFF_MAX = 5, 300
 
 # Optional: collapse GitHub notification subjects into something scannable.
 # Delete this and the branch in describe() if you do not get GitHub mail.
-GH_SUBJECT = re.compile(r"^\s*(?:Re:\s*)?\[([\w.\-]+/[\w.\-]+)\]\s*(.+?)\s*(?:\(([#!]\d+)\))?\s*$")
+#
+# The trailing group must allow the word GitHub actually writes — "Issue #9",
+# "PR #14" — not a bare "#9". The original omitted it, so the ref never captured
+# and the branch using it was dead code for a week before anyone noticed.
+GH_SUBJECT = re.compile(
+    r"^\s*(?:Re:\s*)?\[([\w.\-]+/[\w.\-]+)\]\s*(.+?)"
+    r"\s*(?:\((?:Issue|PR|Pull Request|Discussion)?\s*([#!]\d+)\)\s*)?$"
+)
 
 _stop = False
 
@@ -459,9 +466,14 @@ def decode_hdr(value):
     if not value:
         return ""
     try:
-        return str(make_header(decode_header(value))).replace("\n", " ").strip()
+        text = str(make_header(decode_header(value)))
     except Exception:
-        return str(value).replace("\n", " ").strip()
+        text = str(value)
+    # RFC 5322 folds long headers onto continuation lines beginning with
+    # whitespace. Replacing only "\n" leaves the CR and the leading tab embedded
+    # in the subject, and it surfaces mid-line in the notification. Collapse every
+    # run of whitespace, not just newlines.
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def describe(sender, subject, date):
@@ -816,17 +828,27 @@ plus a `.timer` with `OnCalendar=daily`. Enable both with `systemctl --user enab
 
 ## 8. Harness integration (OpenClaw)
 
-Two pieces. The logic below is complete and correct; **the parts that must match
-OpenClaw's own contract are the output payload in `session_start.py` and the way
-you register `watch.sh` as an event source.** I do not know OpenClaw's exact
-schema — look it up and adapt those two touchpoints only. Everything else is
-harness-independent.
+Two pieces.
+
+**Read this before you go looking for a streaming primitive.** This section
+originally assumed the harness would consume a script's stdout as an event stream,
+the way Claude Code's Monitor tool does. **OpenClaw does not have that** — there is
+no `--stream-command` in its cron, and searching for one is a dead end. Verified on
+2026-08-09 by the first agent to build this.
+
+What works instead is the inverse: **the watch script pushes events into the
+session itself**, using `openclaw system event --mode now`. The script is an active
+producer, not a passive stream. §8.1 below is written that way and is known-good.
+
+The one piece still to adapt is the **output payload** of `session_start.py`, which
+depends on your harness's hook contract. It is marked in §8.2.
 
 ### 8.1 `harness/watch.sh` — the live stream
 
 ```bash
 #!/usr/bin/env bash
-# Emits one line per new-mail notification. Each stdout line becomes one event.
+# Emits one line per new-mail notification, and pushes each one into the agent
+# session via `openclaw system event`.
 #
 # Takes a byte offset rather than starting at end-of-file: the session-start hook
 # has already reported the log up to that point, and anything landing between the
@@ -846,15 +868,28 @@ case "$start" in '' | *[!0-9]*) start=0 ;; esac
 
 mkdir -p "$STATE_DIR"
 
+OPENCLAW=${OPENCLAW:-$(command -v openclaw)}
+
 # Arming the watch is what acknowledges the backlog the hook just replayed.
 # Written up front so a session that arms and sees no mail does not make the next
 # session replay the same messages.
 printf '%s' "$start" >"$OFFSET_FILE"
 
+# Push one line into the live session. `|| true` because a failed injection must
+# never kill the watcher — losing one notification is recoverable, losing the
+# watcher is not.
+emit_system_event() {
+    local line=$1
+    if [ -x "$OPENCLAW" ]; then
+        "$OPENCLAW" system event --mode now --text "$line" >/dev/null 2>&1 || true
+    fi
+}
+
 # New mail.
 tail -c "+$((start + 1))" -F "$LOG" 2>/dev/null | while IFS= read -r line; do
     [ -n "$line" ] || continue
     printf '%s\n' "$line"
+    emit_system_event "$line"
     wc -c <"$LOG" 2>/dev/null | tr -d ' ' >"$OFFSET_FILE"
 done &
 
@@ -876,6 +911,9 @@ wait
 - `grep --line-buffered` and `sed -u`. Without them each stage buffers 4 KB and
   your notifications arrive in batches, hours late. **Every stage of a pipe must
   flush per line or the whole thing is useless.**
+- **`emit_system_event` swallows its own failures.** If the injection call fails,
+  the watcher must keep going. One missed notification is recoverable; a watcher
+  that exited because `openclaw` returned non-zero is not, and it fails silently.
 - **The second tail is not optional.** It watches the error log for faults. If you
   only watch the success path, a dead listener produces silence — and silence looks
   exactly like a quiet mailbox. That is the single worst failure mode in this
