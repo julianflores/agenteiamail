@@ -13,7 +13,7 @@ STATE_DIR="$HOME/.local/state/agenteiamail"
 LOG="$STATE_DIR/mail.log"
 ERR="$STATE_DIR/idle.err.log"
 OFFSET_FILE="$STATE_DIR/seen.offset"
-OPENCLAW="${OPENCLAW:-/home/julianflores/.npm-global/bin/openclaw}"
+OPENCLAW="${OPENCLAW:-$(command -v openclaw 2>/dev/null || printf '%s' /home/julianflores/.npm-global/bin/openclaw)}"
 
 start=${1:-0}
 case "$start" in '' | *[!0-9]*) start=0 ;; esac
