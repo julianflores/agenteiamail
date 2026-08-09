@@ -36,7 +36,7 @@ preflight.py              proves a host can run this before you install it.
 
 ## Runtime paths on this host
 
-- Repo: `/home/julianflores/.openclaw/workspace/agenteiamail`
+- Repo: `~/.openclaw/workspace/agenteiamail`
 - Secret env: `~/.config/agenteiamail/env` — mode `600`, never committed
 - Event state: `~/.local/state/agenteiamail/`
 - User service: `~/.config/systemd/user/agenteiamail-idle.service`
