@@ -1,8 +1,8 @@
 # Configurar el archivo del buzón
 
-[English](MAILBOX_SETUP.md) · **Español (MX)** · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
+[English](../MAILBOX_SETUP.md) · **Español (MX)** · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
 
-> Traducido de [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) en el commit `b82b480`. Si
+> Traducido de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) en el commit `b82b480`. Si
 > algo aquí contradice al original en inglés, **gana el inglés**.
 
 Paso 1 del [README](README.es-MX.md#cómo-configurarlo-en-tu-agente). Esto lo haces

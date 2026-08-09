@@ -1,8 +1,8 @@
 # Configurar o arquivo da caixa de e-mail
 
-[English](MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · **Português (BR)**
+[English](../MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · **Português (BR)**
 
-> Traduzido de [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) no commit `b82b480`. Se algo
+> Traduzido de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) no commit `b82b480`. Se algo
 > aqui contradisser o original em inglês, **o inglês prevalece**.
 
 Passo 1 do [README](README.pt-BR.md#como-configurar-no-seu-agente). Isto é você
