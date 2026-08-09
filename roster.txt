@@ -8,3 +8,5 @@
 
 
 # 1. Approved contacts; any other contact/email address will be ignored.
+Julian Flores | jjulianfe@gmail.com
+Metis Claude-Tob | metis.claude.tob@gmail.com
