@@ -1,4 +1,4 @@
-# Template. Replace REPO with the absolute path to your clone.
+# Template. Replace /path/to/agenteiamail with your clone's absolute path.
 [Unit]
 Description=Rotate agenteiamail logs
 
@@ -6,4 +6,4 @@ Description=Rotate agenteiamail logs
 Type=oneshot
 # copytruncate, not rename: systemd holds the log open in append mode, and a
 # rename sends every subsequent line to a file nobody reads. Silently.
-ExecStart=/usr/bin/python3 REPO/harness/rotate_logs.py
+ExecStart=/usr/bin/python3 /path/to/agenteiamail/harness/rotate_logs.py

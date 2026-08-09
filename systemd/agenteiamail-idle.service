@@ -1,5 +1,5 @@
-# Template. Replace REPO with the absolute path to your clone, and ENVFILE with
-# the credentials file — commonly ~/.config/agenteiamail/env or an existing
+# Template. Replace /path/to/agenteiamail with your clone's absolute path, and
+# /path/to/env with your credentials file — commonly ~/.config/agenteiamail/env or an existing
 # workspace .env. systemd does not expand ~, so write %h or a full path.
 #
 #   install -Dm644 systemd/agenteiamail-idle.service ~/.config/systemd/user/
@@ -7,12 +7,12 @@
 
 [Unit]
 Description=agenteiamail listener (IMAP IDLE)
-Documentation=file://REPO/DESIGN.md
+Documentation=file:///path/to/agenteiamail/DESIGN.md
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 REPO/scripts/idle_listener.py --env ENVFILE
-WorkingDirectory=REPO
+ExecStart=/usr/bin/python3 /path/to/agenteiamail/scripts/idle_listener.py --env /path/to/env
+WorkingDirectory=/path/to/agenteiamail
 
 # The listener retries with backoff on its own, so this only matters if the
 # process dies outright.
