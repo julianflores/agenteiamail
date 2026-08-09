@@ -13,6 +13,13 @@ ExecStart=/usr/bin/bash /path/to/agenteiamail/harness/watch_service.sh
 WorkingDirectory=/path/to/agenteiamail
 Restart=always
 RestartSec=10
+
+# The watcher has its own logs, separate from the listener's. Its stderr is the
+# only place the "openclaw not found" warning can land: if openclaw is missing the
+# watcher cannot inject anything into the session, including a warning about
+# openclaw being missing. Somebody has to read this file.
+StandardOutput=append:%h/.local/state/agenteiamail/watch.log
+StandardError=append:%h/.local/state/agenteiamail/watch.err.log
 SyslogIdentifier=agenteiamail-watch
 
 [Install]

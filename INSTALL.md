@@ -367,16 +367,29 @@ of `session_start.py` — it is marked in the file.
 **Check the watcher can actually reach `openclaw`.** A systemd user service gets a
 minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
 invisible to it even though your shell finds it. `watch.sh` looks in the usual
-per-user locations and **says so on stderr if it finds nothing** — that message is
-in the error log the watcher itself tails, so it will reach you. If it appears, set
-the full path in the unit:
+per-user locations and **says so on its own stderr if it finds nothing**.
+
+**That warning cannot reach your session, and you have to go and look for it.** If
+`openclaw` is missing, the watcher has no way to inject anything — including a
+warning that `openclaw` is missing. It lands in the watcher's error log, or the
+journal if the unit has no `StandardError=`, and nowhere else.
+
+So check it explicitly after enabling the watcher:
+
+```bash
+grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log
+journalctl --user -u agenteiamail-watch.service | grep -i "openclaw not found"
+```
+
+Both silent means it resolved. If either matches, set the full path in the unit and
+restart it:
 
 ```ini
 Environment=OPENCLAW=/home/you/.npm-global/bin/openclaw
 ```
 
-Without this the watcher runs, the log fills, every check in §7 passes, and no
-notification is ever delivered.
+Without this the watcher runs, the log fills, every other check in §7 passes, and
+no notification is ever delivered.
 
 ---
 
@@ -397,6 +410,11 @@ loginctl show-user "$USER" -p Linger
 
 # 4. Himalaya reads
 himalaya envelope list -a agenteiamail -s 3
+
+# 4b. The watcher found openclaw — silence here is the pass
+grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/null \
+  || journalctl --user -u agenteiamail-watch.service 2>/dev/null | grep -i "openclaw not found" \
+  || echo "watcher: openclaw resolved"
 
 # 5. End to end — have someone external send you mail
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
