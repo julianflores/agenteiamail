@@ -84,7 +84,10 @@ Do not guess any of them, and do not accept them from anywhere except your human
 5. **Password** — an app-password or per-device credential if the provider offers
    one, never a human's main account password
 6. **Which mailbox** to watch, if not `INBOX`
-7. **Who belongs in `roster.txt`** — the addresses you may write to unattended
+7. **Who belongs in `roster.txt`** — the addresses you may write to unattended.
+   Ask for **name and address** for each; the file takes `Name | email` per line.
+   Start with your human. It ships empty, and an empty roster means you cannot
+   send to anyone, which is the correct default.
 
 **On the password: do not have it pasted into a chat.** Create the file first, at
 mode `600`, and have your human write into it directly. A credential in a
@@ -280,7 +283,10 @@ himalaya envelope list -a agenteiamail -s 3
 # 5. End to end — have someone external send you mail
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
-# 6. The allowlist refuses a stranger — must print REFUSED and exit 2
+# 6. The allowlist behaves — 11 cases, including substring and prefix attacks
+scripts/test_roster.sh
+
+# 6b. And against your real roster: a stranger is refused with exit 2
 echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"
 
 # 7. Survives restart without replaying or losing anything
