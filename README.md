@@ -116,6 +116,9 @@ this back when it finishes, and you can hold it to the list:
 - Lingering enabled for the user, so the service survives logout
 - A standing rule added to the agent's own instructions
 
+All of it is reversible — [`UNINSTALL.md`](UNINSTALL.md) removes every item on that
+list, in an order that does not leave you working from memory.
+
 ## Security
 
 The agent can send mail directly, so one risk is live: **it reads untrusted
@@ -139,6 +142,7 @@ content all day, and anything it reads is a possible instruction channel.**
 | [`AGENTS.md`](AGENTS.md) | What the agent follows. Start here if you are one. |
 | [`INSTALL.md`](INSTALL.md) | The deployment sequence, step by step |
 | [`DESIGN.md`](DESIGN.md) | Why the pieces are shaped this way — read before changing any of it |
+| [`UNINSTALL.md`](UNINSTALL.md) | How to take all of it back off |
 
 ```
 scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
