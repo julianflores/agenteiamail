@@ -300,10 +300,21 @@ credentials file. systemd does not expand `~`, so use `%h` or a full path.
 
 ```bash
 install -Dm644 systemd/agenteiamail-idle.service       ~/.config/systemd/user/
+install -Dm644 systemd/agenteiamail-watch.service      ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.service  ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.timer    ~/.config/systemd/user/
-# then edit the placeholders in the two .service files
+
+# then replace the placeholders in the three .service files:
+#   /path/to/agenteiamail  ->  your clone's absolute path
+#   /path/to/env           ->  your credentials file (idle only)
+
+# and confirm systemd is happy before enabling anything:
+systemd-analyze verify ~/.config/systemd/user/agenteiamail-*.{service,timer}
 ```
+
+That last command prints nothing and exits 0 when the units are sound. **Read the
+exit code, not the absence of alarm** — it is easy to run it, see no obvious
+complaint, and move on while it was in fact objecting.
 
 They were added after a clean-room reinstall showed that composing them from the
 prose below took real work and got no help from the repository. The prose stays,

@@ -1,4 +1,4 @@
-# Template. Replace REPO with the absolute path to your clone.
+# Template. Replace /path/to/agenteiamail with your clone's absolute path.
 #
 # This calls harness/watch_service.sh, NOT watch.sh directly: the wrapper works
 # out which byte of the log to resume from before handing over.
@@ -9,8 +9,8 @@ After=agenteiamail-idle.service
 
 [Service]
 Type=simple
-ExecStart=REPO/harness/watch_service.sh
-WorkingDirectory=REPO
+ExecStart=/usr/bin/bash /path/to/agenteiamail/harness/watch_service.sh
+WorkingDirectory=/path/to/agenteiamail
 Restart=always
 RestartSec=10
 SyslogIdentifier=agenteiamail-watch
