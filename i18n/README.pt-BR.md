@@ -1,8 +1,8 @@
 # agenteiamail
 
-[English](README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · **Português (BR)**
+[English](../README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · **Português (BR)**
 
-> Traduzido de [`README.md`](README.md) no commit `9682aee`. Se algo aqui
+> Traduzido de [`README.md`](../README.md) no commit `9682aee`. Se algo aqui
 > contradisser o original em inglês, **o inglês prevalece** — e nos avise, porque
 > significa que esta tradução ficou para trás.
 
@@ -133,12 +133,12 @@ Estes documentos estão em inglês.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.pt-BR.md`](MAILBOX_SETUP.pt-BR.md) | Passo 1 — a caixa de e-mail e o arquivo `.env` |
-| [`AGENTS.md`](AGENTS.md) | O que o agente segue. Comece aqui se você for um. |
-| [`INSTALL.md`](INSTALL.md) | A sequência de instalação, passo a passo |
-| [`DESIGN.md`](DESIGN.md) | Por que as peças têm essa forma — leia antes de mudar qualquer coisa |
+| [`AGENTS.md`](../AGENTS.md) | O que o agente segue. Comece aqui se você for um. |
+| [`INSTALL.md`](../INSTALL.md) | A sequência de instalação, passo a passo |
+| [`DESIGN.md`](../DESIGN.md) | Por que as peças têm essa forma — leia antes de mudar qualquer coisa |
 
 ```
-idle_listener.py          Serviço systemd --user. Mantém uma conexão IMAP IDLE
+scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDLE
   │                       aberta; o servidor avisa assim que chega mensagem.
   │  uma linha por mensagem
   ▼
@@ -152,8 +152,8 @@ idle_listener.py          Serviço systemd --user. Mantém uma conexão IMAP IDL
   └─► harness/rotate_logs.py      rotação com copytruncate, num timer de usuário
 
 himalaya                  lê e envia. O listener nunca baixa corpos de mensagem.
-send.sh + roster.txt      o envio é restrito a destinatários autorizados.
-preflight.py              prova que a máquina consegue rodar isto antes de instalar.
+scripts/send.sh + roster.txt  o envio é restrito a destinatários autorizados.
+scripts/preflight.py      prova que a máquina consegue rodar isto antes de instalar.
 ```
 
 ## Caminhos nesta máquina
@@ -172,7 +172,7 @@ confiança que não há e-mail novo estando cego**.
 Por isso o último UID visto é gravado mensagem a mensagem, por isso o
 `UIDVALIDITY` é conferido a cada conexão, por isso o log de erros é monitorado
 junto com o de eventos, e por isso o hook de início de sessão pergunta se o
-serviço está mesmo rodando. O [`DESIGN.md`](DESIGN.md) explica cada um e o que
+serviço está mesmo rodando. O [`DESIGN.md`](../DESIGN.md) explica cada um e o que
 quebra sem ele.
 
 Construído e verificado de ponta a ponta em 09/08/2026.

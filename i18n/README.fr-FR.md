@@ -1,8 +1,8 @@
 # agenteiamail
 
-[English](README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · **Français** · [Português (BR)](README.pt-BR.md)
+[English](../README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · **Français** · [Português (BR)](README.pt-BR.md)
 
-> Traduit de [`README.md`](README.md) au commit `9682aee`. En cas de divergence
+> Traduit de [`README.md`](../README.md) au commit `9682aee`. En cas de divergence
 > avec l'original anglais, **c'est l'anglais qui fait foi** — et signalez-le nous,
 > car cela veut dire que cette traduction a pris du retard.
 
@@ -141,12 +141,12 @@ Ces documents sont en anglais.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.fr-FR.md`](MAILBOX_SETUP.fr-FR.md) | Étape 1 — la boîte et le fichier `.env` |
-| [`AGENTS.md`](AGENTS.md) | Ce que suit l'agent. Commencez ici si vous en êtes un. |
-| [`INSTALL.md`](INSTALL.md) | La séquence d'installation, étape par étape |
-| [`DESIGN.md`](DESIGN.md) | Pourquoi les pièces ont cette forme — à lire avant d'y toucher |
+| [`AGENTS.md`](../AGENTS.md) | Ce que suit l'agent. Commencez ici si vous en êtes un. |
+| [`INSTALL.md`](../INSTALL.md) | La séquence d'installation, étape par étape |
+| [`DESIGN.md`](../DESIGN.md) | Pourquoi les pièces ont cette forme — à lire avant d'y toucher |
 
 ```
-idle_listener.py          Service systemd --user. Maintient une connexion IMAP
+scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
   │                       IDLE ouverte ; le serveur signale l'arrivée du courrier.
   │  une ligne par message
   ▼
@@ -160,8 +160,8 @@ idle_listener.py          Service systemd --user. Maintient une connexion IMAP
   └─► harness/rotate_logs.py      rotation copytruncate, sur un timer utilisateur
 
 himalaya                  lit et envoie. Le listener ne télécharge jamais les corps.
-send.sh + roster.txt      l'envoi est limité aux destinataires autorisés.
-preflight.py              prouve qu'une machine peut faire tourner ceci avant de l'installer.
+scripts/send.sh + roster.txt  l'envoi est limité aux destinataires autorisés.
+scripts/preflight.py      prouve qu'une machine peut faire tourner ceci avant de l'installer.
 ```
 
 ## Chemins sur cette machine
@@ -181,6 +181,6 @@ alors qu'on est aveugle**.
 D'où le dernier UID enregistré message par message, la vérification d'`UIDVALIDITY`
 à chaque connexion, la surveillance du journal d'erreurs en parallèle de celui des
 événements, et le hook de démarrage de session qui demande si le service tourne
-réellement. [`DESIGN.md`](DESIGN.md) explique chacun d'eux et ce qui casse sans.
+réellement. [`DESIGN.md`](../DESIGN.md) explique chacun d'eux et ce qui casse sans.
 
 Construit et vérifié de bout en bout le 09/08/2026.

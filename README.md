@@ -1,6 +1,6 @@
 # agenteiamail
 
-**English** · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · [Português (BR)](README.pt-BR.md)
+**English** · [Español (MX)](i18n/README.es-MX.md) · [Español (ES)](i18n/README.es-ES.md) · [Français](i18n/README.fr-FR.md) · [Português (BR)](i18n/README.pt-BR.md)
 
 Push-style email for an AI agent. It finds out about new mail within about a
 second, without polling, and can read and send under a recipient allowlist.
@@ -141,7 +141,7 @@ content all day, and anything it reads is a possible instruction channel.**
 | [`DESIGN.md`](DESIGN.md) | Why the pieces are shaped this way — read before changing any of it |
 
 ```
-idle_listener.py          systemd --user service. Holds an IMAP IDLE connection
+scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
   │                       open; the server pushes the moment mail lands.
   │  one line per message
   ▼
@@ -155,8 +155,8 @@ idle_listener.py          systemd --user service. Holds an IMAP IDLE connection
   └─► harness/rotate_logs.py      copytruncate rotation, on a user timer
 
 himalaya                  reads and sends. The listener never fetches bodies.
-send.sh + roster.txt      sending is restricted to allowlisted recipients.
-preflight.py              proves a host can run this before you install it.
+scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
+scripts/preflight.py      proves a host can run this before you install it.
 ```
 
 ## Runtime paths on this host

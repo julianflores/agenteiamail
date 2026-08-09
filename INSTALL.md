@@ -11,6 +11,26 @@ like style and are not.
 
 ---
 
+> ### Already installed? Read this first
+>
+> The scripts moved into `scripts/` on 2026-08-09. **If you have a running
+> install, `git pull` will not break it immediately — it will break on the next
+> restart or reboot**, when systemd looks for a file that is no longer where the
+> unit says it is.
+>
+> The symptom is a service that has been fine for days suddenly refusing to start,
+> long after the change that caused it. Fix it in the same session you pull:
+>
+> ```bash
+> # in ~/.config/systemd/user/agenteiamail-idle.service
+> # ExecStart=... /idle_listener.py        ->  .../scripts/idle_listener.py
+> systemctl --user daemon-reload
+> systemctl --user restart agenteiamail-idle.service
+> tail -2 ~/.local/state/agenteiamail/idle.err.log   # expect "resuming from uid N"
+> ```
+>
+> Check any wrapper of your own that calls `send.sh` or `preflight.py` too.
+
 ## 1. Pre-flight — before you touch anything
 
 Two things can make the whole design inapplicable. Find out now, not after an
@@ -36,7 +56,7 @@ same job.
 
 ```bash
 git clone <this repo> && cd agenteiamail
-python3 preflight.py
+python3 scripts/preflight.py
 ```
 
 You need three greens: login succeeds, **IDLE advertised: True**, and a
@@ -86,7 +106,7 @@ Keys are listed in [`.env.example`](.env.example).
 `~/.openclaw/workspace/.env` — do not move, rewrite or copy that file. Point at it:
 
 ```bash
-python3 idle_listener.py --env ~/.openclaw/workspace/.env
+python3 scripts/idle_listener.py --env ~/.openclaw/workspace/.env
 ```
 
 **You do not need to add keys.** The listener reads either schema:
@@ -196,7 +216,7 @@ Do not continue until that returns real output.
 ## 5. Run the listener as a service
 
 Create `~/.config/systemd/user/agenteiamail-idle.service` pointing at
-`idle_listener.py` in your clone. Three things it must get right:
+`scripts/idle_listener.py` in your clone. Three things it must get right:
 
 - `Restart=always`, `RestartSec=10`
 - `StandardOutput=append:` the event log, `StandardError=append:` the error log —
@@ -261,7 +281,7 @@ himalaya envelope list -a agenteiamail -s 3
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
 # 6. The allowlist refuses a stranger — must print REFUSED and exit 2
-echo hi > /tmp/b.txt; ./send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"
+echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"
 
 # 7. Survives restart without replaying or losing anything
 systemctl --user restart agenteiamail-idle.service

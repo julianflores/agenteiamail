@@ -9,7 +9,7 @@ on stdout.
 One stdout line == one harness notification. Output is line-buffered and never
 contains credentials.
 
-Usage:  python3 idle_listener.py [--env PATH] [--mailbox INBOX] [--once]
+Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once]
 Exit:   0 clean shutdown · 1 configuration or login failure (not retryable)
 """
 

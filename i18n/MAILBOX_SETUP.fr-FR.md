@@ -1,8 +1,8 @@
 # Configurer le fichier de la boîte aux lettres
 
-[English](MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · **Français** · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
+[English](../MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · **Français** · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
 
-> Traduit de [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) au commit `b82b480`. En cas de
+> Traduit de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) au commit `b82b480`. En cas de
 > divergence avec l'original anglais, **c'est l'anglais qui fait foi**.
 
 Étape 1 du [README](README.fr-FR.md#mise-en-place-sur-votre-agent). Vous faites
