@@ -90,24 +90,58 @@ def describe(sender, subject, date):
     return f"[mail {when}] {body}"
 
 
-def require(env, key):
-    value = env.get(key, "").strip()
-    if not value:
-        log(f"missing {key} in the env file")
-        sys.exit(1)
-    return value
+# Two key schemas are accepted, so a host that already keeps credentials for its
+# agent does not have to duplicate them. AGENTEIAMAIL_* wins where both are set:
+# an install that named them explicitly meant to.
+KEYS = {
+    "host": ("AGENTEIAMAIL_IMAP_HOST", "AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST"),
+    "port": ("AGENTEIAMAIL_IMAP_PORT", "AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT"),
+    "user": ("AGENTEIAMAIL_EMAIL", "AGENT_EMAIL_ACCOUNT"),
+    "password": ("AGENTEIAMAIL_PASSWORD", "AGENT_EMAIL_PASSWORD"),
+}
+
+# An older schema named these after servers and stored ports in them. Reading one
+# as a hostname connects nowhere useful, so say what is wrong instead.
+LEGACY_AMBIGUOUS = (
+    "AGENT_EMAIL_INCOMING_SERVER_IMAP",
+    "AGENT_EMAIL_OUTGOING_SERVER_SMTP",
+    "AGENT_EMAIL_INCOMING_SERVER_POP",
+)
+
+
+def lookup(env, field, default=None):
+    """First non-empty value among the accepted names for a field."""
+    for key in KEYS[field]:
+        value = env.get(key, "").strip()
+        if value:
+            return value
+    if default is not None:
+        return default
+    tried = " or ".join(KEYS[field])
+    log(f"missing {tried} in the env file")
+    sys.exit(1)
 
 
 def connect(env):
-    host = require(env, "AGENTEIAMAIL_IMAP_HOST")
+    # The old schema is a trap rather than an inconvenience: the key is named for
+    # a server and holds a port, so a literal reading sends you somewhere else.
+    for key in LEGACY_AMBIGUOUS:
+        if env.get(key, "").strip().isdigit():
+            log(
+                f"{key} holds a port, not a hostname — that is the old schema. "
+                f"Split it into {key}_HOST and {key}_PORT."
+            )
+            sys.exit(1)
+
+    host = lookup(env, "host")
     # A hostname field holding a bare number is a misconfiguration, not a host.
     # Failing here beats connecting somewhere unintended.
     if host.isdigit():
-        log(f"AGENTEIAMAIL_IMAP_HOST is {host!r}, which is a port, not a hostname")
+        log(f"IMAP host is {host!r}, which is a port, not a hostname")
         sys.exit(1)
-    port = int(env.get("AGENTEIAMAIL_IMAP_PORT") or 993)
-    user = require(env, "AGENTEIAMAIL_EMAIL")
-    password = require(env, "AGENTEIAMAIL_PASSWORD")
+    port = int(lookup(env, "port", default="993"))
+    user = lookup(env, "user")
+    password = lookup(env, "password")
 
     conn = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=30)
     try:
