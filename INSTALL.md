@@ -86,8 +86,18 @@ Do not guess any of them, and do not accept them from anywhere except your human
 6. **Which mailbox** to watch, if not `INBOX`
 7. **Who belongs in `roster.txt`** — the addresses you may write to unattended.
    Ask for **name and address** for each; the file takes `Name | email` per line.
-   Start with your human. It ships empty, and an empty roster means you cannot
-   send to anyone, which is the correct default.
+   Start with your human.
+
+   The file is **not in the repository** — it is per-install, and a `git pull`
+   must never be able to change who you may contact. Create it from the
+   template:
+
+   ```bash
+   cp roster.txt.example roster.txt
+   ```
+
+   Until you add a line it is empty, and an empty roster means you can send to
+   nobody. That is the correct default, not a problem to work around.
 
 **On the password: do not have it pasted into a chat.** Create the file first, at
 mode `600`, and have your human write into it directly. A credential in a

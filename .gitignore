@@ -1,3 +1,7 @@
+# The real roster is per-install: it says who this agent may contact
+# unattended, and a git pull must never be able to change that list.
+roster.txt
+
 .env
 *.log
 __pycache__/
