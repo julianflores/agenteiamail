@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Exercises the roster matching in send.sh without sending anything.
+# Exercises send.sh without sending anything: who it will write to, and what it
+# hands Himalaya when it does.
 #
-# This exists because the allowlist is the only thing standing between an agent
-# that reads untrusted mail and an agent that can be talked into sending it. A
-# path change once broke the lookup silently — it failed closed, so nothing was
-# exposed, but nothing was caught either. Run this after touching send.sh or the
+# The allowlist half exists because that list is the only thing standing between
+# an agent that reads untrusted mail and an agent that can be talked into sending
+# it. A path change once broke the lookup silently — it failed closed, so nothing
+# was exposed, but nothing was caught either.
+#
+# The message half exists because the first half is not enough. Himalaya is faked
+# here, so "the gate let it through" proves nothing about whether real mail would
+# leave: a missing From: header made every live send fail on Himalaya v2 while
+# this suite reported 11/11 (issue #23). Run this after touching send.sh or the
 # roster format.
 #
 #   scripts/test_roster.sh
@@ -19,14 +25,27 @@ roster="$tmp/roster.txt"
 body="$tmp/body.txt"
 echo "hi" >"$body"
 
+> "$tmp/sent.eml"
+export CAPTURE="$tmp/sent.eml"
+
+# The fake Himalaya keeps what it was given. Before it did, this suite could pass
+# while every real send failed: the allowlist was tested and the message handed to
+# Himalaya never was, which is how a missing From: header survived to issue #23.
 fakebin="$tmp/bin"
 mkdir -p "$fakebin"
 cat >"$fakebin/himalaya" <<'EOF'
 #!/usr/bin/env bash
+cat >"$CAPTURE"
 exit 0
 EOF
 chmod +x "$fakebin/himalaya"
 export PATH="$fakebin:$PATH"
+
+# send.sh needs a sender, and reads it from the same env file the listener uses.
+# Written with CRLF and a BOM on purpose — both appear in real installs.
+envfile="$tmp/env"
+printf '\xef\xbb\xbfAGENTEIAMAIL_EMAIL=agent@example.com\r\nAGENTEIAMAIL_PASSWORD=not-read-here\r\n' >"$envfile"
+export ENV_FILE="$envfile"
 
 cat >"$roster" <<'EOF'
 # Comment that should never match.
@@ -77,6 +96,97 @@ check refuse ""                                            "empty recipient"
 
 # A missing roster must refuse, not fall open.
 ROSTER="$tmp/does-not-exist.txt" check refuse "jjulianfe@gmail.com" "roster file missing"
+
+# --- The message Himalaya actually receives ----------------------------------
+#
+# Himalaya v2 rejects a raw message with no From:, so "the gate let it through"
+# is not the same as "the mail went out". These assert on the captured bytes.
+
+echo
+
+assert() {
+    local desc=$1 cond=$2
+    if eval "$cond"; then
+        printf '  PASS  %-8s %s\n' "message" "$desc"; pass=$((pass+1))
+    else
+        printf '  FAIL  %-8s %s\n' "message" "$desc"; fail=$((fail+1))
+    fi
+}
+
+send_ok() { "$SEND" "$@" >/dev/null 2>&1; }
+
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "Prueba de correo — ñ, á" "$body"
+
+assert "From: header is present"        'grep -q "^From: " "$CAPTURE"'
+assert "From: carries the env address"  'grep -qx "From: agent@example.com" "$CAPTURE"'
+assert "From: comes before To:"         '[ "$(grep -n -m1 "^From: " "$CAPTURE" | cut -d: -f1)" -lt "$(grep -n -m1 "^To: " "$CAPTURE" | cut -d: -f1)" ]'
+assert "To: is the approved recipient"  'grep -qx "To: jjulianfe@gmail.com" "$CAPTURE"'
+assert "accented Subject is encoded"    'grep -qE "^Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=\$" "$CAPTURE"'
+assert "encoded Subject round-trips"    '[ "$(grep -m1 "^Subject: " "$CAPTURE" | sed -e "s/^Subject: =?UTF-8?B?//" -e "s/?=\$//" | base64 -d)" = "Prueba de correo — ñ, á" ]'
+assert "blank line separates the body"  'awk "/^\$/{found=1} END{exit !found}" "$CAPTURE"'
+assert "body is last"                   '[ "$(tail -1 "$CAPTURE")" = "hi" ]'
+
+# Gmail accepted the From:-only message over SMTP and then bounced it as spam.
+# These are the headers that made the difference on the live host in #23.
+assert "Date: is RFC 5322"              'grep -qE "^Date: [A-Z][a-z]{2}, [0-9]{1,2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}\$" "$CAPTURE"'
+assert "Message-ID: is bracketed"       'grep -qE "^Message-ID: <[^<> ]+@[^<> ]+>\$" "$CAPTURE"'
+assert "Message-ID: uses sender domain" 'grep -qE "^Message-ID: <.*@example\.com>\$" "$CAPTURE"'
+assert "MIME-Version: 1.0"              'grep -qx "MIME-Version: 1.0" "$CAPTURE"'
+assert "Content-Type is UTF-8 plain"    'grep -qx "Content-Type: text/plain; charset=UTF-8" "$CAPTURE"'
+assert "8bit, matching the raw body"    'grep -qx "Content-Transfer-Encoding: 8bit" "$CAPTURE"'
+
+# Two messages in the same second must not share an ID.
+first_id=$(grep -m1 "^Message-ID: " "$CAPTURE")
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "second" "$body"
+assert "Message-ID differs per send"    '[ "$first_id" != "$(grep -m1 "^Message-ID: " "$CAPTURE")" ]'
+
+# A sender with no domain would produce a nonsense Message-ID; refuse instead.
+printf 'AGENTEIAMAIL_EMAIL=agent-without-a-domain\n' >"$tmp/env-nodomain"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-nodomain" send_ok "jjulianfe@gmail.com" "subject" "$body" && nd=0 || nd=$?
+assert "sender with no domain exits 1"  '[ "${nd:-0}" -eq 1 ] && [ ! -s "$CAPTURE" ]'
+
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "Prueba de correo — ñ, á" "$body"
+
+# A display name must be quoted, and a comma inside it must not split the header.
+printf 'AGENTEIAMAIL_EMAIL=agent@example.com\nAGENTEIAMAIL_FROM_NAME=Flores, Julian\n' >"$tmp/env-name"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-name" send_ok "jjulianfe@gmail.com" "subject" "$body"
+assert "display name is quoted"         'grep -qx "From: \"Flores, Julian\" <agent@example.com>" "$CAPTURE"'
+
+# A plain-ASCII subject must stay readable rather than being base64'd for nothing.
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "Plain ascii subject" "$body"
+assert "ASCII Subject stays literal"    'grep -qx "Subject: Plain ascii subject" "$CAPTURE"'
+
+# An accented display name is an encoded-word, and an encoded-word inside quotes
+# does not decode — so it must not be quoted.
+printf 'AGENTEIAMAIL_EMAIL=agent@example.com\nAGENTEIAMAIL_FROM_NAME=José Ñuño\n' >"$tmp/env-utf8name"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-utf8name" send_ok "jjulianfe@gmail.com" "subject" "$body"
+assert "accented name is encoded"       'grep -qE "^From: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?= <agent@example.com>\$" "$CAPTURE"'
+assert "encoded name round-trips"       '[ "$(grep -m1 "^From: " "$CAPTURE" | sed -e "s/^From: =?UTF-8?B?//" -e "s/?= <.*\$//" | base64 -d)" = "José Ñuño" ]'
+
+# Schema B is the OpenClaw workspace .env, and must work the same way.
+printf 'AGENT_EMAIL_ACCOUNT=agent@example.com\n' >"$tmp/env-b"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-b" send_ok "jjulianfe@gmail.com" "subject" "$body"
+assert "falls back to AGENT_EMAIL_ACCOUNT" 'grep -qx "From: agent@example.com" "$CAPTURE"'
+
+# No sender configured must fail loudly rather than hand Himalaya a bad message.
+: >"$CAPTURE"
+ENV_FILE="$tmp/no-such-env" send_ok "jjulianfe@gmail.com" "subject" "$body" && rc=0 || rc=$?
+assert "missing sender exits 1"         '[ "${rc:-0}" -eq 1 ]'
+assert "missing sender sends nothing"   '[ ! -s "$CAPTURE" ]'
+
+# A newline in the subject must not become a second header. The subject is built
+# from mail the agent was told to act on, so this is reachable from outside.
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "$(printf 'Test\nBcc: evil@example.com')" "$body"
+assert "no header injection via subject" '! grep -qi "^Bcc:" "$CAPTURE"'
 
 echo
 echo "$pass passed, $fail failed"

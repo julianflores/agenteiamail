@@ -422,7 +422,9 @@ grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/nu
 # 5. End to end — have someone external send you mail
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
-# 6. The allowlist behaves on send — 11 cases, incl. substring and prefix attacks
+# 6. Sending behaves — who it will write to, and what Himalaya is handed.
+#    Includes substring/prefix attacks on the allowlist and the From: header
+#    Himalaya v2 requires.
 scripts/test_roster.sh
 
 # 6a. And on receive: the same list, as the listener reads it
