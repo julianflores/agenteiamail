@@ -142,6 +142,32 @@ of a hostname drift, and the one you are not looking at is the one that is wrong
 succeeds while the service dies at startup with `no env file at ...`. Put the flag
 in the unit even when the path is the default.
 
+**`scripts/send.sh` needs the same file, and has no unit to carry a flag.** It
+reads `~/.config/agenteiamail/env` unless `ENV_FILE` says otherwise, so on a host
+whose credentials live elsewhere it will find nothing and refuse to send — at the
+moment it first tries to answer somebody, which is the worst time to discover it.
+
+If your credentials are not at the default path, link the default at the real file
+once, here, rather than exporting `ENV_FILE` from whatever shell happens to invoke
+the script:
+
+```bash
+ln -s ~/.openclaw/workspace/.env ~/.config/agenteiamail/env
+```
+
+A symlink survives every session, every restart, and every agent that forgets.
+An exported variable survives none of them. The target file keeps its own `600`.
+
+Prove it resolved before you rely on it — this sends nothing:
+
+```bash
+echo hi > /tmp/b.txt
+scripts/send.sh --check "$(grep -m1 -v '^[[:space:]]*#' roster.txt | sed 's/.*|//' | tr -d '[:blank:]')" "check" /tmp/b.txt
+```
+
+A `From:` line carrying your agent's address means it found them. `no sender
+address in ...` means it did not.
+
 ### 3.1 If the listener exits complaining about the old schema
 
 An earlier version of the workspace `.env` named three keys after servers and
@@ -433,7 +459,10 @@ python3 scripts/test_listener.py
 # 6b. Against your real roster: a stranger is refused with exit 2
 echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"
 
-# 6c. Your own mail is tagged. Send yourself one, then:
+# 6c. send.sh can find its credentials (sends nothing)
+scripts/send.sh --check jjulianfe@gmail.com "check" /tmp/b.txt | head -6
+
+# 6d. Your own mail is tagged. Send yourself one, then:
 grep ", roster]" ~/.local/state/agenteiamail/mail.log | tail -1
 # No output means the agent will not act on your mail. Check that the address in
 # roster.txt matches the From address your mail actually arrives with.

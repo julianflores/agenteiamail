@@ -148,6 +148,14 @@ printf 'AGENTEIAMAIL_EMAIL=agent-without-a-domain\n' >"$tmp/env-nodomain"
 ENV_FILE="$tmp/env-nodomain" send_ok "jjulianfe@gmail.com" "subject" "$body" && nd=0 || nd=$?
 assert "sender with no domain exits 1"  '[ "${nd:-0}" -eq 1 ] && [ ! -s "$CAPTURE" ]'
 
+# --check is how an install proves send.sh can find its credentials. The roster
+# tests cannot: the gate runs first, so a refusal exits before the env is read.
+: >"$CAPTURE"
+checked=$("$SEND" --check "jjulianfe@gmail.com" "Prueba de correo — ñ, á" "$body" 2>/dev/null)
+assert "--check prints the message"     'printf "%s" "$checked" | grep -q "^From: agent@example.com\$"'
+assert "--check sends nothing"          '[ ! -s "$CAPTURE" ]'
+assert "--check still obeys the roster" '! "$SEND" --check "stranger@example.com" "s" "$body" >/dev/null 2>&1'
+
 : >"$CAPTURE"
 send_ok "jjulianfe@gmail.com" "Prueba de correo — ñ, á" "$body"
 
