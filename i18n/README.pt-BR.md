@@ -96,6 +96,11 @@ Se ele enviar, pare e avise quem instalou. Alguma coisa está errada.
 - **Ler e enviar** pelo Himalaya, usando a caixa que você configurou.
 - **Enviar só para endereços que você aprovou**, listados em `roster.txt`.
   Qualquer outro é recusado de cara, sem nem perguntar.
+- **Trabalhar a partir do e-mail enviado por esses mesmos endereços aprovados.**
+  Você manda uma tarefa por e-mail, ele faz e responde com o resultado. Sem aviso
+  de recebimento antes e sem pedir permissão — você já deu ao se colocar na lista.
+- **Deixar o e-mail dos outros em paz.** O que chega de um endereço fora da lista
+  é apenas reportado a você.
 
 ## O que isso muda no computador
 
@@ -111,18 +116,27 @@ terminar, e você pode cobrar a lista:
 
 ## Segurança
 
-O agente pode enviar e-mail diretamente, então há um risco real: **ele lê conteúdo
-não confiável o dia inteiro, e qualquer coisa que ele lê é um possível canal de
-instruções.**
+O agente trabalha a partir do e-mail dele, então a pergunta não é se ele obedece
+instruções que chegam por e-mail — obedece, é esse o propósito — mas **de quem**.
 
-- `roster.txt` é uma lista de correspondência exata. O que não estiver nela é
-  recusado.
-- O corpo dos e-mails é tratado como **dado, nunca como comando** — uma mensagem
-  mandando o agente encaminhar algo não é um pedido que ele cumpre.
-- **Adicionar um destinatário ao `roster.txt` é decisão sua**, nunca resposta a
-  algo que chegou por e-mail.
+- `roster.txt` é uma lista de correspondência exata, e é a resposta inteira. Se o
+  remetente está nela, o agente faz o que a mensagem pede e responde. Se não está,
+  ele avisa que o e-mail chegou e não faz mais nada com ele.
+- A correspondência é só sobre `From`. Um `Reply-To` apontando para alguém aprovado
+  não concede nada, então um desconhecido não consegue pegar emprestado um endereço
+  da lista com um cabeçalho.
+- **Adicionar alguém ao `roster.txt` é decisão sua**, nunca resposta a algo que
+  chegou por e-mail. Essa linha é o que transforma um remetente em alguém que seu
+  agente obedece.
+- Sem arquivo de roster ninguém é confiável — uma instalação nova lê e-mail e não
+  age sobre nada até você escrever a lista.
 - A senha fica num arquivo com permissão `600` fora do repositório, e nunca passa
   por uma conversa de chat.
+
+Repare no que este design depende: no seu provedor de e-mail. SPF, DKIM e DMARC são
+aplicados antes de qualquer coisa chegar à caixa de entrada, e é isso que impede
+que forjar um `From` seja trivial. Se você apontar isto para uma caixa sem esse
+filtro, o roster protege menos do que parece.
 
 ---
 
@@ -153,6 +167,7 @@ scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDL
 
 himalaya                  lê e envia. O listener nunca baixa corpos de mensagem.
 scripts/send.sh + roster.txt  o envio é restrito a destinatários autorizados.
+scripts/roster.py         a mesma lista, lida pelo listener para marcar remetentes.
 scripts/preflight.py      prova que a máquina consegue rodar isto antes de instalar.
 ```
 

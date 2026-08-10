@@ -121,16 +121,19 @@ to another account or the next bare `himalaya` command has nowhere to go.
 ## 5. Remove the standing rule from the agent's own instructions
 
 The install adds a rule to the agent's persistent instructions — usually its
-`AGENTS.md` or equivalent — about email bodies being data and roster changes
-being human decisions.
+`AGENTS.md` or equivalent — saying that mail from an address on `roster.txt` is
+work it should carry out and answer.
 
-**Leave it if the agent handles mail by any other route.** The rule is about
-reading untrusted content, not about this tool. Remove it only if this was the
-agent's only path to a mailbox.
+**Remove it, and do not treat this step as optional.** This rule grants something
+rather than withholding it, so a stale copy is not harmlessly redundant the way a
+leftover caution would be. The `roster.txt` it refers to is gone, the listener that
+tagged senders is gone, and what remains is an instruction to act on mail with
+nothing left to define whose. If the agent keeps a mailbox by some other route, it
+will apply this rule there.
 
-**And leave it if you are uninstalling in order to reinstall.** The rule is about
-to be true again in a few minutes, and removing it creates a window where the
-agent is reading mail without it.
+**Reinstalling is not a reason to leave it.** The "Standing rules" section of
+`AGENTS.md` puts it back during the install, against the roster that will actually
+exist then.
 
 ## 6. Remove the repository
 
