@@ -144,6 +144,18 @@ the whole design exists to prevent, and one `grep` on stderr is what prevents it
 call fails and the watcher dies with it, one lost notification becomes a lost
 watcher — and a lost watcher fails silently. One missed message is recoverable.
 
+**`send.sh` writes its own `From:` header.** Himalaya v1 filled one in from
+account config; v2 refuses the message outright — *"No `From:` header found in raw
+message"*. The address is read from the same env file the listener reads, under
+the same two key schemas, so an install cannot end up with the listener and the
+sender disagreeing about which account this is.
+
+**`send.sh` strips CR and LF from the recipient and subject.** Both are composed
+from mail the agent was asked to act on, and a newline inside a header value ends
+that header and begins another — a crafted subject could append `Bcc:` and reach
+an address the roster never approved. The allowlist checks the recipient it was
+given; it cannot see a second one smuggled into a header.
+
 **Rotation uses `copytruncate`.** systemd holds the log open in append mode. A
 rename-style rotate moves the file out from under the open descriptor, and every
 line written afterwards goes to a file nobody reads. Silently.
