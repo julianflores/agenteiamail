@@ -110,6 +110,21 @@ transcript is a standing liability; transcripts get stored, exported and reviewe
 
 ## 3. Credentials
 
+**If the setup page already ran, this section is done.** `scripts/setup_web.sh`
+writes `~/.openclaw/workspace/.env` and symlinks `~/.config/agenteiamail/env` at
+it — see `AGENTS.md` step 2. Confirm and move on to §4 rather than creating a
+second file:
+
+```bash
+ls -l ~/.openclaw/workspace/.env ~/.config/agenteiamail/env
+```
+
+Expect a `600` file and a symlink pointing at it. §7.6c checks that `send.sh` can
+actually read them.
+
+Everything below is the manual route, for a host where somebody writes the file
+by hand.
+
 ```bash
 mkdir -p ~/.config/agenteiamail
 touch ~/.config/agenteiamail/env

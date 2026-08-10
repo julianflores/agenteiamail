@@ -28,19 +28,47 @@ IDLE means this design does not apply; no systemd user session means the
 supervision layer needs rethinking, and `nohup` is not the answer — it neither
 survives a reboot nor restarts on crash.
 
-**2. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
+**2. Check whether there is a mailbox to install against.**
+
+```bash
+[ -f ~/.openclaw/workspace/.env ] && echo "credentials present" || echo "NO CREDENTIALS"
+```
+
+Present means your human set this up before asking you — carry on to step 3.
+
+**Missing means they have not, and this is the fork that matters.** Do not ask
+them to paste the password to you. A password in a chat is in that transcript
+permanently, and no later care takes it back out. Serve the form instead:
+
+```bash
+scripts/setup_web.sh          # prints a link with a one-time key
+```
+
+Send them the link. They fill in the settings, the page signs in to their mail
+server to confirm the account works, and only then writes
+`~/.openclaw/workspace/.env` itself. You never see the password. `setup_web.sh`
+stops on its own once the file exists, and then you continue at step 3.
+
+The script checks for PHP first and tells you the exact `apt-get` line if it is
+missing. Install it if you have `sudo`, and list that among the things you
+changed outside the repository when you report back. **If you have no `sudo` and
+no PHP, stop and say so** — do not fall back to asking for the password in chat.
+That is the case this repository does not yet have an answer for, and inventing
+one at the cost of putting a credential in a transcript is not it.
+
+**3. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
 credentials, Himalaya, the service, harness wiring, verification, troubleshooting.
 
-**3. Read [`DESIGN.md`](DESIGN.md) before changing anything.** Several lines in
+**4. Read [`DESIGN.md`](DESIGN.md) before changing anything.** Several lines in
 this codebase look like style and are load-bearing. It says which, and what breaks
 without them.
 
-**4. Do not report success until the verification checklist in `INSTALL.md` §7
+**5. Do not report success until the verification checklist in `INSTALL.md` §7
 passes in full** — including the restart test. *"resuming from uid N"* rather than
 *"baseline uid N"* is the line that proves this will not silently lose mail after a
 reboot. Everything else can pass while that one fails.
 
-**5. Tell your human what you changed outside the repository.** Which systemd units
+**6. Tell your human what you changed outside the repository.** Which systemd units
 you created, where the credentials live, which keys you added, and what you added
 to your own standing instructions. Everything that matters here lives outside the
 repo, and without that list they have an installed thing and no idea what it
@@ -73,6 +101,11 @@ cause.
 **The password.** Create the credentials file first, at mode `600`, then ask your
 human to write into it. Never ask for it in chat and never print it. Transcripts
 are stored, exported and reviewed; a credential in one is permanent.
+
+This is what step 2 is for. If they would rather not touch a terminal, do not
+negotiate about it — serve the form and let the password go from their browser
+into a `600` file without passing through you. `webapp/README.md` covers the
+remote case, where they forward the port over SSH first.
 
 ---
 
