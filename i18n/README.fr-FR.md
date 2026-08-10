@@ -176,6 +176,7 @@ scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
 
 himalaya                  lit et envoie. Le listener ne télécharge jamais les corps.
 scripts/send.sh + roster.txt  l'envoi est limité aux destinataires autorisés.
+scripts/roster.py         la même liste, lue par le listener pour marquer les expéditeurs.
 scripts/preflight.py      prouve qu'une machine peut faire tourner ceci avant de l'installer.
 ```
 

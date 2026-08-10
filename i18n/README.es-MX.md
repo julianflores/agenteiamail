@@ -169,6 +169,7 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
 
 himalaya                  lee y envía. El listener nunca descarga cuerpos.
 scripts/send.sh + roster.txt  el envío está restringido a destinatarios autorizados.
+scripts/roster.py         la misma lista, que el listener lee para marcar remitentes.
 scripts/preflight.py      comprueba que una máquina puede correr esto antes de instalarlo.
 ```
 
