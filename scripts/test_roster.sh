@@ -122,15 +122,53 @@ assert "From: header is present"        'grep -q "^From: " "$CAPTURE"'
 assert "From: carries the env address"  'grep -qx "From: agent@example.com" "$CAPTURE"'
 assert "From: comes before To:"         '[ "$(grep -n -m1 "^From: " "$CAPTURE" | cut -d: -f1)" -lt "$(grep -n -m1 "^To: " "$CAPTURE" | cut -d: -f1)" ]'
 assert "To: is the approved recipient"  'grep -qx "To: jjulianfe@gmail.com" "$CAPTURE"'
-assert "Subject survives UTF-8 intact"  'grep -qx "Subject: Prueba de correo — ñ, á" "$CAPTURE"'
+assert "accented Subject is encoded"    'grep -qE "^Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=\$" "$CAPTURE"'
+assert "encoded Subject round-trips"    '[ "$(grep -m1 "^Subject: " "$CAPTURE" | sed -e "s/^Subject: =?UTF-8?B?//" -e "s/?=\$//" | base64 -d)" = "Prueba de correo — ñ, á" ]'
 assert "blank line separates the body"  'awk "/^\$/{found=1} END{exit !found}" "$CAPTURE"'
 assert "body is last"                   '[ "$(tail -1 "$CAPTURE")" = "hi" ]'
+
+# Gmail accepted the From:-only message over SMTP and then bounced it as spam.
+# These are the headers that made the difference on the live host in #23.
+assert "Date: is RFC 5322"              'grep -qE "^Date: [A-Z][a-z]{2}, [0-9]{1,2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}\$" "$CAPTURE"'
+assert "Message-ID: is bracketed"       'grep -qE "^Message-ID: <[^<> ]+@[^<> ]+>\$" "$CAPTURE"'
+assert "Message-ID: uses sender domain" 'grep -qE "^Message-ID: <.*@example\.com>\$" "$CAPTURE"'
+assert "MIME-Version: 1.0"              'grep -qx "MIME-Version: 1.0" "$CAPTURE"'
+assert "Content-Type is UTF-8 plain"    'grep -qx "Content-Type: text/plain; charset=UTF-8" "$CAPTURE"'
+assert "8bit, matching the raw body"    'grep -qx "Content-Transfer-Encoding: 8bit" "$CAPTURE"'
+
+# Two messages in the same second must not share an ID.
+first_id=$(grep -m1 "^Message-ID: " "$CAPTURE")
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "second" "$body"
+assert "Message-ID differs per send"    '[ "$first_id" != "$(grep -m1 "^Message-ID: " "$CAPTURE")" ]'
+
+# A sender with no domain would produce a nonsense Message-ID; refuse instead.
+printf 'AGENTEIAMAIL_EMAIL=agent-without-a-domain\n' >"$tmp/env-nodomain"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-nodomain" send_ok "jjulianfe@gmail.com" "subject" "$body" && nd=0 || nd=$?
+assert "sender with no domain exits 1"  '[ "${nd:-0}" -eq 1 ] && [ ! -s "$CAPTURE" ]'
+
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "Prueba de correo — ñ, á" "$body"
 
 # A display name must be quoted, and a comma inside it must not split the header.
 printf 'AGENTEIAMAIL_EMAIL=agent@example.com\nAGENTEIAMAIL_FROM_NAME=Flores, Julian\n' >"$tmp/env-name"
 : >"$CAPTURE"
 ENV_FILE="$tmp/env-name" send_ok "jjulianfe@gmail.com" "subject" "$body"
 assert "display name is quoted"         'grep -qx "From: \"Flores, Julian\" <agent@example.com>" "$CAPTURE"'
+
+# A plain-ASCII subject must stay readable rather than being base64'd for nothing.
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "Plain ascii subject" "$body"
+assert "ASCII Subject stays literal"    'grep -qx "Subject: Plain ascii subject" "$CAPTURE"'
+
+# An accented display name is an encoded-word, and an encoded-word inside quotes
+# does not decode — so it must not be quoted.
+printf 'AGENTEIAMAIL_EMAIL=agent@example.com\nAGENTEIAMAIL_FROM_NAME=José Ñuño\n' >"$tmp/env-utf8name"
+: >"$CAPTURE"
+ENV_FILE="$tmp/env-utf8name" send_ok "jjulianfe@gmail.com" "subject" "$body"
+assert "accented name is encoded"       'grep -qE "^From: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?= <agent@example.com>\$" "$CAPTURE"'
+assert "encoded name round-trips"       '[ "$(grep -m1 "^From: " "$CAPTURE" | sed -e "s/^From: =?UTF-8?B?//" -e "s/?= <.*\$//" | base64 -d)" = "José Ñuño" ]'
 
 # Schema B is the OpenClaw workspace .env, and must work the same way.
 printf 'AGENT_EMAIL_ACCOUNT=agent@example.com\n' >"$tmp/env-b"

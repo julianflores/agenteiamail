@@ -144,11 +144,27 @@ the whole design exists to prevent, and one `grep` on stderr is what prevents it
 call fails and the watcher dies with it, one lost notification becomes a lost
 watcher — and a lost watcher fails silently. One missed message is recoverable.
 
-**`send.sh` writes its own `From:` header.** Himalaya v1 filled one in from
-account config; v2 refuses the message outright — *"No `From:` header found in raw
-message"*. The address is read from the same env file the listener reads, under
-the same two key schemas, so an install cannot end up with the listener and the
-sender disagreeing about which account this is.
+**`send.sh` writes a full header block, not the three headers it needs.** This is
+two failures deep, and the second only appeared once the first was fixed.
+
+Himalaya v1 filled in `From:` from account config; v2 refuses the message outright
+— *"No `From:` header found in raw message"*. The address is read from the same env
+file the listener reads, under the same two key schemas, so an install cannot end
+up with the listener and the sender disagreeing about which account this is.
+
+Adding `From:` got the message past Himalaya and not past Gmail, which accepted it
+over SMTP and then bounced it: *"554 5.7.1 Rejected due to high probability of
+spam"*. `Date`, `Message-ID`, `MIME-Version`, `Content-Type` and
+`Content-Transfer-Encoding` are what every ordinary client sends, and a message
+without them reads as bulk machinery. **Do not trim that list back to the headers
+that look required** — the message that got rejected was the short one.
+
+Header values are then RFC 2047 encoded when they are not plain ASCII. Raw UTF-8 in
+a header depends on an extension the receiving server has to advertise, and this
+project is Spanish-first: an accented subject is the common case, not the edge one.
+Note that an encoded-word must **not** be wrapped in quotes — inside a quoted
+string it stays literal instead of decoding, which is why the display name is
+quoted only when it is ASCII.
 
 **`send.sh` strips CR and LF from the recipient and subject.** Both are composed
 from mail the agent was asked to act on, and a newline inside a header value ends
