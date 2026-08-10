@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # Send via Himalaya, but only to allowlisted recipients.
 #
-#   send.sh <to> <subject> <body-file>
+#   send.sh [--check] <to> <subject> <body-file>
 #
 # Anything not in roster.txt exits 2 and sends nothing. That is the point: this
 # agent reads mail all day and acts on the part of it that comes from the roster,
 # so the address it writes to must come from the same list and nowhere else.
 #
-# Overridable for tests:
+# --check prints the message it would send and sends nothing. Use it to prove
+# this script can find its credentials, which the roster tests cannot: the roster
+# gate runs first, so a refusal exits before the env file is ever read.
+#
+# Environment:
 #   ROSTER    path to the allowlist        (default: repo root/roster.txt)
 #   ENV_FILE  path to the credentials file (default: ~/.config/agenteiamail/env)
+#
+# ENV_FILE matters on any host whose credentials live somewhere else — the
+# OpenClaw workspace `.env`, say. The listener is told with `--env` on its unit;
+# this script has no unit to carry the flag, so point the default at the real
+# file once, at install time. INSTALL.md §3 says how.
 
 set -euo pipefail
 
@@ -20,7 +29,13 @@ ROSTER="${ROSTER:-$(cd "$(dirname "$0")/.." && pwd)/roster.txt}"
 ENV_FILE="${ENV_FILE:-$HOME/.config/agenteiamail/env}"
 ACCOUNT="agenteiamail"
 
-to=${1:?usage: send.sh <to> <subject> <body-file>}
+check_only=""
+if [ "${1:-}" = "--check" ]; then
+    check_only=yes
+    shift
+fi
+
+to=${1:?usage: send.sh [--check] <to> <subject> <body-file>}
 subject=${2:?missing subject}
 bodyfile=${3:?missing body file}
 
@@ -130,7 +145,7 @@ date_hdr=$(date -R)
 # half must be one we plausibly own, so take it from the sender.
 msgid="<$(date -u +%Y%m%d%H%M%S).$$.${RANDOM}@${from_addr##*@}>"
 
-{
+build_message() {
     printf 'Date: %s\n' "$date_hdr"
     printf 'Message-ID: %s\n' "$msgid"
     printf 'MIME-Version: 1.0\n'
@@ -158,6 +173,14 @@ msgid="<$(date -u +%Y%m%d%H%M%S).$$.${RANDOM}@${from_addr##*@}>"
     printf 'Subject: %s\n' "$(encode_header "$subject")"
     printf '\n'
     cat "$bodyfile"
-} | himalaya message send -a "$ACCOUNT"
+}
+
+if [ -n "$check_only" ]; then
+    build_message
+    echo "check only — nothing sent" >&2
+    exit 0
+fi
+
+build_message | himalaya message send -a "$ACCOUNT"
 
 echo "sent to $to"
