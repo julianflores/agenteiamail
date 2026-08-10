@@ -74,6 +74,13 @@ cause.
 human to write into it. Never ask for it in chat and never print it. Transcripts
 are stored, exported and reviewed; a credential in one is permanent.
 
+**If they would rather not use a terminal at all**, run `scripts/setup_web.sh` and
+send them the link it prints. It serves a form on `127.0.0.1` that asks for the
+same settings, signs in to the mail server to check them, and writes the file
+itself. You never see the password, which is the point — it goes from their
+browser into a `600` file without passing through you. `webapp/README.md` covers
+the remote case, where they forward the port over SSH first.
+
 ---
 
 ## Standing rules, once it is running

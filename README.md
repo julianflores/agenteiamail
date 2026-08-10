@@ -154,6 +154,7 @@ the roster is weaker than it looks.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.md`](MAILBOX_SETUP.md) | Step 1 — the mailbox and the `.env` file |
+| [`webapp/README.md`](webapp/README.md) | Step 1 without a terminal — a local setup form |
 | [`AGENTS.md`](AGENTS.md) | What the agent follows. Start here if you are one. |
 | [`INSTALL.md`](INSTALL.md) | The deployment sequence, step by step |
 | [`DESIGN.md`](DESIGN.md) | Why the pieces are shaped this way — read before changing any of it |
@@ -177,6 +178,8 @@ himalaya                  reads and sends. The listener never fetches bodies.
 scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
 scripts/roster.py         the same allowlist, read by the listener to tag senders.
 scripts/preflight.py      proves a host can run this before you install it.
+webapp/ + setup_web.sh    a local form that writes the credentials file, for
+                          people who do not want a terminal. Loopback only.
 ```
 
 ## Runtime paths on this host

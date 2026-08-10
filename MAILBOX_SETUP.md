@@ -8,6 +8,16 @@ should not travel through a chat.
 
 Ten minutes, most of which is finding one hostname.
 
+> **There is a form for this.** If typing a file into a terminal is not something
+> you want to do, ask the agent to run `scripts/setup_web.sh`. It opens a page on
+> its own machine, asks for the same settings this document describes, checks them
+> against your mail server, and writes the file for you — including the hostname
+> problem below, which it diagnoses by name instead of leaving you to find it.
+> See [`webapp/README.md`](webapp/README.md).
+>
+> The rest of this page is the manual route, and remains worth reading: it explains
+> *why* each setting is what it is, which the form cannot.
+
 ---
 
 ## What you need first
