@@ -2,18 +2,22 @@
 declare(strict_types=1);
 
 /**
- * Writing ~/.config/agenteiamail/env.
+ * Writing ~/.openclaw/workspace/.env.
  *
- * One path, always. The listener defaults here, scripts/send.sh defaults here,
- * and a host that keeps its credentials somewhere else links this path at the
- * real file (INSTALL.md §3). Anything that writes a second copy of a mail
- * password somewhere else is creating drift, and the copy nobody is looking at
- * is the one that goes stale.
+ * This is the same file a power user writes by hand before running the install
+ * prompt, and its absence is what tells the agent a mailbox has not been
+ * configured yet. Both routes therefore end at one file, and "is this set up?"
+ * stays a single question with a single answer.
+ *
+ * ~/.config/agenteiamail/env — where the listener and scripts/send.sh look by
+ * default — is symlinked at it afterwards, which is the arrangement INSTALL.md
+ * §3 already recommends for a host whose credentials live elsewhere.
  */
 
 require_once __DIR__ . '/guard.php';
 
-const ENV_RELATIVE = '.config/agenteiamail/env';
+const ENV_RELATIVE      = '.openclaw/workspace/.env';
+const ENV_LINK_RELATIVE = '.config/agenteiamail/env';
 
 /** The keys this form owns, in the order they are written. */
 const ENV_FIELDS = [
@@ -57,23 +61,67 @@ function readlink_absolute(string $path): ?string
     return $target;
 }
 
-/**
- * A host that already keeps AGENT_EMAIL_* keys in the OpenClaw workspace would
- * end up with two files holding the same credentials. Say so rather than
- * silently create the second one — INSTALL.md is explicit that duplicated
- * values drift, and the stale copy is always the one nobody is reading.
- */
-function conflicting_env(): ?string
+function env_link_path(): string
 {
-    $candidate = rtrim(home_dir(), '/') . '/.openclaw/workspace/.env';
-    if (!is_file($candidate) || realpath($candidate) === realpath(env_path())) {
+    return rtrim(home_dir(), '/') . '/' . ENV_LINK_RELATIVE;
+}
+
+/**
+ * This page is for a host with no mailbox configured yet. If the file is
+ * already there with mail settings in it, something is working and this form is
+ * about to overwrite it — say so rather than quietly replacing a live account.
+ */
+function existing_config(): ?string
+{
+    $path = env_path();
+    if (!is_file($path)) {
         return null;
     }
-    $contents = @file_get_contents($candidate);
+    $contents = @file_get_contents($path);
     if (!is_string($contents)) {
         return null;
     }
-    return preg_match('/^\s*AGENT_EMAIL_[A-Z_]*\s*=/m', $contents) === 1 ? $candidate : null;
+    return preg_match('/^\s*(AGENT_EMAIL|AGENTEIAMAIL)_[A-Z_]*\s*=/m', $contents) === 1 ? $path : null;
+}
+
+/**
+ * Point the default path at the file we just wrote.
+ *
+ * scripts/send.sh has no systemd unit to carry an --env flag, so without this
+ * it looks in ~/.config/agenteiamail/env, finds nothing, and refuses to send —
+ * at the moment the agent first tries to answer somebody. Best effort: a host
+ * that already has a real file there is left alone rather than overwritten.
+ *
+ * @return array{0: bool, 1: string} linked, and what happened
+ */
+function link_default_path(string $target): array
+{
+    $link = env_link_path();
+    $dir  = dirname($link);
+
+    clearstatcache(true, $link);
+
+    if (is_link($link)) {
+        $current = readlink_absolute($link);
+        if ($current === $target) {
+            return [true, 'already pointed at the new file'];
+        }
+        if (!@unlink($link)) {
+            return [false, 'a link is already there and could not be replaced'];
+        }
+    } elseif (file_exists($link)) {
+        // A real file here is somebody's deliberate configuration. Not ours to remove.
+        return [false, "a real file already exists at {$link} and was left alone"];
+    }
+
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        return [false, "could not create {$dir}"];
+    }
+    @chmod($dir, 0700);
+
+    return @symlink($target, $link)
+        ? [true, 'linked']
+        : [false, "could not create the link at {$link}"];
 }
 
 /**

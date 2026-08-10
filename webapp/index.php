@@ -33,21 +33,13 @@ function e(?string $value): string
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/** Identifies one exact set of settings, without keeping them around. */
-function values_fingerprint(array $values): string
-{
-    $ordered = [];
-    foreach (ENV_FIELDS as $key) {
-        $ordered[$key] = (string) ($values[$key] ?? '');
-    }
-    return hash('sha256', json_encode($ordered, JSON_THROW_ON_ERROR));
-}
 
 $action  = (string) ($_POST['action'] ?? '');
-$errors  = [];
-$report  = null;
-$saved   = null;
-$notice  = null;
+$errors      = [];
+$report      = null;
+$saved       = null;
+$notice      = null;
+$linkWarning = null;
 
 // The password lives in the session between the test and the save, never in a
 // value attribute. Re-rendering it into the HTML would put it in the page
@@ -73,7 +65,11 @@ if ($action !== '') {
     $_SESSION['values'] = $values;
 }
 
-if ($action === 'test' && $errors === []) {
+// One action, in one order: check the settings against the real servers, and
+// write the file only if both of them accepted the account. A configuration
+// that does not authenticate is not a configuration — writing it would leave
+// the agent with a file that looks finished and a mailbox it cannot open.
+if ($action === 'setup' && $errors === []) {
     $imap = probe_imap(
         $values['AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST'],
         (int) $values['AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT'],
@@ -87,29 +83,22 @@ if ($action === 'test' && $errors === []) {
         $values['AGENT_EMAIL_PASSWORD'],
     );
     $report = ['imap' => $imap, 'smtp' => $smtp, 'ok' => $imap['ok'] && $smtp['ok']];
-    // Tie the verdict to the exact values that earned it. Otherwise a passing
-    // check followed by an edited hostname would still count as verified, and
-    // "checked" would mean "checked something, once".
-    $_SESSION['verified'] = $report['ok'] ? values_fingerprint($values) : null;
-}
 
-if ($action === 'save' && $errors === []) {
-    $verified = ($_SESSION['verified'] ?? null) === values_fingerprint($values);
-    if (!$verified && (string) ($_POST['anyway'] ?? '') !== 'yes') {
-        $notice = 'Check the settings first, or tick the box to save them without checking.';
-    } else {
+    if ($report['ok']) {
         [$ok, $where] = write_env(render_env($values));
         if ($ok) {
             $saved = $where;
-            // Nothing keeps the password in memory after it has been written.
-            unset($_SESSION['values'], $_SESSION['verified']);
+            [$linked, $linkNote] = link_default_path($where);
+            $linkWarning = $linked ? null : $linkNote;
+            // Nothing keeps the password in memory once it is on disk.
+            unset($_SESSION['values']);
         } else {
             $notice = $where;
         }
     }
 }
 
-$conflict = conflicting_env();
+$existing = existing_config();
 ?>
 <!doctype html>
 <html lang="en">
@@ -125,15 +114,19 @@ $conflict = conflicting_env();
 <?php if ($saved !== null): ?>
 
   <h1>Done</h1>
-  <p class="lead">The mailbox settings are saved. You can close this page.</p>
+  <p class="lead">Your mail server accepted the account, and the settings are saved.
+     You can close this page.</p>
 
   <div class="panel ok">
     <p>Written to <code><?= e($saved) ?></code>, readable only by this account.</p>
+    <?php if ($linkWarning !== null): ?>
+      <p>One thing to mention to whoever set this up: <?= e($linkWarning) ?>.</p>
+    <?php endif; ?>
   </div>
 
   <h2>What happens next</h2>
-  <p>Tell the agent the settings are in place. It will start the listener and check
-     that mail arrives — that part is its job, not yours.</p>
+  <p>Tell the agent the settings are in place. It will install the rest and check that
+     mail arrives — that part is its job, not yours.</p>
   <p>The one thing still worth doing yourself: send the agent an email and ask it what
      just arrived. If it answers within a couple of seconds, everything works.</p>
 
@@ -145,15 +138,67 @@ $conflict = conflicting_env();
   <p class="lead">Seven settings from your email provider. Everything stays on this
      machine — the page is not reachable from the internet.</p>
 
-  <?php if ($conflict !== null): ?>
+  <?php if ($existing !== null): ?>
     <div class="panel warn">
-      <p><strong>Heads up.</strong> There is already a file at <code><?= e($conflict) ?></code>
-         with mail settings in it. Saving here creates a second copy in a different place,
-         and two copies drift — the one nobody is looking at goes stale.</p>
-      <p>If the agent is already reading that file, close this page and tell whoever set it
-         up rather than filling this in.</p>
+      <p><strong>Heads up.</strong> There are already mail settings at
+         <code><?= e($existing) ?></code>. Finishing this form replaces them.</p>
+      <p>If the agent is already handling mail, close this page and check with whoever set
+         it up before going further.</p>
     </div>
   <?php endif; ?>
+
+  <details class="help">
+    <summary>Where do I find these settings?</summary>
+
+    <h3>If your email came with your web hosting (cPanel)</h3>
+    <p>This is the most common case, and the settings are already written down for you.</p>
+    <ol>
+      <li>Sign in to cPanel — usually <code>yourdomain.com/cpanel</code>, or a link your host emailed you.</li>
+      <li>Open <strong>Email Accounts</strong>.</li>
+      <li>Find the address the agent will use, and click <strong>Connect Devices</strong>
+          (older versions call it <em>Set Up Mail Client</em>).</li>
+      <li>Look for <strong>Mail Client Manual Settings</strong>, and use the
+          <strong>Secure SSL/TLS Settings</strong> column — not the non-SSL one.</li>
+    </ol>
+    <p>Copy <em>Incoming Server</em> and its IMAP port into the reading section below,
+       and <em>Outgoing Server</em> and its SMTP port into the sending section. The username
+       is the full email address, and the password is the one you set for that mailbox when
+       you created it. If you cannot remember it, cPanel can change it on that same page.</p>
+
+    <h3>Gmail or Google Workspace</h3>
+    <p>Server names are always the same: <code>imap.gmail.com</code> port <code>993</code>
+       for reading, <code>smtp.gmail.com</code> port <code>465</code> for sending.</p>
+    <p>The password is the part that catches people. Google will not accept your normal
+       one here — you need an <strong>app password</strong>, which requires 2-Step
+       Verification to be switched on first. Create one at
+       <code>myaccount.google.com</code> → Security → App passwords, and paste the
+       16-character code it gives you.</p>
+    <p>Also check that IMAP is enabled: Gmail → Settings → Forwarding and POP/IMAP.</p>
+
+    <h3>Outlook.com, Hotmail or Microsoft 365</h3>
+    <p><code>outlook.office365.com</code> port <code>993</code> for reading,
+       <code>smtp.office365.com</code> port <code>587</code> for sending.</p>
+    <p>Many business Microsoft accounts now block sign-ins like this one by policy. If the
+       check below refuses the password even though it is right, that is usually why, and
+       your administrator has to allow it.</p>
+
+    <h3>Zoho</h3>
+    <p><code>imappro.zoho.com</code> port <code>993</code>, <code>smtp.zoho.com</code>
+       port <code>465</code>. Zoho also wants an app password rather than your normal one.</p>
+
+    <h3>Fastmail</h3>
+    <p><code>imap.fastmail.com</code> port <code>993</code>,
+       <code>smtp.fastmail.com</code> port <code>465</code>, with an app password.</p>
+
+    <h3>Anything else</h3>
+    <p>Ask your provider, or search for their name plus <em>IMAP and SMTP settings</em>.
+       You are looking for four things: an incoming server name, an outgoing server name,
+       and a port for each. Prefer the ports marked SSL or TLS.</p>
+    <p>One warning worth repeating: do not guess the server name by putting
+       <code>mail.</code> in front of your own domain. It often works well enough to look
+       right and then fails on the security certificate, which is a miserable thing to
+       diagnose later. The check below catches it, and will tell you so plainly.</p>
+  </details>
 
   <?php if ($notice !== null): ?>
     <div class="panel warn"><p><?= e($notice) ?></p></div>
@@ -239,8 +284,8 @@ $conflict = conflicting_env();
     </fieldset>
 
     <?php if ($report !== null): ?>
-      <div class="panel <?= $report['ok'] ? 'ok' : 'bad' ?>">
-        <h2><?= $report['ok'] ? 'Everything answered' : 'Something is not right yet' ?></h2>
+      <div class="panel bad">
+        <h2>Not saved yet — something here is not right</h2>
 
         <h3>Reading mail</h3>
         <ul class="steps">
@@ -265,19 +310,12 @@ $conflict = conflicting_env();
     <?php endif; ?>
 
     <div class="actions">
-      <button type="submit" name="action" value="test" class="secondary">Check these settings</button>
-      <button type="submit" name="action" value="save" class="primary">Save</button>
+      <button type="submit" name="action" value="setup" class="primary">Check and save</button>
     </div>
 
-    <?php if ($report !== null && !$report['ok']): ?>
-      <label class="check">
-        <input type="checkbox" name="anyway" value="yes">
-        Save anyway. I know the agent will not be able to use these yet.
-      </label>
-    <?php endif; ?>
-
-    <p class="quiet">Checking signs in to your mailbox and signs straight back out. It does
-       not read, send, or change anything.</p>
+    <p class="quiet">This signs in to your mailbox and signs straight back out — it does not
+       read, send, or change anything. The settings are saved only if your mail server
+       accepts them, so there is nothing to undo if something here is wrong.</p>
   </form>
 
 <?php endif; ?>

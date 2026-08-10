@@ -1,7 +1,18 @@
 # The setup page
 
-A form that collects the seven mailbox settings, checks them against the real
-mail server, and writes `~/.config/agenteiamail/env`.
+A form that collects the seven mailbox settings, signs in to the mail server to
+confirm they work, and — only if the server accepts the account — writes
+`~/.openclaw/workspace/.env`.
+
+That is the same file a power user writes by hand before running the install
+prompt, and its absence is what tells the agent no mailbox has been configured
+yet. Both routes end at one file, so "is this set up?" has one answer.
+`~/.config/agenteiamail/env`, where the listener and `scripts/send.sh` look by
+default, is symlinked at it afterwards.
+
+**Nothing is written unless the account authenticates.** A configuration that
+does not sign in is not a configuration, and writing one would leave the agent
+with a file that looks finished and a mailbox it cannot open.
 
 It exists because everything else in this repository assumes a terminal, and the
 person who owns the mailbox often does not have one. Step 1 of `MAILBOX_SETUP.md`
@@ -74,10 +85,24 @@ cannot leave a half-file. Where the path is a symlink — the arrangement
 `INSTALL.md` §3 recommends — it writes *through* the link rather than replacing
 it, which would otherwise strand the listener on a file nobody updates.
 
-## What "check these settings" does
+## Telling people where to find their settings
+
+The form carries the instructions, because the person filling it in has nowhere
+else to look. cPanel comes first: mail that arrived with web hosting is the
+common case, and cPanel already publishes the exact values under *Email Accounts
+→ Connect Devices → Mail Client Manual Settings*, in a Secure SSL/TLS column that
+people miss next to the non-SSL one.
+
+Then Gmail, Outlook, Zoho and Fastmail — each with the caveat that actually
+stops them, which is almost always an app password rather than a wrong server
+name. It is a `<details>` block, so it collapses with no JavaScript on a page
+whose policy forbids scripts entirely.
+
+## What the check does
 
 It opens a real connection to both servers and signs in, then signs straight out.
-It does not read, send, or change anything.
+It does not read, send, or change anything. Passing it is the condition for the
+file being written at all.
 
 The check exists because the failures this project actually sees do not look like
 mistakes in the file:
@@ -105,7 +130,7 @@ webapp/index.php        the form, the report, and the confirmation
 webapp/lib/guard.php    loopback check, one-time key, CSRF, headers
 webapp/lib/validate.php field checks, each one a mistake seen in the wild
 webapp/lib/probe.php    live IMAP and SMTP sign-in
-webapp/lib/envfile.php  rendering and writing ~/.config/agenteiamail/env
+webapp/lib/envfile.php  writing ~/.openclaw/workspace/.env, and the symlink
 webapp/assets/app.css   no webfonts: this host may have no internet route
 scripts/setup_web.sh    generates the key, serves the page, stops when saved
 ```
@@ -115,6 +140,9 @@ scripts/setup_web.sh    generates the key, serves the page, stops when saved
 **It does not install anything.** It writes one file. Himalaya, the systemd
 units, the roster and the verification checklist are the agent's job, and
 `INSTALL.md` is where they live.
+
+**It does not decide anything.** It writes credentials. Whether the mail server
+accepts them is the mail server's answer, not the form's opinion.
 
 **It does not touch `roster.txt`.** Who the agent may write to, and whose mail it
 may act on, is a decision made by a human in a text file — not through a web form

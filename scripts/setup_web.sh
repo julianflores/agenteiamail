@@ -107,7 +107,7 @@ EOF
 # rather than merely checking that it exists — this gets run again to *change*
 # settings, and an existing file would otherwise end the script before the page
 # had been opened.
-target="$HOME/.config/agenteiamail/env"
+target="$HOME/.openclaw/workspace/.env"
 fingerprint() { [ -e "$target" ] && cat "$target" 2>/dev/null | cksum || echo absent; }
 before=$(fingerprint)
 

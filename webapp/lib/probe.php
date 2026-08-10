@@ -245,17 +245,40 @@ function smtp_command(mixed $stream, string $command): string
 }
 
 /**
+ * Try the encryption style the port suggests, and if the server turns out to
+ * speak the other one, try that before giving up.
+ *
+ * 465 means TLS from the first byte and 587 means STARTTLS, by convention — but
+ * it is only a convention. Hosts do offer implicit TLS on other ports, and a
+ * mismatch here looks exactly like "that port is not speaking SMTP", which
+ * would send someone off to check a setting that was right all along.
+ *
  * @return array{ok: bool, steps: array<int, array>}
  */
 function probe_smtp(string $host, int $port, string $user, string $pass): array
 {
-    $steps    = [];
-    $implicit = ($port === 465);
+    $preferred = ($port !== 587 && $port !== 25 && $port !== 2525);
+
+    $result = probe_smtp_mode($host, $port, $user, $pass, $preferred);
+    if ($result['ok'] || $result['authenticated']) {
+        return $result;   // it spoke SMTP; the other mode will not help
+    }
+
+    $fallback = probe_smtp_mode($host, $port, $user, $pass, !$preferred);
+    return $fallback['ok'] ? $fallback : $result;
+}
+
+/**
+ * @return array{ok: bool, authenticated: bool, steps: array<int, array>}
+ */
+function probe_smtp_mode(string $host, int $port, string $user, string $pass, bool $implicit): array
+{
+    $steps = [];
 
     [$stream, $error] = open_stream($implicit ? 'ssl' : 'tcp', $host, $port);
     if ($stream === null) {
         $steps[] = step(false, "Could not reach {$host}:{$port}.", $error);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     $greeting = smtp_read_reply($stream);
@@ -263,14 +286,14 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
         $steps[] = step(false, 'That port answered, but it is not speaking SMTP.',
             trim($greeting) !== '' ? 'It said: ' . trim($greeting) : 'It said nothing at all.');
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     $ehlo = smtp_command($stream, 'EHLO localhost');
     if (smtp_code($ehlo) !== 250) {
         $steps[] = step(false, 'The server would not start a session.', trim($ehlo));
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     if ($implicit) {
@@ -281,13 +304,13 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
                 'Sending a password over an unencrypted link is not something this tool will set up. '
               . 'Try port 465, or 587 on a provider that supports STARTTLS.');
             fclose($stream);
-            return ['ok' => false, 'steps' => $steps];
+            return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
         }
         $start = smtp_command($stream, 'STARTTLS');
         if (smtp_code($start) !== 220) {
             $steps[] = step(false, 'The server refused to switch to an encrypted connection.', trim($start));
             fclose($stream);
-            return ['ok' => false, 'steps' => $steps];
+            return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
         }
         [$crypto, $warnings] = collect_warnings(
             static fn () => stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)
@@ -298,7 +321,7 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
             $steps[] = step(false, 'The encrypted connection could not be established.',
                 explain_connect_error($warnings, $host));
             fclose($stream);
-            return ['ok' => false, 'steps' => $steps];
+            return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
         }
         $steps[] = step(true, "Connected to {$host}:{$port} and upgraded to TLS; the certificate checks out.");
         $ehlo = smtp_command($stream, 'EHLO localhost');
@@ -309,7 +332,7 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
             'That usually means the port is meant for something else. 465 and 587 are the two to try.');
         smtp_command($stream, 'QUIT');
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     $auth = smtp_command($stream, 'AUTH LOGIN');
@@ -317,7 +340,7 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
         $steps[] = step(false, 'The server would not accept this way of signing in.', trim($auth));
         smtp_command($stream, 'QUIT');
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     $sentUser = smtp_command($stream, base64_encode($user));
@@ -325,7 +348,7 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
         $steps[] = step(false, 'The server rejected the address.', trim($sentUser));
         smtp_command($stream, 'QUIT');
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
 
     $sentPass = smtp_command($stream, base64_encode($pass));
@@ -335,11 +358,11 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
           . 'sending, or need SMTP switched on in your account settings.');
         smtp_command($stream, 'QUIT');
         fclose($stream);
-        return ['ok' => false, 'steps' => $steps];
+        return ['ok' => false, 'authenticated' => false, 'steps' => $steps];
     }
     $steps[] = step(true, 'Signed in successfully, so the agent will be able to send replies.');
 
     smtp_command($stream, 'QUIT');
     fclose($stream);
-    return ['ok' => true, 'steps' => $steps];
+    return ['ok' => true, 'authenticated' => true, 'steps' => $steps];
 }
