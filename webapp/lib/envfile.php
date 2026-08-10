@@ -33,7 +33,28 @@ function env_path(): string
 
 function env_is_symlink(): bool
 {
+    clearstatcache(true, env_path());
     return is_link(env_path());
+}
+
+/**
+ * Where a symlink actually points, as an absolute path.
+ *
+ * realpath() is not enough on its own: it returns false when the target does
+ * not exist yet, and a link pointing at a file somebody has not created is
+ * exactly the case where writing to the link path instead would silently
+ * replace the link. readlink() answers even for a dangling one.
+ */
+function readlink_absolute(string $path): ?string
+{
+    $target = @readlink($path);
+    if (!is_string($target) || $target === '') {
+        return null;
+    }
+    if (!str_starts_with($target, '/')) {
+        $target = dirname($path) . '/' . $target;
+    }
+    return $target;
 }
 
 /**
@@ -115,7 +136,13 @@ function write_env(string $contents): array
     // Follow a symlink rather than replacing it: on a host where this path is
     // linked at the OpenClaw .env, renaming over it would break the link and
     // strand the listener on a file nobody updates.
-    $target = is_link($path) ? (realpath($path) ?: $path) : $path;
+    //
+    // Clear the stat cache first. PHP remembers what it learned about a path,
+    // and the built-in server is one long-lived process — so a page loaded
+    // before the link existed leaves is_link() answering from a stale memory,
+    // and the link gets replaced exactly as if this branch were not here.
+    clearstatcache(true, $path);
+    $target = is_link($path) ? (readlink_absolute($path) ?: $path) : $path;
     if ($target !== $path) {
         if (@file_put_contents($target, $contents) === false) {
             @unlink($tmp);

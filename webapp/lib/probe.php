@@ -68,24 +68,53 @@ function tls_context(): mixed
     ]]);
 }
 
+/**
+ * Run something that may emit warnings, and hand back every one of them.
+ *
+ * A failed TLS connect emits several warnings and then sets $errstr to
+ * "Unable to connect to ssl://host:port (Unknown error)". The useful sentence —
+ * *Peer certificate CN did not match expected CN* — is in one of the earlier
+ * warnings, so `error_get_last()` alone returns the least informative of the
+ * set. Collecting all of them is the only way to see the actual cause.
+ *
+ * @return array{0: mixed, 1: string} the return value, and the warnings joined
+ */
+function collect_warnings(callable $fn): array
+{
+    $messages = [];
+    set_error_handler(static function (int $errno, string $message) use (&$messages): bool {
+        $messages[] = $message;
+        return true;   // handled: keep it out of the page and the log
+    });
+    try {
+        $result = $fn();
+    } finally {
+        restore_error_handler();
+    }
+    return [$result, implode(' ', $messages)];
+}
+
 /** @return array{0: ?resource, 1: string} the stream, or null and an explanation */
 function open_stream(string $scheme, string $host, int $port): array
 {
     $errno  = 0;
     $errstr = '';
-    $stream = @stream_socket_client(
-        "{$scheme}://{$host}:{$port}",
-        $errno,
-        $errstr,
-        PROBE_TIMEOUT,
-        STREAM_CLIENT_CONNECT,
-        tls_context()
+
+    [$stream, $warnings] = collect_warnings(
+        static function () use ($scheme, $host, $port, &$errno, &$errstr) {
+            return stream_socket_client(
+                "{$scheme}://{$host}:{$port}",
+                $errno,
+                $errstr,
+                PROBE_TIMEOUT,
+                STREAM_CLIENT_CONNECT,
+                tls_context()
+            );
+        }
     );
 
     if ($stream === false) {
-        $last = error_get_last();
-        $raw  = $errstr !== '' ? $errstr : (string) ($last['message'] ?? '');
-        return [null, explain_connect_error($raw, $host)];
+        return [null, explain_connect_error(trim($warnings . ' ' . $errstr), $host)];
     }
 
     stream_set_timeout($stream, PROBE_TIMEOUT);
@@ -260,11 +289,14 @@ function probe_smtp(string $host, int $port, string $user, string $pass): array
             fclose($stream);
             return ['ok' => false, 'steps' => $steps];
         }
-        $crypto = @stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+        [$crypto, $warnings] = collect_warnings(
+            static fn () => stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)
+        );
         if ($crypto !== true) {
-            $last = error_get_last();
+            // Same trap as the implicit-TLS path: the certificate complaint is in
+            // a warning, not in the return value.
             $steps[] = step(false, 'The encrypted connection could not be established.',
-                explain_connect_error((string) ($last['message'] ?? ''), $host));
+                explain_connect_error($warnings, $host));
             fclose($stream);
             return ['ok' => false, 'steps' => $steps];
         }

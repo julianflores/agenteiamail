@@ -95,6 +95,9 @@ cat <<EOF
 
       ssh -L $PORT:127.0.0.1:$PORT $(id -un)@$(hostname -f 2>/dev/null || hostname)
 
+  (that host name is this machine's idea of itself — replace it
+   with whatever you normally ssh to, if they differ)
+
   The link works once, until this stops. Ctrl-C when finished.
   Server log: $LOG
 
