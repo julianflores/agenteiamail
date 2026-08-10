@@ -6,10 +6,15 @@ Holds an IMAP IDLE connection open. The server pushes an untagged EXISTS as soon
 as mail arrives; we fetch headers for the new UIDs and print one line per message
 on stdout.
 
+Every message is reported, whoever sent it. Messages from an address on
+`roster.txt` are additionally tagged `roster` in the emitted line: that tag is
+how the agent knows, without opening anything, that this is mail it may act on
+and answer. Everything else is a notification and nothing more.
+
 One stdout line == one harness notification. Output is line-buffered and never
 contains credentials.
 
-Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once] [--autorespond]
+Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once] [--roster PATH]
 Exit:   0 clean shutdown · 1 configuration or login failure (not retryable)
 """
 
@@ -17,7 +22,7 @@ import argparse, email, email.utils, imaplib, json, os, pathlib, re
 import select, signal, socket, ssl, sys, time
 from email.header import decode_header, make_header
 
-from autoreply import DEFAULT_ACCOUNT, DEFAULT_ROSTER, DEFAULT_STATE as DEFAULT_AUTOREPLY_STATE, maybe_autoreply
+from roster import DEFAULT_ROSTER, roster_addresses, sender_is_listed
 
 DEFAULT_ENV   = "~/.config/agenteiamail/env"
 DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
@@ -70,7 +75,7 @@ def decode_hdr(value):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def describe(sender, subject, date):
+def describe(sender, subject, date, trusted=False):
     name, addr = email.utils.parseaddr(sender)
     who = name or addr or "unknown"
 
@@ -82,6 +87,10 @@ def describe(sender, subject, date):
     except Exception:
         pass
     when = time.strftime("%H:%M:%S") + (f", sent {sent}" if sent else "")
+    # The tag goes inside the timestamp bracket so one grep finds actionable
+    # mail in the log, and so its absence is visible rather than merely implied.
+    if trusted:
+        when += ", roster"
 
     m = GH_SUBJECT.match(subject or "")
     if m:
@@ -197,8 +206,13 @@ def newest_uid(conn):
     return max(int(u) for u in data[0].split())
 
 
-def fetch_since(conn, last_uid):
-    """[(uid, line, headers)] for every message with UID > last_uid."""
+def fetch_since(conn, last_uid, allowed):
+    """[(uid, line)] for every message with UID > last_uid.
+
+    Headers only — BODY.PEEK of three fields. The listener never downloads a
+    body and never marks anything read; reading is the agent's job, through
+    Himalaya, after it sees the notification.
+    """
     typ, data = conn.uid("search", None, f"UID {last_uid + 1}:*")
     if typ != "OK" or not data or not data[0]:
         return []
@@ -213,8 +227,8 @@ def fetch_since(conn, last_uid):
         msg = email.message_from_bytes(payload[0][1])
         out.append((uid, describe(decode_hdr(msg.get("From")),
                                   decode_hdr(msg.get("Subject")),
-                                  msg.get("Date", "")),
-                    msg))
+                                  msg.get("Date", ""),
+                                  sender_is_listed(msg, allowed))))
     return out
 
 
@@ -250,8 +264,12 @@ def idle(conn, timeout):
                 break
 
 
-def run(env_path, mailbox, once, state_path, autorespond, roster_path, autoreply_state, account):
+def run(env_path, mailbox, once, state_path, roster_path):
     env = load_env(env_path)
+    if not roster_path.is_file():
+        # Not fatal. Mail still gets reported; nothing gets tagged, so the agent
+        # treats everything as read-only until a human writes the file.
+        log(f"no roster at {roster_path}; no sender will be tagged as trusted")
     backoff = BACKOFF_MIN
     state = load_state(state_path)
     last_uid = state.get("last_uid") if state.get("mailbox") == mailbox else None
@@ -284,14 +302,11 @@ def run(env_path, mailbox, once, state_path, autorespond, roster_path, autoreply
 
             # Anything that landed while this process was not running: a reboot, a
             # dropped connection, a machine that was off overnight.
-            pending = fetch_since(conn, last_uid)
+            pending = fetch_since(conn, last_uid, roster_addresses(roster_path))
             if len(pending) > 1:
                 emit(f"[mail] catching up — {len(pending)} messages arrived while offline")
-            for uid, line, headers in pending:
+            for uid, line in pending:
                 emit(line)
-                if autorespond:
-                    status, detail = maybe_autoreply(uid, headers, env, roster_path, autoreply_state, account)
-                    log(f"autoreply {status} for uid {uid}: {detail}")
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
@@ -303,11 +318,10 @@ def run(env_path, mailbox, once, state_path, autorespond, roster_path, autoreply
                 # mail landing between DONE and the next IDLE produces no EXISTS we
                 # can see, and would sit unnoticed until the *next* message arrived.
                 found = False
-                for uid, line, headers in fetch_since(conn, last_uid):
+                # Re-read the roster every batch. Adding someone takes effect on
+                # their next message, with no restart and no lost notification.
+                for uid, line in fetch_since(conn, last_uid, roster_addresses(roster_path)):
                     emit(line)
-                    if autorespond:
-                        status, detail = maybe_autoreply(uid, headers, env, roster_path, autoreply_state, account)
-                        log(f"autoreply {status} for uid {uid}: {detail}")
                     last_uid = uid
                     found = True
                     # Persist per message, not per batch: a crash mid-batch must
@@ -341,14 +355,8 @@ def main():
     p.add_argument("--once", action="store_true", help="exit after the first batch")
     p.add_argument("--state", default=DEFAULT_STATE,
                    help="where to persist the last reported UID ('none' to disable)")
-    p.add_argument("--autorespond", action="store_true",
-                   help="send fixed automatic replies to allowlisted senders in roster.txt")
     p.add_argument("--roster", default=str(DEFAULT_ROSTER),
-                   help="allowlist for automatic replies and sends")
-    p.add_argument("--autoreply-state", default=DEFAULT_AUTOREPLY_STATE,
-                   help="where to persist automatic-reply attempts")
-    p.add_argument("--account", default=DEFAULT_ACCOUNT,
-                   help="Himalaya account used for automatic replies")
+                   help="trusted-sender list; their mail is tagged 'roster'")
     args = p.parse_args()
 
     signal.signal(signal.SIGTERM, _handle_stop)
@@ -363,10 +371,7 @@ def main():
         args.mailbox,
         args.once,
         pathlib.Path(args.state).expanduser(),
-        args.autorespond,
         pathlib.Path(args.roster).expanduser(),
-        pathlib.Path(args.autoreply_state).expanduser(),
-        args.account,
     )
 
 

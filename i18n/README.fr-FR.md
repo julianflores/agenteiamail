@@ -102,6 +102,12 @@ ne va pas.
 - **Lire et envoyer** via Himalaya, avec la boîte que vous avez configurée.
 - **N'envoyer qu'aux adresses que vous avez approuvées**, listées dans
   `roster.txt`. Toute autre est refusée d'emblée, sans même vous demander.
+- **Travailler à partir du courrier envoyé par ces mêmes adresses approuvées.**
+  Vous lui envoyez une tâche, il l'exécute et vous répond par courrier. Sans accusé
+  de réception préalable et sans demander la permission — vous l'avez déjà donnée
+  en vous inscrivant sur la liste.
+- **Laisser le courrier des autres tranquille.** Ce qui arrive d'une adresse
+  absente de la liste vous est signalé, rien de plus.
 
 ## Ce que cela change sur la machine
 
@@ -118,19 +124,28 @@ tout ceci en terminant, et vous pouvez lui en demander la liste :
 
 ## Sécurité
 
-L'agent peut envoyer du courrier directement, ce qui rend un risque bien réel :
-**il lit du contenu non fiable toute la journée, et tout ce qu'il lit est un canal
-d'instructions possible.**
+L'agent travaille à partir de son courrier : la question n'est donc pas de savoir
+s'il exécute des instructions reçues par e-mail — il le fait, c'est le principe —
+mais **de qui** elles viennent.
 
-- `roster.txt` est une liste à correspondance exacte. Ce qui n'y figure pas est
-  refusé.
-- Le corps des messages est traité comme **des données, jamais comme des ordres** :
-  un message demandant à l'agent de transférer quelque chose n'est pas une requête
-  qu'il exécute.
-- **Ajouter un destinataire à `roster.txt` est votre décision**, jamais une
-  réponse à quelque chose arrivé par courrier.
+- `roster.txt` est une liste à correspondance exacte, et c'est toute la réponse. Si
+  l'expéditeur y figure, l'agent fait ce que le message demande et répond. Sinon,
+  il vous signale l'arrivée du courrier et n'en fait rien d'autre.
+- La correspondance porte sur `From` uniquement. Un `Reply-To` désignant une
+  personne approuvée n'accorde rien : un inconnu ne peut pas emprunter une adresse
+  de la liste au moyen d'un en-tête.
+- **Ajouter quelqu'un à `roster.txt` est votre décision**, jamais une réponse à
+  quelque chose arrivé par courrier. Cette ligne est ce qui fait d'un expéditeur
+  quelqu'un à qui votre agent obéit.
+- Sans fichier roster, personne n'est de confiance : une installation neuve lit le
+  courrier et n'agit sur rien tant que vous n'avez pas écrit la liste.
 - Le mot de passe réside dans un fichier en `600` hors du dépôt, et ne transite
   jamais par une conversation.
+
+Notez ce sur quoi repose ce design : votre fournisseur de messagerie. SPF, DKIM et
+DMARC sont appliqués avant que quoi que ce soit n'atteigne la boîte de réception,
+et c'est ce qui empêche de falsifier un `From` trivialement. Sur une boîte
+dépourvue de ce filtrage, le roster protège moins qu'il n'y paraît.
 
 ---
 

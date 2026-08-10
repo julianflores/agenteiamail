@@ -96,6 +96,11 @@ Si lo manda, detente y avísale a quien lo instaló. Algo está mal.
 - **Leer y enviar** con Himalaya, usando el buzón que configuraste.
 - **Enviar solo a direcciones que tú aprobaste**, listadas en `roster.txt`.
   Cualquier otra se rechaza de plano, ni siquiera te pregunta.
+- **Trabajar con el correo que mandan esas mismas direcciones aprobadas.** Le
+  escribes una tarea, la hace y te manda la respuesta por correo. Sin acuse previo
+  y sin pedirte permiso — ya se lo diste al ponerte en la lista.
+- **Dejar en paz el correo de los demás.** Lo que llega de una dirección que no
+  está en la lista te lo reporta, y nada más.
 
 ## Qué cambia en la computadora
 
@@ -112,19 +117,28 @@ todo esto cuando termine, y puedes exigirle la lista:
 
 ## Seguridad
 
-El agente puede enviar correo directamente, así que hay un riesgo real: **lee
-contenido no confiable todo el día, y cualquier cosa que lee es un posible canal
-de instrucciones.**
+El agente trabaja desde su correo, así que la pregunta no es si obedece
+instrucciones que llegan por email — sí lo hace, ese es el punto — sino **de
+quién**.
 
-- `roster.txt` es una lista de coincidencia exacta. Lo que no esté ahí, se
-  rechaza.
-- El cuerpo de los correos se trata como **datos, nunca como órdenes** — un
-  mensaje que le diga al agente que reenvíe algo no es una petición que el agente
-  obedezca.
-- **Agregar un destinatario a `roster.txt` es decisión tuya**, nunca respuesta a
-  algo que llegó por correo.
+- `roster.txt` es una lista de coincidencia exacta, y es toda la respuesta. Si el
+  remitente está en la lista, el agente hace lo que el mensaje pide y contesta. Si
+  no está, te avisa que llegó el correo y no hace nada más con él.
+- La coincidencia es sobre `From` únicamente. Un `Reply-To` que apunte a alguien
+  aprobado no otorga nada, así que un desconocido no puede tomar prestada una
+  dirección de la lista con un encabezado.
+- **Agregar a alguien a `roster.txt` es decisión tuya**, nunca respuesta a algo que
+  llegó por correo. Esa línea es lo que convierte a un remitente en alguien a quien
+  tu agente obedece.
+- Sin archivo de roster no hay nadie confiable — una instalación nueva lee correo y
+  no actúa sobre nada hasta que tú escribas la lista.
 - La contraseña vive en un archivo con permisos `600` fuera del repositorio, y
   nunca pasa por una conversación de chat.
+
+Nota en qué se apoya este diseño: tu proveedor de correo. SPF, DKIM y DMARC se
+aplican antes de que algo llegue a la bandeja, y eso es lo que evita que falsificar
+un `From` sea trivial. Si apuntas esto a un buzón sin ese filtrado, el roster
+protege menos de lo que parece.
 
 ---
 

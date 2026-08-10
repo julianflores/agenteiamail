@@ -324,8 +324,9 @@ because it is what the templates are for:
 - `StandardOutput=append:` the event log, `StandardError=append:` the error log —
   **they must be separate files** (see DESIGN.md)
 - `--env` on `ExecStart` if your credentials are not at the default path
-- `--autorespond` on `ExecStart` if this install should send fixed automatic
-  acknowledgements to senders listed in `roster.txt`
+- `--roster` on `ExecStart` if `roster.txt` is not at the repository root. The
+  listener reads it to tag mail from approved senders, and an install pointing at
+  the wrong file tags nobody — the agent then reports mail it should be acting on
 
 ```bash
 mkdir -p ~/.local/state/agenteiamail
@@ -421,14 +422,19 @@ grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/nu
 # 5. End to end — have someone external send you mail
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
-# 6. The allowlist behaves — 11 cases, including substring and prefix attacks
+# 6. The allowlist behaves on send — 11 cases, incl. substring and prefix attacks
 scripts/test_roster.sh
 
-# 6a. The autoresponder is fixed and roster-gated
-python3 scripts/test_autoreply.py
+# 6a. And on receive: the same list, as the listener reads it
+python3 scripts/test_listener.py
 
-# 6b. And against your real roster: a stranger is refused with exit 2
+# 6b. Against your real roster: a stranger is refused with exit 2
 echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt; echo "exit=$?"
+
+# 6c. Your own mail is tagged. Send yourself one, then:
+grep ", roster]" ~/.local/state/agenteiamail/mail.log | tail -1
+# No output means the agent will not act on your mail. Check that the address in
+# roster.txt matches the From address your mail actually arrives with.
 
 # 7. Survives restart without replaying or losing anything
 systemctl --user restart agenteiamail-idle.service

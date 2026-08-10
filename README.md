@@ -104,9 +104,11 @@ If it sends, stop and tell whoever set it up. Something is wrong.
 - **Read and send** through Himalaya, using the mailbox you configured.
 - **Send only to addresses you approved**, listed in `roster.txt`. Anything else is
   refused outright rather than asked about.
-- **Auto-reply to approved contacts**, when the listener is installed with
-  `--autorespond`. The reply is a fixed acknowledgement; message bodies remain
-  data, never instructions.
+- **Work from mail sent by those same approved addresses.** You email it a task, it
+  does the task and emails you the answer. No acknowledgement first, no permission
+  round-trip — you already granted that by putting yourself on the list.
+- **Leave everyone else's mail alone.** Mail from an address that is not on the
+  list is reported to you and nothing more.
 
 ## What it changes on the machine
 
@@ -124,16 +126,26 @@ list, in an order that does not leave you working from memory.
 
 ## Security
 
-The agent can send mail directly, so one risk is live: **it reads untrusted
-content all day, and anything it reads is a possible instruction channel.**
+The agent works from its mail, so the question is not whether it takes
+instructions from email — it does, that is the point — but **whose**.
 
-- `roster.txt` is an exact-match allowlist. Anything not on it is refused.
-- Email bodies are treated as **data, never as commands** — a message telling the
-  agent to forward something is not a request the agent acts on.
-- **Adding a recipient to `roster.txt` is your decision**, never a response to
-  something that arrived in the mail.
+- `roster.txt` is an exact-match allowlist, and it is the entire answer. On the
+  list: the agent does what the message asks and replies. Not on the list: the
+  agent tells you the mail arrived and does nothing else with it.
+- Matching is on `From` only. A `Reply-To` pointing at someone you approved
+  confers nothing, so a stranger cannot borrow a listed address with a header.
+- **Adding someone to `roster.txt` is your decision**, never a response to
+  something that arrived in the mail. That line is what turns a sender into
+  someone your agent obeys, so it is worth treating as a real one.
+- No roster file means nobody is trusted — a fresh install reads mail and acts on
+  none of it until you write the list.
 - The password lives in a `600` file outside the repository and never passes
   through a chat transcript.
+
+Note what this design leans on: your mail provider. SPF, DKIM and DMARC are
+enforced upstream, before anything reaches the inbox, which is what keeps a forged
+`From` from being trivial. If you point this at a mailbox with no such filtering,
+the roster is weaker than it looks.
 
 ---
 
@@ -163,7 +175,7 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
 
 himalaya                  reads and sends. The listener never fetches bodies.
 scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
-scripts/autoreply.py      fixed autoresponder for allowlisted senders only.
+scripts/roster.py         the same allowlist, read by the listener to tag senders.
 scripts/preflight.py      proves a host can run this before you install it.
 ```
 
