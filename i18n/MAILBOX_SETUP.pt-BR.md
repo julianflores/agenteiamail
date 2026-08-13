@@ -86,10 +86,6 @@ AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT=993
 
 AGENT_EMAIL_OUTGOING_SERVER_SMTP_HOST=
 AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
-
-# Só se outra coisa nesta máquina precisar de POP. O listener não usa.
-AGENT_EMAIL_INCOMING_SERVER_POP_HOST=
-AGENT_EMAIL_INCOMING_SERVER_POP_PORT=995
 ```
 
 **Portas:** a `993` para IMAP é praticamente universal. Para SMTP, a `465` é TLS
@@ -98,42 +94,6 @@ dúvida, tente a `465` primeiro.
 
 **Use um editor, não `echo`.** Tudo que você digita na linha de comando vai parar
 no histórico do shell, e esse histórico é um arquivo que fica lá por meses.
-
----
-
-## Confira antes de seguir
-
-```bash
-python3 - <<'PY'
-import pathlib, re
-env = {}
-for line in pathlib.Path.home().joinpath(".openclaw/workspace/.env").read_text().splitlines():
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k.strip()] = v.strip()
-
-for key in ("AGENT_EMAIL_ACCOUNT",
-            "AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST",
-            "AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT",
-            "AGENT_EMAIL_OUTGOING_SERVER_SMTP_HOST"):
-    v = env.get(key, "")
-    nota = ""
-    if not v:
-        nota = "  <-- VAZIO"
-    elif key.endswith("_HOST") and v.isdigit():
-        nota = "  <-- isso e uma porta, nao um nome de servidor"
-    elif key.endswith("_HOST") and v.count(".") < 2:
-        nota = "  <-- parece um dominio e nao um servidor; confira"
-    print(f"{key:42} {v or '(vazio)'}{nota}")
-
-pw = [k for k in env if k.endswith("PASSWORD")]
-print(f"{'senha presente':42} {bool(pw and env[pw[0]])}")
-PY
-```
-
-Ele nunca imprime a senha, só se existe uma. Todas as linhas devem estar
-preenchidas e nenhuma deve trazer aviso.
 
 ---
 

@@ -94,10 +94,6 @@ AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT=993
 
 AGENT_EMAIL_OUTGOING_SERVER_SMTP_HOST=
 AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
-
-# Only if something else on this machine needs POP. The listener does not.
-AGENT_EMAIL_INCOMING_SERVER_POP_HOST=
-AGENT_EMAIL_INCOMING_SERVER_POP_PORT=995
 ```
 
 **Ports:** `993` for IMAP is near-universal. For SMTP, `465` is implicit TLS and
@@ -106,42 +102,6 @@ first.
 
 **Use an editor, not `echo`.** Anything you type on a command line lands in your
 shell history, and shell history is a file that lives for months.
-
----
-
-## Check it before moving on
-
-```bash
-python3 - <<'PY'
-import pathlib, re
-env = {}
-for line in pathlib.Path.home().joinpath(".openclaw/workspace/.env").read_text().splitlines():
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k.strip()] = v.strip()
-
-for key in ("AGENT_EMAIL_ACCOUNT",
-            "AGENT_EMAIL_INCOMING_SERVER_IMAP_HOST",
-            "AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT",
-            "AGENT_EMAIL_OUTGOING_SERVER_SMTP_HOST"):
-    v = env.get(key, "")
-    note = ""
-    if not v:
-        note = "  <-- EMPTY"
-    elif key.endswith("_HOST") and v.isdigit():
-        note = "  <-- that is a port, not a hostname"
-    elif key.endswith("_HOST") and v.count(".") < 2:
-        note = "  <-- looks like a domain rather than a server; check it"
-    print(f"{key:42} {v or '(empty)'}{note}")
-
-pw = [k for k in env if k.endswith("PASSWORD")]
-print(f"{'password key present':42} {bool(pw and env[pw[0]])}")
-PY
-```
-
-It never prints the password — only whether one is set. Every line should be
-filled and none should carry a warning.
 
 ---
 

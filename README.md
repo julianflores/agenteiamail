@@ -21,8 +21,8 @@ The agent needs an email account of its own and the connection details for it,
 written into `~/.openclaw/workspace/.env`.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it** — which account to use,
-where to find the server hostname (the one part that reliably goes wrong), the file
-itself, and a check that catches the common mistakes before you go further.
+where to find the server hostname (the one part that reliably goes wrong), and the
+file itself.
 
 Do this yourself rather than asking the agent to. It needs a password, and a
 password should not travel through a chat.
@@ -37,8 +37,7 @@ Your email account is already configured at ~/.openclaw/workspace/.env
 Install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
 
-Follow AGENTS.md. Ask me anything you need — but never ask me to paste
-the password into this chat.
+Follow AGENTS.md. Ask me anything you need.
 ```
 
 <details>
@@ -50,19 +49,18 @@ Tu cuenta de correo ya está configurada en ~/.openclaw/workspace/.env
 Instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites — pero nunca me pidas que
-pegue la contraseña en este chat.
+Sigue AGENTS.md. Pregúntame lo que necesites.
 ```
 
 </details>
 
 Everything else the agent needs is in the repository, so the prompt only has to
-point at it. The one rule left in the prompt is there because it governs **your**
-behaviour rather than the agent's: a password pasted into a chat sits in that
-transcript permanently, and no later care undoes it.
+point at it.
 
 Expect questions before it starts. If Step 1 went well there should be few — and if
-it asks for the password, refuse. That is not a step in any of these instructions.
+it asks for the password, refuse: a password pasted into a chat sits in that
+transcript permanently, and no later care undoes it. That is not a step in any of
+these instructions.
 
 ### Step 3 — Test it yourself
 

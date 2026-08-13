@@ -26,8 +26,8 @@ El agente necesita su propia cuenta de correo, y los datos de conexión de esa
 cuenta escritos en `~/.openclaw/workspace/.env`.
 
 **[MAILBOX_SETUP.es-ES.md](MAILBOX_SETUP.es-ES.md) lo explica paso a paso**: qué cuenta usar,
-dónde encontrar el nombre del servidor (la parte que falla siempre), cómo queda el
-fichero, y una comprobación que detecta los errores habituales antes de seguir.
+dónde encontrar el nombre del servidor (la parte que falla siempre), y cómo queda
+el fichero.
 
 Hazlo tú, no se lo pidas al agente. Hace falta una contraseña, y una contraseña no
 debe pasar por un chat.
@@ -42,18 +42,16 @@ Tu cuenta de correo ya está configurada en ~/.openclaw/workspace/.env
 Instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites — pero nunca me pidas que
-pegue la contraseña en este chat.
+Sigue AGENTS.md. Pregúntame lo que necesites.
 ```
 
 Todo lo demás que el agente necesita está en el repositorio, así que el texto solo
-tiene que señalarlo. La única regla que se ha quedado en el texto está ahí porque
-rige **tu** comportamiento y no el del agente: una contraseña pegada en un chat se
-queda en esa conversación para siempre, y ningún cuidado posterior lo deshace.
+tiene que señalarlo.
 
 Espera preguntas antes de que empiece. Si el Paso 1 ha ido bien deberían ser
-pocas — y si te pide la contraseña, niégate. Eso no es un paso de estas
-instrucciones.
+pocas — y si te pide la contraseña, niégate: una contraseña pegada en un chat se
+queda en esa conversación para siempre, y ningún cuidado posterior lo deshace. Eso
+no es un paso de estas instrucciones.
 
 ### Paso 3 — Compruébalo tú mismo
 
