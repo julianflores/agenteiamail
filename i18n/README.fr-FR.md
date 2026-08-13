@@ -27,9 +27,8 @@ L'agent a besoin de son propre compte de messagerie, et des paramètres de
 connexion de ce compte écrits dans `~/.openclaw/workspace/.env`.
 
 **[MAILBOX_SETUP.fr-FR.md](MAILBOX_SETUP.fr-FR.md) vous guide** : quel compte utiliser, où
-trouver le nom du serveur (la seule partie qui échoue systématiquement), le
-fichier lui-même, et une vérification qui attrape les erreurs courantes avant que
-vous n'alliez plus loin.
+trouver le nom du serveur (la seule partie qui échoue systématiquement), et le
+fichier lui-même.
 
 Faites-le vous-même plutôt que de le demander à l'agent. Il faut un mot de passe,
 et un mot de passe ne doit pas transiter par une conversation.
@@ -44,19 +43,17 @@ Votre compte de messagerie est déjà configuré dans ~/.openclaw/workspace/.env
 Installez ce dépôt pour pouvoir l'utiliser :
 https://github.com/julianflores/agenteiamail
 
-Suivez AGENTS.md. Demandez-moi tout ce dont vous avez besoin — mais ne me
-demandez jamais de coller le mot de passe dans cette conversation.
+Suivez AGENTS.md. Demandez-moi tout ce dont vous avez besoin.
 ```
 
 Tout le reste dont l'agent a besoin se trouve dans le dépôt : le texte n'a donc
-qu'à l'y renvoyer. La seule règle restée dans le texte y figure parce qu'elle
-régit **votre** comportement et non celui de l'agent : un mot de passe collé dans
-une conversation y reste définitivement, et aucune précaution ultérieure ne
-l'efface.
+qu'à l'y renvoyer.
 
 Attendez-vous à des questions avant qu'il ne commence. Si l'étape 1 s'est bien
-passée, elles devraient être rares — et s'il demande le mot de passe, refusez.
-Cela ne fait partie d'aucune de ces instructions.
+passée, elles devraient être rares — et s'il demande le mot de passe, refusez :
+un mot de passe collé dans une conversation y reste définitivement, et aucune
+précaution ultérieure ne l'efface. Cela ne fait partie d'aucune de ces
+instructions.
 
 ### Étape 3 — Testez vous-même
 
