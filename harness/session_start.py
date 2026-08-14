@@ -16,21 +16,42 @@ import json, pathlib, subprocess, sys
 STATE_DIR = pathlib.Path.home() / ".local/state/agenteiamail"
 LOG = STATE_DIR / "mail.log"
 OFFSET_FILE = STATE_DIR / "seen.offset"
+WATCH_ERR = STATE_DIR / "watch.err.log"
 WATCH = pathlib.Path.home() / ".openclaw/workspace/agenteiamail/harness/watch.sh"
 SERVICE = "agenteiamail-idle.service"
+WATCH_SERVICE = "agenteiamail-watch.service"
 
 MAX_REPLAY = 20   # enough to see overnight without flooding the context window
+MAX_WATCH_ERR = 5   # the last few lines say whether it is still failing
 
 
-def listener_down():
+def unit_down(unit):
     """True only if we positively confirmed the unit is not active."""
     try:
-        r = subprocess.run(["systemctl", "--user", "is-active", "--quiet", SERVICE],
+        r = subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit],
                            timeout=5)
         return r.returncode != 0
     except (OSError, subprocess.SubprocessError):
-        # Could not ask. Stay quiet rather than cry wolf about a live listener.
+        # Could not ask. Stay quiet rather than cry wolf about a live service.
         return False
+
+
+def watcher_faults():
+    """
+    Recent watcher complaints, newest last.
+
+    The watcher delivers events by calling openclaw, so it cannot use that path
+    to report that calling openclaw is broken. Its stderr goes to a file, and
+    reading that file here is the only thing that closes the loop: without it, an
+    install where injection fails looks exactly like an install with no new mail.
+    """
+    try:
+        if not WATCH_ERR.is_file() or WATCH_ERR.stat().st_size == 0:
+            return []
+        text = WATCH_ERR.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return [ln for ln in text.splitlines() if ln.strip()][-MAX_WATCH_ERR:]
 
 
 def read_backlog():
@@ -60,7 +81,9 @@ def read_backlog():
 
 def main():
     lines, offset, capped = read_backlog()
-    down = listener_down()
+    down = unit_down(SERVICE)
+    watch_down = unit_down(WATCH_SERVICE)
+    faults = watcher_faults()
 
     parts = []
     if down:
@@ -68,6 +91,21 @@ def main():
             f"MAIL LISTENER IS DOWN — {SERVICE} is not active, so no new mail is "
             f"being detected at all. Check `systemctl --user status {SERVICE}` and "
             "restart it before relying on mail notifications."
+        )
+
+    if watch_down:
+        parts.append(
+            f"MAIL WATCHER IS DOWN — {WATCH_SERVICE} is not active. Mail is still "
+            "being detected and logged, but nothing is delivering it into a "
+            f"session. Check `systemctl --user status {WATCH_SERVICE}`."
+        )
+
+    if faults:
+        parts.append(
+            "THE WATCHER REPORTED PROBLEMS — the most recent lines of "
+            f"{WATCH_ERR} are below. If the last one is not a recovery, new mail "
+            "is being logged but not delivered, and every other check will still "
+            "look healthy:\n" + "\n".join(faults)
         )
 
     if lines:
@@ -94,6 +132,8 @@ def main():
         },
         "systemMessage": (
             "Mail listener is DOWN — new mail is not being detected" if down
+            else "Mail watcher is DOWN — mail is logged but not delivered" if watch_down
+            else "Watcher reported errors — mail may not be reaching the session" if faults
             else (f"{len(lines)} unseen mail notification(s)" if lines else None)
         ),
     }))
