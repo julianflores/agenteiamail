@@ -413,27 +413,43 @@ minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
 invisible to it even though your shell finds it. `watch.sh` looks in the usual
 per-user locations and **says so on its own stderr if it finds nothing**.
 
-**That warning cannot reach your session, and you have to go and look for it.** If
-`openclaw` is missing, the watcher has no way to inject anything — including a
-warning that `openclaw` is missing. It lands in the watcher's error log, or the
+**Finding it is not enough — it has to be able to run.** `openclaw` is a Node
+program, and the service PATH decides which `node` it gets. That is often not the
+one your shell uses. An `openclaw` that needs a newer Node than the service hands
+it is **present, executable, and fails on every call** — which looks nothing like a
+missing binary and everything like a quiet mailbox.
+
+Check the version the *service* would see, not the one you see:
+
+```bash
+systemd-run --user --pipe --quiet /usr/bin/env node --version
+```
+
+Compare it against what your OpenClaw build requires — `openclaw --version` in your
+own shell will fail loudly if the Node it finds is too old. One observed install
+needed Node 24 and the service supplied 22.
+
+If they differ, pin both in the unit and restart it:
+
+```ini
+Environment=OPENCLAW=/home/you/.npm-global/bin/openclaw
+Environment=PATH=/home/you/.nvm/versions/node/v24.4.0/bin:/usr/local/bin:/usr/bin:/bin
+```
+
+**These warnings cannot reach your session, and you have to go and look for them.**
+If `openclaw` is missing or cannot run, the watcher has no way to inject anything —
+including a warning about `openclaw`. It lands in the watcher's error log, or the
 journal if the unit has no `StandardError=`, and nowhere else.
 
 So check it explicitly after enabling the watcher:
 
 ```bash
-grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log
-journalctl --user -u agenteiamail-watch.service | grep -i "openclaw not found"
+grep -iE "openclaw not found|injection failed" ~/.local/state/agenteiamail/watch.err.log
+journalctl --user -u agenteiamail-watch.service | grep -iE "openclaw not found|injection failed"
 ```
 
-Both silent means it resolved. If either matches, set the full path in the unit and
-restart it:
-
-```ini
-Environment=OPENCLAW=/home/you/.npm-global/bin/openclaw
-```
-
-Without this the watcher runs, the log fills, every other check in §7 passes, and
-no notification is ever delivered.
+Both silent means it resolved. Without this the watcher runs, the log fills, every
+other check in §7 passes, and no notification is ever delivered.
 
 ---
 
