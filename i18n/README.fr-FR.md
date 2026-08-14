@@ -3,7 +3,7 @@
 [English](../README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · **Français** · [Português (BR)](README.pt-BR.md)
 
 > Traduit de [`README.md`](../README.md) au commit `9682aee`. En cas de divergence
-> avec l'original anglais, **c'est l'anglais qui fait foi** — et signalez-le nous,
+> avec l'original anglais, **c'est l'anglais qui fait foi**, et signalez-le nous,
 > car cela veut dire que cette traduction a pris du retard.
 
 Notification immédiate des courriels pour un agent IA. Il apprend l'arrivée d'un
@@ -21,7 +21,7 @@ Trois étapes. La première est la vôtre seule, la deuxième tient en un
 copier-coller, la troisième prend deux minutes pour vérifier que cela fonctionne
 vraiment.
 
-### Étape 1 — Donnez-lui une boîte aux lettres
+### Étape 1 : Donnez-lui une boîte aux lettres
 
 L'agent a besoin de son propre compte de messagerie, et des paramètres de
 connexion de ce compte écrits dans `~/.openclaw/workspace/.env`.
@@ -33,7 +33,7 @@ fichier lui-même.
 Faites-le vous-même plutôt que de le demander à l'agent. Il faut un mot de passe,
 et un mot de passe ne doit pas transiter par une conversation.
 
-### Étape 2 — Orientez l'agent vers ce dépôt
+### Étape 2 : Orientez l'agent vers ce dépôt
 
 Collez ceci à votre agent :
 
@@ -50,32 +50,32 @@ Tout le reste dont l'agent a besoin se trouve dans le dépôt : le texte n'a don
 qu'à l'y renvoyer.
 
 Attendez-vous à des questions avant qu'il ne commence. Si l'étape 1 s'est bien
-passée, elles devraient être rares — et s'il demande le mot de passe, refusez :
+passée, elles devraient être rares, et s'il demande le mot de passe, refusez :
 un mot de passe collé dans une conversation y reste définitivement, et aucune
 précaution ultérieure ne l'efface. Cela ne fait partie d'aucune de ces
 instructions.
 
-### Étape 3 — Testez vous-même
+### Étape 3 : Testez vous-même
 
 L'agent exécute sa propre liste de vérification et vous dira qu'elle est passée.
 Deux minutes de vos propres tests valent davantage, car vous vérifiez ce qui vous
 importe réellement : est-ce qu'il remarque, et est-ce qu'il reste dans ses
 limites.
 
-**Test 1 — envoyez-lui un courriel, avec un accent dans l'objet.**
+**Test 1 : envoyez-lui un courriel, avec un accent dans l'objet.**
 
-Depuis votre propre adresse, avec un objet du genre `Test — é, à, ç, ça va ?`
+Depuis votre propre adresse, avec un objet du genre `Test : é, à, ç, ça va ?`
 Demandez ensuite à l'agent ce qui vient d'arriver.
 
 En deux secondes il devrait vous répondre, et **l'objet doit revenir lisible**. Si
-vous voyez `=?utf-8?q?...` à la place, le décodage des en-têtes est cassé — ce qui
+vous voyez `=?utf-8?q?...` à la place, le décodage des en-têtes est cassé, ce qui
 compte bien plus qu'il n'y paraît, car en français comme en espagnol c'est à peu
 près chaque message que vous recevrez.
 
 L'accent est tout l'intérêt de ce test. Un objet en anglais sans accent passe, que
 le décodage fonctionne ou non.
 
-**Test 2 — demandez-lui d'écrire à un inconnu.**
+**Test 2 : demandez-lui d'écrire à un inconnu.**
 
 Demandez-lui d'abord de vous envoyer quelque chose, et vérifiez que cela arrive.
 Demandez-lui ensuite d'envoyer un message à une adresse qui **ne figure pas** sur
@@ -84,7 +84,7 @@ sa liste d'autorisation.
 Il doit refuser. Pas demander la permission, pas vous consulter d'abord : refuser,
 et vous dire que l'adresse n'est pas sur la liste. Cette liste est toute la raison
 pour laquelle il est sûr de laisser un agent qui lit du courrier non fiable
-pouvoir aussi en envoyer — il vaut donc la peine de la voir fonctionner une fois
+pouvoir aussi en envoyer, il vaut donc la peine de la voir fonctionner une fois
 de vos propres yeux.
 
 S'il envoie, arrêtez tout et prévenez la personne qui l'a installé. Quelque chose
@@ -101,7 +101,7 @@ ne va pas.
   `roster.txt`. Toute autre est refusée d'emblée, sans même vous demander.
 - **Travailler à partir du courrier envoyé par ces mêmes adresses approuvées.**
   Vous lui envoyez une tâche, il l'exécute et vous répond par courrier. Sans accusé
-  de réception préalable et sans demander la permission — vous l'avez déjà donnée
+  de réception préalable et sans demander la permission ; vous l'avez déjà donnée
   en vous inscrivant sur la liste.
 - **Laisser le courrier des autres tranquille.** Ce qui arrive d'une adresse
   absente de la liste vous est signalé, rien de plus.
@@ -122,7 +122,7 @@ tout ceci en terminant, et vous pouvez lui en demander la liste :
 ## Sécurité
 
 L'agent travaille à partir de son courrier : la question n'est donc pas de savoir
-s'il exécute des instructions reçues par e-mail — il le fait, c'est le principe —
+s'il exécute des instructions reçues par e-mail (il le fait, c'est le principe)
 mais **de qui** elles viennent.
 
 - `roster.txt` est une liste à correspondance exacte, et c'est toute la réponse. Si
@@ -152,10 +152,10 @@ Ces documents sont en anglais.
 
 | | |
 |---|---|
-| [`MAILBOX_SETUP.fr-FR.md`](MAILBOX_SETUP.fr-FR.md) | Étape 1 — la boîte et le fichier `.env` |
+| [`MAILBOX_SETUP.fr-FR.md`](MAILBOX_SETUP.fr-FR.md) | Étape 1 : la boîte et le fichier `.env` |
 | [`AGENTS.md`](../AGENTS.md) | Ce que suit l'agent. Commencez ici si vous en êtes un. |
 | [`INSTALL.md`](../INSTALL.md) | La séquence d'installation, étape par étape |
-| [`DESIGN.md`](../DESIGN.md) | Pourquoi les pièces ont cette forme — à lire avant d'y toucher |
+| [`DESIGN.md`](../DESIGN.md) | Pourquoi les pièces ont cette forme ; à lire avant d'y toucher |
 
 ```
 scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
@@ -164,7 +164,7 @@ scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
   ▼
 ~/.local/state/agenteiamail/
   mail.log                le flux d'événements
-  idle.err.log            diagnostics — surveillés séparément
+  idle.err.log            diagnostics, surveillés séparément
   seen.offset             jusqu'où l'agent a été informé
   │
   ├─► harness/session_start.py    rejoue l'arriéré au début d'une session
@@ -180,7 +180,7 @@ scripts/preflight.py      prouve qu'une machine peut faire tourner ceci avant de
 ## Chemins sur cette machine
 
 - Dépôt : `~/.openclaw/workspace/agenteiamail`
-- Identifiants : `~/.config/agenteiamail/env` — en `600`, jamais versionné
+- Identifiants : `~/.config/agenteiamail/env` : en `600`, jamais versionné
 - État et événements : `~/.local/state/agenteiamail/`
 - Service utilisateur : `~/.config/systemd/user/agenteiamail-idle.service`
 

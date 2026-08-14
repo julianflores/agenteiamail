@@ -3,7 +3,7 @@
 [English](../README.md) · [Español (MX)](README.es-MX.md) · **Español (ES)** · [Français](README.fr-FR.md) · [Português (BR)](README.pt-BR.md)
 
 > Traducido de [`README.md`](../README.md) en el commit `9682aee`. Si algo aquí
-> contradice al original en inglés, **manda el inglés** — y avísanos, porque
+> contradice al original en inglés, **manda el inglés**, y avísanos, porque
 > significa que esta traducción se ha quedado atrás.
 
 Correo electrónico por notificación inmediata para un agente de IA. Se entera de
@@ -20,7 +20,7 @@ IMAP/SMTP corriente, en Ubuntu 24.04 con el entorno OpenClaw.
 Tres pasos. El primero lo haces tú solo, el segundo es pegar un texto, y el
 tercero son dos minutos para comprobar que funciona de verdad.
 
-### Paso 1 — Dale un buzón
+### Paso 1: Dale un buzón
 
 El agente necesita su propia cuenta de correo, y los datos de conexión de esa
 cuenta escritos en `~/.openclaw/workspace/.env`.
@@ -32,7 +32,7 @@ el fichero.
 Hazlo tú, no se lo pidas al agente. Hace falta una contraseña, y una contraseña no
 debe pasar por un chat.
 
-### Paso 2 — Apunta el agente a este repositorio
+### Paso 2: Apunta el agente a este repositorio
 
 Pégale esto a tu agente:
 
@@ -49,30 +49,30 @@ Todo lo demás que el agente necesita está en el repositorio, así que el texto
 tiene que señalarlo.
 
 Espera preguntas antes de que empiece. Si el Paso 1 ha ido bien deberían ser
-pocas — y si te pide la contraseña, niégate: una contraseña pegada en un chat se
+pocas, y si te pide la contraseña, niégate: una contraseña pegada en un chat se
 queda en esa conversación para siempre, y ningún cuidado posterior lo deshace. Eso
 no es un paso de estas instrucciones.
 
-### Paso 3 — Compruébalo tú mismo
+### Paso 3: Compruébalo tú mismo
 
 El agente ejecuta su propia lista de verificación y te dirá que la ha pasado. Dos
 minutos de pruebas tuyas valen más, porque estarías comprobando lo que de verdad
 te importa: que se entere, y que se mantenga dentro de sus límites.
 
-**Prueba 1 — mándale un correo, y pon un acento en el asunto.**
+**Prueba 1: mándale un correo, y pon un acento en el asunto.**
 
-Desde tu propia dirección, con un asunto como `Prueba de correo — ñ, á, ¿qué tal?`
+Desde tu propia dirección, con un asunto como `Prueba de correo: ñ, á, ¿qué tal?`
 Luego pregúntale al agente qué acaba de llegar.
 
 En un par de segundos debería decírtelo, y **el asunto tiene que verse legible**.
-Si en su lugar ves `=?utf-8?q?...`, la descodificación de cabeceras está rota — lo
+Si en su lugar ves `=?utf-8?q?...`, la descodificación de cabeceras está rota, lo
 cual importa mucho más de lo que parece, porque si trabajas en español eso es
 prácticamente cada mensaje que vas a recibir.
 
 El acento es todo el sentido de esta prueba. Un asunto en inglés sin acentos pasa
 igual, funcione o no la descodificación.
 
-**Prueba 2 — pídele que escriba a un desconocido.**
+**Prueba 2: pídele que escriba a un desconocido.**
 
 Primero pídele que te envíe algo a ti, y comprueba que llega. Después pídele que
 mande un mensaje a una dirección que **no** esté en su lista de autorizados.
@@ -115,7 +115,7 @@ informarte de todo esto cuando termine, y puedes exigirle la lista:
 ## Seguridad
 
 El agente trabaja desde su correo, así que la pregunta no es si obedece
-instrucciones que llegan por email — sí lo hace, ese es el propósito — sino **de
+instrucciones que llegan por email (sí lo hace, ese es el propósito) sino **de
 quién**.
 
 - `roster.txt` es una lista de coincidencia exacta, y es toda la respuesta. Si el
@@ -145,10 +145,10 @@ Estos documentos están en inglés.
 
 | | |
 |---|---|
-| [`MAILBOX_SETUP.es-ES.md`](MAILBOX_SETUP.es-ES.md) | Paso 1 — el buzón y el fichero `.env` |
+| [`MAILBOX_SETUP.es-ES.md`](MAILBOX_SETUP.es-ES.md) | Paso 1: el buzón y el fichero `.env` |
 | [`AGENTS.md`](../AGENTS.md) | Lo que sigue el agente. Empieza aquí si eres uno. |
 | [`INSTALL.md`](../INSTALL.md) | La secuencia de instalación, paso a paso |
-| [`DESIGN.md`](../DESIGN.md) | Por qué las piezas son así — léelo antes de cambiar nada |
+| [`DESIGN.md`](../DESIGN.md) | Por qué las piezas son así; léelo antes de cambiar nada |
 
 ```
 scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexión
@@ -157,7 +157,7 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
   ▼
 ~/.local/state/agenteiamail/
   mail.log                el flujo de eventos
-  idle.err.log            diagnóstico — se vigila aparte
+  idle.err.log            diagnóstico, se vigila aparte
   seen.offset             hasta dónde se ha avisado al agente
   │
   ├─► harness/session_start.py    repite lo pendiente al iniciar una sesión
@@ -173,7 +173,7 @@ scripts/preflight.py      comprueba que una máquina puede ejecutar esto antes d
 ## Rutas en esta máquina
 
 - Repositorio: `~/.openclaw/workspace/agenteiamail`
-- Credenciales: `~/.config/agenteiamail/env` — permisos `600`, nunca se sube al repo
+- Credenciales: `~/.config/agenteiamail/env`: permisos `600`, nunca se sube al repo
 - Estado y eventos: `~/.local/state/agenteiamail/`
 - Servicio de usuario: `~/.config/systemd/user/agenteiamail-idle.service`
 

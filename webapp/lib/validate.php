@@ -50,7 +50,7 @@ function validate(array $in): array
             continue;
         }
         if (str_contains($host, '/') || str_contains($host, ' ') || str_contains($host, '@')) {
-            $errors[$key] = 'Just the server name here — no https://, no spaces, no address.';
+            $errors[$key] = 'Just the server name here: no https://, no spaces, no address.';
             continue;
         }
         if (preg_match('/^[A-Za-z0-9.\-]+$/', $host) !== 1) {

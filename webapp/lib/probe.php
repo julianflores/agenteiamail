@@ -5,7 +5,7 @@ declare(strict_types=1);
  * Live checks against the mail server, before anything is written to disk.
  *
  * This is the reason the form is worth more than a text editor. The failures
- * this project sees are not typos in a key name — they are a hostname that
+ * this project sees are not typos in a key name; they are a hostname that
  * resolves but is not on the server's TLS certificate, a port that belongs to
  * the other protocol, or a password that works in a webmail login and not over
  * IMAP. Every one of those produces a file that looks perfect.
@@ -38,7 +38,7 @@ function explain_connect_error(string $raw, string $host): string
     if (str_contains($lower, 'did not match') || str_contains($lower, 'certificate verify failed')
         || str_contains($lower, 'certificate_verify_failed')) {
         return "The server answered, but its security certificate is not issued for “{$host}”. "
-             . "That usually means the host name is slightly wrong — many providers want something "
+             . "That usually means the host name is slightly wrong; many providers want something "
              . "like imap.yourprovider.com rather than mail.yourdomain.com. Ask your provider for the "
              . "exact name they publish.";
     }
@@ -72,8 +72,8 @@ function tls_context(): mixed
  * Run something that may emit warnings, and hand back every one of them.
  *
  * A failed TLS connect emits several warnings and then sets $errstr to
- * "Unable to connect to ssl://host:port (Unknown error)". The useful sentence —
- * *Peer certificate CN did not match expected CN* — is in one of the earlier
+ * "Unable to connect to ssl://host:port (Unknown error)". The useful sentence,
+ * *Peer certificate CN did not match expected CN*, is in one of the earlier
  * warnings, so `error_get_last()` alone returns the least informative of the
  * set. Collecting all of them is the only way to see the actual cause.
  *
@@ -195,7 +195,7 @@ function probe_imap(string $host, int $port, string $user, string $pass): array
     }
     $steps[] = step(true, 'Signed in successfully.');
 
-    // IDLE is the whole design. Ask after logging in — plenty of servers only
+    // IDLE is the whole design. Ask after logging in; plenty of servers only
     // advertise it to an authenticated session.
     fwrite($stream, "a2 CAPABILITY\r\n");
     $caps = strtoupper(implode(' ', imap_read_until($stream, 'a2')));
@@ -248,7 +248,7 @@ function smtp_command(mixed $stream, string $command): string
  * Try the encryption style the port suggests, and if the server turns out to
  * speak the other one, try that before giving up.
  *
- * 465 means TLS from the first byte and 587 means STARTTLS, by convention — but
+ * 465 means TLS from the first byte and 587 means STARTTLS, by convention, but
  * it is only a convention. Hosts do offer implicit TLS on other ports, and a
  * mismatch here looks exactly like "that port is not speaking SMTP", which
  * would send someone off to check a setting that was right all along.

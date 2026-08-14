@@ -1,7 +1,7 @@
 # Why agenteiamail is shaped this way
 
 Read this before changing anything. Most of what follows looks like style and is
-not — each item is a failure that happened, was diagnosed, and is now prevented by
+not; each item is a failure that happened, was diagnosed, and is now prevented by
 a specific line of code. Removing the line brings the failure back.
 
 ---
@@ -55,7 +55,7 @@ cannot take down the other, and the listener stays small enough to reason about.
 
 Between sending `DONE` and re-entering `IDLE` there is a window in which the server
 has no open connection to push to. A message landing there generates no `EXISTS`
-that will ever be seen, and it sits unreported until the *next* message arrives —
+that will ever be seen, and it sits unreported until the *next* message arrives,
 which can be hours later, or never.
 
 The fix is to run `fetch_since()` unconditionally after each cycle. It costs one
@@ -71,7 +71,7 @@ already reported.
 ### 3. Handle UIDVALIDITY
 
 UIDs are only comparable within one `UIDVALIDITY` epoch. If a mailbox is deleted
-and recreated, the server restarts numbering — and a stored `last_uid` of 400 will
+and recreated, the server restarts numbering, and a stored `last_uid` of 400 will
 suppress the next 400 messages. Silently.
 
 It is compared on every connect. If it moved, the stored position is discarded and
@@ -113,7 +113,7 @@ collapses every run of whitespace: `re.sub(r"\s+", " ", text).strip()`.
 
 **The GitHub subject parser's ref group never matched.** It expected a bare `(#9)`.
 GitHub writes `(Issue #9)` and `(PR #14)`. The capture always returned `None`, so
-the branch consuming it was dead code — for a week, in front of someone reading
+the branch consuming it was dead code, for a week, in front of someone reading
 those notifications daily.
 
 The lesson generalises: **test with the messages you will actually receive**, not
@@ -127,11 +127,11 @@ test passes regardless of whether any of them work.
 
 **`tail -F`, never `-f`.** `-F` re-opens the file by name, so the tail survives log
 rotation. `-f` follows the inode and goes permanently deaf the moment rotation
-runs — with no error, no exit, and no notifications. This is the "everything worked
+runs, with no error, no exit, and no notifications. This is the "everything worked
 for a week and then stopped" failure.
 
 **`grep --line-buffered` and `sed -u`.** Without them each stage buffers 4 KB, and
-notifications arrive in batches hours late. **Never put `head` in this pipe** — it
+notifications arrive in batches hours late. **Never put `head` in this pipe.** It
 cannot flush at all.
 
 **The second tail, on the error log, is not optional.** If only the success path is
@@ -142,13 +142,13 @@ the whole design exists to prevent, and one `grep` on stderr is what prevents it
 
 **`emit_system_event` swallows its own failures** with `|| true`. If the injection
 call fails and the watcher dies with it, one lost notification becomes a lost
-watcher — and a lost watcher fails silently. One missed message is recoverable.
+watcher, and a lost watcher fails silently. One missed message is recoverable.
 
 **`send.sh` writes a full header block, not the three headers it needs.** This is
 two failures deep, and the second only appeared once the first was fixed.
 
-Himalaya v1 filled in `From:` from account config; v2 refuses the message outright
-— *"No `From:` header found in raw message"*. The address is read from the same env
+Himalaya v1 filled in `From:` from account config; v2 refuses the message outright,
+with *"No `From:` header found in raw message"*. The address is read from the same env
 file the listener reads, under the same two key schemas, so an install cannot end
 up with the listener and the sender disagreeing about which account this is.
 
@@ -157,18 +157,18 @@ over SMTP and then bounced it: *"554 5.7.1 Rejected due to high probability of
 spam"*. `Date`, `Message-ID`, `MIME-Version`, `Content-Type` and
 `Content-Transfer-Encoding` are what every ordinary client sends, and a message
 without them reads as bulk machinery. **Do not trim that list back to the headers
-that look required** — the message that got rejected was the short one.
+that look required**: the message that got rejected was the short one.
 
 Header values are then RFC 2047 encoded when they are not plain ASCII. Raw UTF-8 in
 a header depends on an extension the receiving server has to advertise, and this
 project is Spanish-first: an accented subject is the common case, not the edge one.
-Note that an encoded-word must **not** be wrapped in quotes — inside a quoted
+Note that an encoded-word must **not** be wrapped in quotes; inside a quoted
 string it stays literal instead of decoding, which is why the display name is
 quoted only when it is ASCII.
 
 **`send.sh` strips CR and LF from the recipient and subject.** Both are composed
 from mail the agent was asked to act on, and a newline inside a header value ends
-that header and begins another — a crafted subject could append `Bcc:` and reach
+that header and begins another; a crafted subject could append `Bcc:` and reach
 an address the roster never approved. The allowlist checks the recipient it was
 given; it cannot see a second one smuggled into a header.
 
@@ -188,20 +188,20 @@ That search has been done; it is a dead end.
 
 The inverse works: `watch.sh` is an **active producer** that injects each line with
 `openclaw system event --mode now`. If you port this to another harness, that is
-the seam to look at first — the rest is harness-independent.
+the seam to look at first; the rest is harness-independent.
 
 ---
 
 ## Why the roster is the whole model
 
-This agent reads untrusted content all day — emails, web pages, documents — and it
+This agent reads untrusted content all day (emails, web pages, documents) and it
 holds send credentials. Email is therefore both the thing the agent is *for* and
 the most obvious way to talk it into something. The design does not resolve that by
 refusing to take instructions from mail, because taking instructions from mail is
 the product. It resolves it by making one list, written only by a human, decide
 which mail counts.
 
-`roster.txt` answers a single question — *did my human vouch for this person* — and
+`roster.txt` answers a single question, *did my human vouch for this person*, and
 that one answer drives everything:
 
 | | on `roster.txt` | everyone else |
@@ -226,7 +226,7 @@ because a divergence between them is silent and means the agent answers someone
 
 **`From` decides, never `Reply-To`.** `Reply-To` is set by whoever sent the
 message. Honouring it would let a stranger borrow a listed identity by writing one
-header — the exact hole the roster exists to close.
+header, the exact hole the roster exists to close.
 
 **Adding an entry is a human decision.** This is the rule the loosening leans on
 hardest. One line in that file promotes an address from "reported" to "obeyed", so
@@ -238,7 +238,7 @@ the agent works for.
 refuses everyone. A fresh clone can read mail and can do nothing with it until a
 human writes the list.
 
-What the code cannot enforce is the reply itself — that the agent answers only the
+What the code cannot enforce is the reply itself: that the agent answers only the
 sender, answers once, and says so when it could not actually find something out.
 Those live in `AGENTS.md`, and that is why it insists they be copied into the
 agent's own persistent instructions rather than left in a file it may not reread.
@@ -249,7 +249,7 @@ agent's own persistent instructions rather than left in a file it may not reread
 
 This repo is the artifact. It was built from a 1,181-line replication guide that
 has since been deleted, because once the code existed the guide became a **second
-copy of every file in it** — and within hours the two had diverged, with fixes
+copy of every file in it**, and within hours the two had diverged, with fixes
 present in one and absent from the other.
 
 That is the third time the same failure has appeared in this project's short life:

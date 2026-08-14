@@ -15,7 +15,7 @@ Ten minutes, most of which is finding one hostname.
 > through the chat.
 >
 > The page asks for the same settings this document describes, checks them against
-> your mail server, and writes the file for you — including the hostname problem
+> your mail server, and writes the file for you, including the hostname problem
 > below, which it diagnoses by name instead of leaving you to find it.
 > See [`webapp/README.md`](webapp/README.md).
 >
@@ -41,7 +41,7 @@ its own section below.
 
 ## The hostname, and why it is the fiddly part
 
-Your email address ends in a domain — `example.com`. The server your mail actually
+Your email address ends in a domain, `example.com`. The server your mail actually
 lives on is usually **not** `example.com`, and usually not `mail.example.com`
 either. It is something like `nc-ph-2488.xmhosting.com` or
 `imappro.zoho.com`.
@@ -63,7 +63,7 @@ says why.
 - **Anyone else:** search their docs for "IMAP settings".
 
 **Verify it before you write it down.** This prints the names the certificate
-actually covers — the hostname you use must be one of them:
+actually covers. The hostname you use must be one of them:
 
 ```bash
 openssl s_client -connect YOUR_HOST:993 -servername YOUR_HOST </dev/null 2>/dev/null \
@@ -83,7 +83,7 @@ chmod 600 ~/.openclaw/workspace/.env
 ```
 
 `chmod 600` means only your user can read it. Do this **before** putting the
-password in, not after — a file that was briefly world-readable may already have
+password in, not after; a file that was briefly world-readable may already have
 been read.
 
 Then open it in an editor and fill in:
@@ -101,7 +101,7 @@ AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
 ```
 
 **Ports:** `993` for IMAP is near-universal. For SMTP, `465` is implicit TLS and
-`587` is STARTTLS — your provider's page will say which. If in doubt, try `465`
+`587` is STARTTLS; your provider's page will say which. If in doubt, try `465`
 first.
 
 **Use an editor, not `echo`.** Anything you type on a command line lands in your
@@ -116,5 +116,5 @@ prompt in Step 2. The agent takes it from there, and it will ask you if anything
 here turns out to be missing or wrong.
 
 **One thing it should never ask for: the password.** It has the file path and can
-read it at runtime. If it asks you to paste the password into the chat, say no —
+read it at runtime. If it asks you to paste the password into the chat, say no,
 that is not a step in any of these instructions.

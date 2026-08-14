@@ -1,7 +1,7 @@
 # Removing agenteiamail
 
 This installs a background service that touches six places on a machine. Here is
-how to take all of it back off — for a clean reinstall, for handing the machine
+how to take all of it back off, for a clean reinstall, for handing the machine
 on, or because you changed your mind.
 
 **Nothing here touches the mailbox itself.** Mail already delivered stays on the
@@ -39,7 +39,7 @@ systemctl --user list-unit-files | grep -i agentei
 ```
 
 A full install has four: `idle.service`, `watch.service`, `logrotate.service` and
-`logrotate.timer`. The logrotate *service* is typically `static` — it has no
+`logrotate.timer`. The logrotate *service* is typically `static`; it has no
 `[Install]` section, so `disable` does nothing and it is simply deleted with the
 rest. That is expected, not an error.
 
@@ -71,11 +71,11 @@ rmdir ~/.config/agenteiamail 2>/dev/null
 
 The install may have put a `logrotate.conf` beside the credentials. Leaving it
 behind makes the `rmdir` fail silently and the final check at the bottom of this
-page report a directory that should be gone — found by a real uninstall, not by
+page report a directory that should be gone, found by a real uninstall, not by
 reading.
 
-If your credentials live in a shared file instead — commonly
-`~/.openclaw/workspace/.env` — **do not delete it.** Other things use it. Remove
+If your credentials live in a shared file instead, commonly
+`~/.openclaw/workspace/.env`, **do not delete it.** Other things use it. Remove
 only the keys this tool added, if you added any.
 
 ## 3. Remove state and logs
@@ -89,7 +89,7 @@ Deleting it is what makes the next install a genuine fresh start: with the state
 file gone, a new listener takes a baseline from whatever is already in the
 mailbox rather than resuming, so nothing replays.
 
-## 4. Remove the Himalaya account — carefully
+## 4. Remove the Himalaya account, carefully
 
 `~/.config/himalaya/config.toml` may hold accounts other than this one. **Remove
 only the `[accounts.agenteiamail]` block**, not the file.
@@ -98,7 +98,7 @@ only the `[accounts.agenteiamail]` block**, not the file.
 cp ~/.config/himalaya/config.toml ~/.config/himalaya/config.toml.bak.$(date +%F)
 ```
 
-Then delete the block. A reproducible way, rather than editing by eye — it removes
+Then delete the block. A reproducible way, rather than editing by eye; it removes
 from the `[accounts.agenteiamail]` header up to the next top-level `[` and leaves
 everything else untouched:
 
@@ -109,7 +109,7 @@ p = pathlib.Path.home() / ".config/himalaya/config.toml"
 text = p.read_text()
 out = re.sub(r'(?ms)^\[accounts\.agenteiamail(?:\.[^\]]+)?\].*?(?=^\[(?!accounts\.agenteiamail)|\Z)', '', text)
 p.write_text(out)
-print("removed" if out != text else "nothing matched — check the account name")
+print("removed" if out != text else "nothing matched: check the account name")
 PY
 
 himalaya account list       # every other account must still be there
@@ -120,8 +120,8 @@ to another account or the next bare `himalaya` command has nowhere to go.
 
 ## 5. Remove the standing rule from the agent's own instructions
 
-The install adds a rule to the agent's persistent instructions — usually its
-`AGENTS.md` or equivalent — saying that mail from an address on `roster.txt` is
+The install adds a rule to the agent's persistent instructions (usually its
+`AGENTS.md` or equivalent) saying that mail from an address on `roster.txt` is
 work it should carry out and answer.
 
 **Remove it, and do not treat this step as optional.** This rule grants something
@@ -176,7 +176,7 @@ may be useful on its own.
 
 ```bash
 systemctl --user list-unit-files 'agenteiamail-*'   # no rows
-pgrep -af "[i]dle_listener.py"                      # nothing — brackets stop
+pgrep -af "[i]dle_listener.py"                      # nothing; brackets stop
                                                     # pgrep matching its own
                                                     # command line
 ls ~/.config/agenteiamail 2>&1                      # no such file or directory

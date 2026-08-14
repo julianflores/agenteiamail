@@ -9,8 +9,8 @@ declare(strict_types=1);
  * configured yet. Both routes therefore end at one file, and "is this set up?"
  * stays a single question with a single answer.
  *
- * ~/.config/agenteiamail/env — where the listener and scripts/send.sh look by
- * default — is symlinked at it afterwards, which is the arrangement INSTALL.md
+ * ~/.config/agenteiamail/env (where the listener and scripts/send.sh look by
+ * default) is symlinked at it afterwards, which is the arrangement INSTALL.md
  * §3 already recommends for a host whose credentials live elsewhere.
  */
 
@@ -69,7 +69,7 @@ function env_link_path(): string
 /**
  * This page is for a host with no mailbox configured yet. If the file is
  * already there with mail settings in it, something is working and this form is
- * about to overwrite it — say so rather than quietly replacing a live account.
+ * about to overwrite it; say so rather than quietly replacing a live account.
  */
 function existing_config(): ?string
 {
@@ -88,7 +88,7 @@ function existing_config(): ?string
  * Point the default path at the file we just wrote.
  *
  * scripts/send.sh has no systemd unit to carry an --env flag, so without this
- * it looks in ~/.config/agenteiamail/env, finds nothing, and refuses to send —
+ * it looks in ~/.config/agenteiamail/env, finds nothing, and refuses to send,
  * at the moment the agent first tries to answer somebody. Best effort: a host
  * that already has a real file there is left alone rather than overwritten.
  *
@@ -141,7 +141,7 @@ function render_env(array $values): string
     $out .= '# ' . date('Y-m-d H:i:s T') . "\n";
     $out .= "#\n";
     $out .= "# Key names follow the schema in .env.example. Ports live in their own\n";
-    $out .= "# keys — a port stored in a key named for a server is the one mistake\n";
+    $out .= "# keys: a port stored in a key named for a server is the one mistake\n";
     $out .= "# this file format refuses to survive.\n\n";
 
     foreach (ENV_FIELDS as $key) {
@@ -165,7 +165,7 @@ function write_env(string $contents): array
 
     // Write beside the target and rename, so an interrupted write cannot leave a
     // half-file that the listener would read as a complete one. Create the temp
-    // file at 0600 before anything goes into it — not after.
+    // file at 0600 before anything goes into it, not after.
     $tmp = $path . '.tmp';
     $fh  = @fopen($tmp, 'w');
     if ($fh === false) {
@@ -186,7 +186,7 @@ function write_env(string $contents): array
     // strand the listener on a file nobody updates.
     //
     // Clear the stat cache first. PHP remembers what it learned about a path,
-    // and the built-in server is one long-lived process — so a page loaded
+    // and the built-in server is one long-lived process, so a page loaded
     // before the link existed leaves is_link() answering from a stale memory,
     // and the link gets replaced exactly as if this branch were not here.
     clearstatcache(true, $path);

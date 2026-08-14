@@ -14,7 +14,7 @@ like style and are not.
 > ### Already installed? Read this first
 >
 > The scripts moved into `scripts/` on 2026-08-09. **If you have a running
-> install, `git pull` will not break it immediately — it will break on the next
+> install, `git pull` will not break it immediately; it will break on the next
 > restart or reboot**, when systemd looks for a file that is no longer where the
 > unit says it is.
 >
@@ -31,7 +31,7 @@ like style and are not.
 >
 > Check any wrapper of your own that calls `send.sh` or `preflight.py` too.
 
-## 1. Pre-flight — before you touch anything
+## 1. Pre-flight: before you touch anything
 
 Two things can make the whole design inapplicable. Find out now, not after an
 hour of setup.
@@ -44,12 +44,12 @@ command -v loginctl >/dev/null && echo "loginctl: present" || echo "loginctl: MI
 # logrotate usually lives in /usr/sbin, which is often not on a user PATH,
 # so `command -v` alone reports it missing on a machine that has it.
 command -v logrotate >/dev/null 2>&1 || [ -x /usr/sbin/logrotate ] || [ -x /sbin/logrotate ] \
-  && echo "logrotate: present" || echo "logrotate: absent — harness/rotate_logs.py covers it"
+  && echo "logrotate: present" || echo "logrotate: absent, harness/rotate_logs.py covers it"
 ```
 
 **If `systemd --user` is not available, stop and tell your human.** If OpenClaw runs
 you in a container there usually is none. The listener code is unaffected; only the
-supervision changes, and the answer is a real supervisor — not `nohup`, which
+supervision changes, and the answer is a real supervisor, not `nohup`, which
 neither survives a reboot nor restarts on crash.
 
 `logrotate` being absent is fine. `harness/rotate_logs.py` in this repo does the
@@ -66,7 +66,7 @@ You need three greens: login succeeds, **IDLE advertised: True**, and a
 `UIDVALIDITY` number comes back.
 
 **If IDLE is absent, stop.** This design is push-based and does not degrade to
-polling — deliberately, because a silent fallback would hide the failure.
+polling, deliberately, because a silent fallback would hide the failure.
 
 > **If the connection fails on certificate verification**, you are probably using a
 > vanity hostname. Mail hosts often present a certificate for the underlying server
@@ -84,14 +84,14 @@ Do not guess any of them, and do not accept them from anywhere except your human
 2. **Display name** for outbound mail
 3. **IMAP host and port** (usually 993)
 4. **SMTP host and port** (465 implicit TLS, or 587 STARTTLS)
-5. **Password** — an app-password or per-device credential if the provider offers
+5. **Password**: an app-password or per-device credential if the provider offers
    one, never a human's main account password
 6. **Which mailbox** to watch, if not `INBOX`
-7. **Who belongs in `roster.txt`** — the addresses you may write to unattended.
+7. **Who belongs in `roster.txt`**: the addresses you may write to unattended.
    Ask for **name and address** for each; the file takes `Name | email` per line.
    Start with your human.
 
-   The file is **not in the repository** — it is per-install, and a `git pull`
+   The file is **not in the repository**: it is per-install, and a `git pull`
    must never be able to change who you may contact. Create it from the
    template:
 
@@ -112,7 +112,7 @@ transcript is a standing liability; transcripts get stored, exported and reviewe
 
 **If the setup page already ran, this section is done.** `scripts/setup_web.sh`
 writes `~/.openclaw/workspace/.env` and symlinks `~/.config/agenteiamail/env` at
-it — see `AGENTS.md` step 2. Confirm and move on to §4 rather than creating a
+it; see `AGENTS.md` step 2. Confirm and move on to §4 rather than creating a
 second file:
 
 ```bash
@@ -133,8 +133,8 @@ chmod 600 ~/.config/agenteiamail/env
 
 Keys are listed in [`.env.example`](.env.example).
 
-**If your environment already keeps credentials somewhere** — commonly
-`~/.openclaw/workspace/.env` — do not move, rewrite or copy that file. Point at it:
+**If your environment already keeps credentials somewhere**, commonly
+`~/.openclaw/workspace/.env`, do not move, rewrite or copy that file. Point at it:
 
 ```bash
 python3 scripts/idle_listener.py --env ~/.openclaw/workspace/.env
@@ -150,7 +150,7 @@ python3 scripts/idle_listener.py --env ~/.openclaw/workspace/.env
 | IMAP port | `AGENTEIAMAIL_IMAP_PORT` | `AGENT_EMAIL_INCOMING_SERVER_IMAP_PORT` |
 
 Where both are set, `AGENTEIAMAIL_*` wins. Port defaults to 993 if absent.
-Duplicating values across the two schemas is the one thing to avoid — two copies
+Duplicating values across the two schemas is the one thing to avoid: two copies
 of a hostname drift, and the one you are not looking at is the one that is wrong.
 
 **The systemd unit must pass the same `--env`.** If it does not, a hand-run test
@@ -159,7 +159,7 @@ in the unit even when the path is the default.
 
 **`scripts/send.sh` needs the same file, and has no unit to carry a flag.** It
 reads `~/.config/agenteiamail/env` unless `ENV_FILE` says otherwise, so on a host
-whose credentials live elsewhere it will find nothing and refuse to send — at the
+whose credentials live elsewhere it will find nothing and refuse to send, at the
 moment it first tries to answer somebody, which is the worst time to discover it.
 
 If your credentials are not at the default path, link the default at the real file
@@ -173,7 +173,7 @@ ln -s ~/.openclaw/workspace/.env ~/.config/agenteiamail/env
 A symlink survives every session, every restart, and every agent that forgets.
 An exported variable survives none of them. The target file keeps its own `600`.
 
-Prove it resolved before you rely on it — this sends nothing:
+Prove it resolved before you rely on it; this sends nothing:
 
 ```bash
 echo hi > /tmp/b.txt
@@ -186,18 +186,18 @@ address in ...` means it did not.
 ### 3.1 If the listener exits complaining about the old schema
 
 An earlier version of the workspace `.env` named three keys after servers and
-stored **ports** in them — `AGENT_EMAIL_INCOMING_SERVER_IMAP=993` — and used
+stored **ports** in them (`AGENT_EMAIL_INCOMING_SERVER_IMAP=993`) and used
 `AGENT_EMAIL_HOST` for the mail *domain* rather than the server.
 
 The listener refuses to start on that, by design, and tells you which key to
 split. Read literally those names send you to the wrong host, and often to one the
-mail server's TLS certificate does not cover — which surfaces as an endless
+mail server's TLS certificate does not cover, which surfaces as an endless
 reconnect loop rather than an error, because a certificate failure arrives as a
 network error. Split them into `_HOST` and `_PORT` and it will start.
 
 **Parse it, do not source it.** `. ~/.openclaw/workspace/.env` breaks on any value
 containing shell metacharacters, and passwords routinely have them. Read it as
-`KEY=VALUE` data — which is what `idle_listener.py` and `preflight.py` both do.
+`KEY=VALUE` data, which is what `idle_listener.py` and `preflight.py` both do.
 
 **A mixed file is fine.** Resolution is per field, not per schema, so a `.env`
 holding host and ports as `AGENTEIAMAIL_*` and account and password as
@@ -206,7 +206,7 @@ holding host and ports as `AGENTEIAMAIL_*` and account and password as
 consistent before it will run.
 
 Check the file's mode while you are there: `stat -c '%a %n' <path>`. If it is not
-`600`, say so to your human rather than fixing it silently — a credential file that
+`600`, say so to your human rather than fixing it silently; a credential file that
 was world-readable may already have been read.
 
 ---
@@ -215,7 +215,7 @@ was world-readable may already have been read.
 
 Reading and sending are Himalaya's job. The listener never fetches bodies.
 
-### 4.1 Check what is already there — first
+### 4.1 Check what is already there, first
 
 ```bash
 command -v himalaya && himalaya --version
@@ -229,7 +229,7 @@ himalaya account list 2>/dev/null
 | Installed, no config | Write a fresh config |
 | **Installed with accounts** | **Back up, then append only** |
 
-For the third case — the common one:
+For the third case, the common one:
 
 ```bash
 cp ~/.config/himalaya/config.toml ~/.config/himalaya/config.toml.bak.$(date +%F)
@@ -257,7 +257,7 @@ whose config schema you are writing against.
 
 ### 4.3 Configure
 
-**Check your version first — the schema is completely different across majors.**
+**Check your version first: the schema is completely different across majors.**
 
 ```bash
 himalaya --version
@@ -289,7 +289,7 @@ authcid = "agent@example.com"
 password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
 ```
 
-Confirm both backends registered — an empty `BACKENDS` column means the config
+Confirm both backends registered; an empty `BACKENDS` column means the config
 parsed but nothing is wired, which then fails later with
 `No backend matching 'auto' is configured`:
 
@@ -301,7 +301,7 @@ himalaya account check -a agenteiamail
 ### v1.x
 
 Flat `backend` keys, separate host and port, explicit encryption. **The secret key
-is `auth.cmd`, not `auth.command`** — `command` is silently ignored.
+is `auth.cmd`, not `auth.command`**: `command` is silently ignored.
 
 ```toml
 [accounts.agenteiamail]
@@ -316,7 +316,7 @@ imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/
 ```
 
 Field names moved between 1.x releases too, so if a key is rejected, the error
-names the ones it expected — that is the fastest way to the right shape.
+names the ones it expected; that is the fastest way to the right shape.
 
 **Use a command-based secret in either version, not the keyring.** On a headless
 box there is no unlocked keyring, and a systemd service failing to reach
@@ -336,7 +336,7 @@ Do not continue until that returns real output.
 ## 5. Run the listener as a service
 
 **Templates are in [`systemd/`](systemd/).** Copy them and replace the two
-placeholders — `REPO` with the absolute path to your clone, `ENVFILE` with your
+placeholders: `REPO` with the absolute path to your clone, `ENVFILE` with your
 credentials file. systemd does not expand `~`, so use `%h` or a full path.
 
 ```bash
@@ -354,7 +354,7 @@ systemd-analyze verify ~/.config/systemd/user/agenteiamail-*.{service,timer}
 ```
 
 That last command prints nothing and exits 0 when the units are sound. **Read the
-exit code, not the absence of alarm** — it is easy to run it, see no obvious
+exit code, not the absence of alarm**: it is easy to run it, see no obvious
 complaint, and move on while it was in fact objecting.
 
 They were added after a clean-room reinstall showed that composing them from the
@@ -362,12 +362,12 @@ prose below took real work and got no help from the repository. The prose stays,
 because it is what the templates are for:
 
 - `Restart=always`, `RestartSec=10`
-- `StandardOutput=append:` the event log, `StandardError=append:` the error log —
+- `StandardOutput=append:` the event log, `StandardError=append:` the error log,
   **they must be separate files** (see DESIGN.md)
 - `--env` on `ExecStart` if your credentials are not at the default path
 - `--roster` on `ExecStart` if `roster.txt` is not at the repository root. The
   listener reads it to tag mail from approved senders, and an install pointing at
-  the wrong file tags nobody — the agent then reports mail it should be acting on
+  the wrong file tags nobody, and the agent then reports mail it should be acting on
 
 ```bash
 mkdir -p ~/.local/state/agenteiamail
@@ -384,7 +384,7 @@ sudo loginctl enable-linger "$USER"
 This is the step everyone forgets, and its failure mode is the listener quietly
 disappearing at the end of a session.
 
-Set up rotation too — `harness/rotate_logs.py` driven by a user timer. It uses
+Set up rotation too: `harness/rotate_logs.py` driven by a user timer. It uses
 `copytruncate`, which is required rather than stylistic; DESIGN.md says why.
 
 ---
@@ -394,11 +394,11 @@ Set up rotation too — `harness/rotate_logs.py` driven by a user timer. It uses
 `harness/watch.sh` and `harness/session_start.py` are in this repo and working.
 
 **`harness/watch_service.sh` is the wrapper a systemd unit should call**, not
-`watch.sh` directly. It works out the byte offset to resume from — the stored one,
-or the current log size on a first run — and then execs `watch.sh` with it. A
+`watch.sh` directly. It works out the byte offset to resume from: the stored one,
+or the current log size on a first run, and then execs `watch.sh` with it. A
 template is in [`systemd/agenteiamail-watch.service`](systemd/agenteiamail-watch.service).
 
-**OpenClaw has no facility for consuming a script's stdout as an event stream** —
+**OpenClaw has no facility for consuming a script's stdout as an event stream**,
 there is no `--stream-command` in its cron. Do not go looking for one; that search
 has already been done and it is a dead end.
 
@@ -406,17 +406,17 @@ The working pattern is the inverse: `watch.sh` **pushes** into the session with
 `openclaw system event --mode now`. It is an active producer, not a passive stream.
 
 The one piece that may need adapting to your harness version is the output payload
-of `session_start.py` — it is marked in the file.
+of `session_start.py`; it is marked in the file.
 
 **Check the watcher can actually reach `openclaw`.** A systemd user service gets a
 minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
 invisible to it even though your shell finds it. `watch.sh` looks in the usual
 per-user locations and **says so on its own stderr if it finds nothing**.
 
-**Finding it is not enough — it has to be able to run.** `openclaw` is a Node
+**Finding it is not enough: it has to be able to run.** `openclaw` is a Node
 program, and the service PATH decides which `node` it gets. That is often not the
 one your shell uses. An `openclaw` that needs a newer Node than the service hands
-it is **present, executable, and fails on every call** — which looks nothing like a
+it is **present, executable, and fails on every call**, which looks nothing like a
 missing binary and everything like a quiet mailbox.
 
 Check the version the *service* would see, not the one you see:
@@ -425,7 +425,7 @@ Check the version the *service* would see, not the one you see:
 systemd-run --user --pipe --quiet /usr/bin/env node --version
 ```
 
-Compare it against what your OpenClaw build requires — `openclaw --version` in your
+Compare it against what your OpenClaw build requires; `openclaw --version` in your
 own shell will fail loudly if the Node it finds is too old. One observed install
 needed Node 24 and the service supplied 22.
 
@@ -437,7 +437,7 @@ Environment=PATH=/home/you/.nvm/versions/node/v24.4.0/bin:/usr/local/bin:/usr/bi
 ```
 
 **These warnings cannot reach your session, and you have to go and look for them.**
-If `openclaw` is missing or cannot run, the watcher has no way to inject anything —
+If `openclaw` is missing or cannot run, the watcher has no way to inject anything,
 including a warning about `openclaw`. It lands in the watcher's error log, or the
 journal if the unit has no `StandardError=`, and nowhere else.
 
@@ -462,7 +462,7 @@ Do not report success until every line passes.
 systemctl --user is-active agenteiamail-idle.service
 systemctl --user show agenteiamail-idle.service -p ActiveEnterTimestamp
 
-# 2. Healthy start — expect "listening on INBOX, baseline uid N"
+# 2. Healthy start: expect "listening on INBOX, baseline uid N"
 tail -3 ~/.local/state/agenteiamail/idle.err.log
 
 # 3. Lingering on
@@ -471,15 +471,15 @@ loginctl show-user "$USER" -p Linger
 # 4. Himalaya reads
 himalaya envelope list -a agenteiamail -s 3
 
-# 4b. The watcher found openclaw — silence here is the pass
+# 4b. The watcher found openclaw: silence here is the pass
 grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/null \
   || journalctl --user -u agenteiamail-watch.service 2>/dev/null | grep -i "openclaw not found" \
   || echo "watcher: openclaw resolved"
 
-# 5. End to end — have someone external send you mail
+# 5. End to end: have someone external send you mail
 tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
 
-# 6. Sending behaves — who it will write to, and what Himalaya is handed.
+# 6. Sending behaves: who it will write to, and what Himalaya is handed.
 #    Includes substring/prefix attacks on the allowlist and the From: header
 #    Himalaya v2 requires.
 scripts/test_roster.sh
@@ -505,7 +505,7 @@ tail -2 ~/.local/state/agenteiamail/idle.err.log  # expect "resuming from uid N"
 
 **A restart can take up to 30 seconds.** The listener is usually blocked waiting
 on the IMAP socket, and it only notices the stop signal when that wait ends. It is
-finishing, not hanging — `systemctl` returns when it is done.
+finishing, not hanging; `systemctl` returns when it is done.
 
 **Test 7 is the one that matters.** *"resuming from uid N"* rather than *"baseline
 uid N"* proves state persistence. If it says baseline after a restart, the state
@@ -515,7 +515,7 @@ that arrived while the machine was off.
 **Worth asking your external sender for more than one message.** A plain one, one
 with accented characters in the subject, and one shaped like a GitHub notification
 (`[owner/repo] Title (Issue #9)`). Those exercise header decoding and the subject
-parser, which is where the bugs found on 2026-08-09 were hiding — both of them
+parser, which is where the bugs found on 2026-08-09 were hiding, both of them
 invisible to a single ASCII test.
 
 ---
@@ -524,12 +524,12 @@ invisible to a single ASCII test.
 
 | Symptom | Cause |
 |---|---|
-| Notifications arrive in batches, minutes late | A pipe stage is buffering. `grep` needs `--line-buffered`, `sed` needs `-u`. `head` cannot flush at all — never put it in this pipe. |
+| Notifications arrive in batches, minutes late | A pipe stage is buffering. `grep` needs `--line-buffered`, `sed` needs `-u`. `head` cannot flush at all, so never put it in this pipe. |
 | Everything stops after a week, log looks fine | Rotation ran and a tail used `-f`. Use `-F`, which re-opens by name. |
 | Listener vanishes when your human logs out | `loginctl enable-linger` was never run. |
 | `login rejected` but the password is right | Himalaya reaching for a keyring that does not exist under systemd. Use the command-based secret. Also check for a trailing `\r` if the env file was ever edited on Windows. |
 | Connects, retries forever, no clear error | Certificate hostname mismatch. The listener treats it as a network error and backs off rather than failing loudly. See §1.2. |
 | Silence, and you assume no mail | You are not watching the error log. A dead listener looks exactly like a quiet mailbox. |
 | Every message replays on restart | State file not writable. Check `~/.local/state/agenteiamail/`. |
-| Hundreds replay once, then normal | `UIDVALIDITY` changed — the mailbox was recreated. Working as designed. |
+| Hundreds replay once, then normal | `UIDVALIDITY` changed: the mailbox was recreated. Working as designed. |
 | Subject shows `=?utf-8?q?...?=` | Header decoding broken. Fixed in this repo; if you see it, you are on an old commit. |
