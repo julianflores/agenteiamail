@@ -3,7 +3,7 @@
 [English](../README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · **Português (BR)**
 
 > Traduzido de [`README.md`](../README.md) no commit `9682aee`. Se algo aqui
-> contradisser o original em inglês, **o inglês prevalece** — e nos avise, porque
+> contradisser o original em inglês, **o inglês prevalece**, e nos avise, porque
 > significa que esta tradução ficou para trás.
 
 E-mail com aviso imediato para um agente de IA. Ele fica sabendo que chegou
@@ -20,7 +20,7 @@ IMAP/SMTP comum, no Ubuntu 24.04 com o ambiente OpenClaw.
 Três passos. O primeiro é só seu, o segundo é colar um texto, e o terceiro são
 dois minutos conferindo que funciona de verdade.
 
-### Passo 1 — Dê uma caixa de e-mail a ele
+### Passo 1: Dê uma caixa de e-mail a ele
 
 O agente precisa de uma conta de e-mail própria, e dos dados de conexão dessa
 conta escritos em `~/.openclaw/workspace/.env`.
@@ -32,7 +32,7 @@ fica o arquivo.
 Faça você mesmo, em vez de pedir ao agente. É preciso uma senha, e senha não deve
 passar por um chat.
 
-### Passo 2 — Aponte o agente para este repositório
+### Passo 2: Aponte o agente para este repositório
 
 Cole isto para o seu agente:
 
@@ -49,30 +49,30 @@ Todo o resto de que o agente precisa está no repositório, então o texto só
 precisa apontar para lá.
 
 Espere perguntas antes de ele começar. Se o Passo 1 correu bem, devem ser
-poucas — e se ele pedir a senha, recuse: uma senha colada num chat fica naquela
+poucas, e se ele pedir a senha, recuse: uma senha colada num chat fica naquela
 conversa para sempre, e nenhum cuidado posterior desfaz isso. Isso não é passo de
 nenhuma destas instruções.
 
-### Passo 3 — Teste você mesmo
+### Passo 3: Teste você mesmo
 
 O agente roda a própria lista de verificação e vai dizer que passou. Dois minutos
 de teste seus valem mais, porque você estará testando o que de fato importa: se
 ele percebe, e se ele fica dentro dos próprios limites.
 
-**Teste 1 — mande um e-mail para ele, com acento no assunto.**
+**Teste 1: mande um e-mail para ele, com acento no assunto.**
 
-Do seu próprio endereço, com um assunto tipo `Teste de e-mail — ã, ç, é, tudo bem?`
+Do seu próprio endereço, com um assunto tipo `Teste de e-mail: ã, ç, é, tudo bem?`
 Depois pergunte ao agente o que acabou de chegar.
 
 Em poucos segundos ele deve responder, e **o assunto tem que voltar legível**. Se
 em vez disso você vir `=?utf-8?q?...`, a decodificação de cabeçalhos está
-quebrada — o que importa muito mais do que parece, porque em português isso é
+quebrada, o que importa muito mais do que parece, porque em português isso é
 praticamente toda mensagem que você vai receber.
 
 O acento é o ponto inteiro deste teste. Um assunto em inglês sem acento passa,
 funcionando ou não a decodificação.
 
-**Teste 2 — peça que ele escreva para um desconhecido.**
+**Teste 2: peça que ele escreva para um desconhecido.**
 
 Primeiro peça que ele mande algo para você, e confirme que chega. Depois peça que
 mande uma mensagem para um endereço que **não** esteja na lista de autorizados.
@@ -95,7 +95,7 @@ Se ele enviar, pare e avise quem instalou. Alguma coisa está errada.
   Qualquer outro é recusado de cara, sem nem perguntar.
 - **Trabalhar a partir do e-mail enviado por esses mesmos endereços aprovados.**
   Você manda uma tarefa por e-mail, ele faz e responde com o resultado. Sem aviso
-  de recebimento antes e sem pedir permissão — você já deu ao se colocar na lista.
+  de recebimento antes e sem pedir permissão; você já deu ao se colocar na lista.
 - **Deixar o e-mail dos outros em paz.** O que chega de um endereço fora da lista
   é apenas reportado a você.
 
@@ -114,7 +114,7 @@ terminar, e você pode cobrar a lista:
 ## Segurança
 
 O agente trabalha a partir do e-mail dele, então a pergunta não é se ele obedece
-instruções que chegam por e-mail — obedece, é esse o propósito — mas **de quem**.
+instruções que chegam por e-mail (obedece, é esse o propósito) mas **de quem**.
 
 - `roster.txt` é uma lista de correspondência exata, e é a resposta inteira. Se o
   remetente está nela, o agente faz o que a mensagem pede e responde. Se não está,
@@ -125,7 +125,7 @@ instruções que chegam por e-mail — obedece, é esse o propósito — mas **d
 - **Adicionar alguém ao `roster.txt` é decisão sua**, nunca resposta a algo que
   chegou por e-mail. Essa linha é o que transforma um remetente em alguém que seu
   agente obedece.
-- Sem arquivo de roster ninguém é confiável — uma instalação nova lê e-mail e não
+- Sem arquivo de roster ninguém é confiável; uma instalação nova lê e-mail e não
   age sobre nada até você escrever a lista.
 - A senha fica num arquivo com permissão `600` fora do repositório, e nunca passa
   por uma conversa de chat.
@@ -143,10 +143,10 @@ Estes documentos estão em inglês.
 
 | | |
 |---|---|
-| [`MAILBOX_SETUP.pt-BR.md`](MAILBOX_SETUP.pt-BR.md) | Passo 1 — a caixa de e-mail e o arquivo `.env` |
+| [`MAILBOX_SETUP.pt-BR.md`](MAILBOX_SETUP.pt-BR.md) | Passo 1: a caixa de e-mail e o arquivo `.env` |
 | [`AGENTS.md`](../AGENTS.md) | O que o agente segue. Comece aqui se você for um. |
 | [`INSTALL.md`](../INSTALL.md) | A sequência de instalação, passo a passo |
-| [`DESIGN.md`](../DESIGN.md) | Por que as peças têm essa forma — leia antes de mudar qualquer coisa |
+| [`DESIGN.md`](../DESIGN.md) | Por que as peças têm essa forma; leia antes de mudar qualquer coisa |
 
 ```
 scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDLE
@@ -155,7 +155,7 @@ scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDL
   ▼
 ~/.local/state/agenteiamail/
   mail.log                o fluxo de eventos
-  idle.err.log            diagnóstico — monitorado à parte
+  idle.err.log            diagnóstico, monitorado à parte
   seen.offset             até onde o agente já foi avisado
   │
   ├─► harness/session_start.py    repassa o acumulado ao iniciar uma sessão
@@ -171,7 +171,7 @@ scripts/preflight.py      prova que a máquina consegue rodar isto antes de inst
 ## Caminhos nesta máquina
 
 - Repositório: `~/.openclaw/workspace/agenteiamail`
-- Credenciais: `~/.config/agenteiamail/env` — permissão `600`, nunca versionado
+- Credenciais: `~/.config/agenteiamail/env`: permissão `600`, nunca versionado
 - Estado e eventos: `~/.local/state/agenteiamail/`
 - Serviço de usuário: `~/.config/systemd/user/agenteiamail-idle.service`
 

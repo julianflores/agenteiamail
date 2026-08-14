@@ -38,7 +38,7 @@ realmente vive tu correo casi nunca es `ejemplo.com`, ni suele ser
 
 `mail.ejemplo.com` a menudo **sí** resuelve, y ahí está la trampa: parece
 correcto, conecta, y luego resulta que el certificado TLS está emitido para el
-servidor subyacente y no para tu nombre de vanidad. La verificación falla — y como
+servidor subyacente y no para tu nombre de vanidad. La verificación falla, y como
 un error de certificado llega con aspecto de error de red, el listener se queda
 reintentando indefinidamente con `connection lost` en el registro y nada que
 explique por qué.
@@ -53,7 +53,7 @@ explique por qué.
 - **Cualquier otro:** busca "IMAP settings" en su documentación.
 
 **Compruébalo antes de anotarlo.** Esto imprime los nombres que el certificado
-cubre realmente — el que uses tiene que ser uno de ellos:
+cubre realmente. El que uses tiene que ser uno de ellos:
 
 ```bash
 openssl s_client -connect TU_SERVIDOR:993 -servername TU_SERVIDOR </dev/null 2>/dev/null \
@@ -73,7 +73,7 @@ chmod 600 ~/.openclaw/workspace/.env
 ```
 
 `chmod 600` significa que solo tu usuario puede leerlo. Hazlo **antes** de poner la
-contraseña, no después — un fichero que estuvo un rato legible para todos ya pudo
+contraseña, no después; un fichero que estuvo un rato legible para todos ya pudo
 haber sido leído.
 
 Luego ábrelo en un editor y rellena:
@@ -91,7 +91,7 @@ AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
 ```
 
 **Puertos:** el `993` para IMAP es prácticamente universal. Para SMTP, el `465` es
-TLS implícito y el `587` es STARTTLS — la página de tu proveedor dirá cuál. Si
+TLS implícito y el `587` es STARTTLS; la página de tu proveedor dirá cuál. Si
 dudas, prueba primero el `465`.
 
 **Usa un editor, no `echo`.** Todo lo que escribes en la línea de comandos queda en
@@ -107,4 +107,4 @@ resulta faltar o estar mal.
 
 **Una cosa que nunca debería pedirte: la contraseña.** Tiene la ruta del fichero y
 puede leerlo cuando lo necesite. Si te pide que pegues la contraseña en el chat,
-niégate — eso no es un paso de ninguna de estas instrucciones.
+niégate, eso no es un paso de ninguna de estas instrucciones.

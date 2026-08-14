@@ -31,13 +31,13 @@ tem uma seção só dela mais abaixo.
 
 ## O nome do servidor, e por que é a parte chata
 
-Seu endereço termina num domínio — `exemplo.com`. O servidor onde o seu e-mail
+Seu endereço termina num domínio, `exemplo.com`. O servidor onde o seu e-mail
 realmente mora quase nunca é `exemplo.com`, e quase nunca é `mail.exemplo.com`
 também. Costuma ser algo como `nc-ph-2488.xmhosting.com` ou `imappro.zoho.com`.
 
 `mail.exemplo.com` frequentemente **resolve**, e é aí que está a armadilha: parece
 certo, conecta, e depois se descobre que o certificado TLS foi emitido para o
-servidor de baixo e não para o seu nome bonito. A verificação falha — e como um
+servidor de baixo e não para o seu nome bonito. A verificação falha, e como um
 erro de certificado chega com cara de erro de rede, o listener fica tentando de
 novo para sempre com `connection lost` no log e nada que diga o porquê.
 
@@ -51,7 +51,7 @@ novo para sempre com `connection lost` no log e nada que diga o porquê.
 - **Qualquer outro:** procure "IMAP settings" na documentação deles.
 
 **Confira antes de anotar.** Isto imprime os nomes que o certificado realmente
-cobre — o que você usar tem que ser um deles:
+cobre. O que você usar tem que ser um deles:
 
 ```bash
 openssl s_client -connect SEU_SERVIDOR:993 -servername SEU_SERVIDOR </dev/null 2>/dev/null \
@@ -71,7 +71,7 @@ chmod 600 ~/.openclaw/workspace/.env
 ```
 
 `chmod 600` significa que só o seu usuário pode ler. Faça isso **antes** de pôr a
-senha, não depois — um arquivo que ficou um tempo legível para todos pode já ter
+senha, não depois; um arquivo que ficou um tempo legível para todos pode já ter
 sido lido.
 
 Depois abra num editor e preencha:
@@ -89,7 +89,7 @@ AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
 ```
 
 **Portas:** a `993` para IMAP é praticamente universal. Para SMTP, a `465` é TLS
-implícito e a `587` é STARTTLS — a página do seu provedor vai dizer qual. Na
+implícito e a `587` é STARTTLS; a página do seu provedor vai dizer qual. Na
 dúvida, tente a `465` primeiro.
 
 **Use um editor, não `echo`.** Tudo que você digita na linha de comando vai parar
@@ -105,4 +105,4 @@ acabou faltando ou saindo errado.
 
 **Uma coisa que ele nunca deveria pedir: a senha.** Ele tem o caminho do arquivo e
 pode ler na hora que precisar. Se ele pedir para você colar a senha no chat,
-recuse — isso não é passo de nenhuma destas instruções.
+recuse, isso não é passo de nenhuma destas instruções.

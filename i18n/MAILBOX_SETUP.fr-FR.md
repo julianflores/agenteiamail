@@ -31,7 +31,7 @@ elle a donc sa propre section plus bas.
 
 ## Le nom du serveur, et pourquoi c'est la partie délicate
 
-Votre adresse se termine par un domaine — `exemple.com`. Le serveur où vit
+Votre adresse se termine par un domaine, `exemple.com`. Le serveur où vit
 réellement votre courrier n'est en général **pas** `exemple.com`, ni
 `mail.exemple.com`. C'est plutôt quelque chose comme `nc-ph-2488.xmhosting.com` ou
 `imappro.zoho.com`.
@@ -39,7 +39,7 @@ réellement votre courrier n'est en général **pas** `exemple.com`, ni
 `mail.exemple.com` résout pourtant souvent, et c'est là le piège : cela a l'air
 correct, la connexion s'établit, puis il s'avère que le certificat TLS est émis
 pour le serveur sous-jacent et non pour votre nom de façade. La vérification
-échoue — et comme une erreur de certificat arrive sous les traits d'une erreur
+échoue, et comme une erreur de certificat arrive sous les traits d'une erreur
 réseau, le listener réessaie indéfiniment avec `connection lost` dans le journal et
 rien qui explique pourquoi.
 
@@ -54,7 +54,7 @@ rien qui explique pourquoi.
 - **Ailleurs :** cherchez « IMAP settings » dans leur documentation.
 
 **Vérifiez-le avant de le noter.** Ceci affiche les noms que le certificat couvre
-réellement — celui que vous utiliserez doit en faire partie :
+réellement. Celui que vous utiliserez doit en faire partie :
 
 ```bash
 openssl s_client -connect VOTRE_SERVEUR:993 -servername VOTRE_SERVEUR </dev/null 2>/dev/null \
@@ -75,7 +75,7 @@ chmod 600 ~/.openclaw/workspace/.env
 ```
 
 `chmod 600` signifie que seul votre utilisateur peut le lire. Faites-le **avant**
-d'y mettre le mot de passe, pas après — un fichier brièvement lisible par tous a
+d'y mettre le mot de passe, pas après ; un fichier brièvement lisible par tous a
 peut-être déjà été lu.
 
 Ouvrez-le ensuite dans un éditeur et remplissez :
@@ -93,7 +93,7 @@ AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
 ```
 
 **Ports :** `993` pour IMAP est quasi universel. Pour SMTP, `465` est du TLS
-implicite et `587` du STARTTLS — la page de votre fournisseur précisera lequel. En
+implicite et `587` du STARTTLS ; la page de votre fournisseur précisera lequel. En
 cas de doute, essayez `465` d'abord.
 
 **Utilisez un éditeur, pas `echo`.** Tout ce que vous tapez en ligne de commande
@@ -110,5 +110,5 @@ question si quelque chose ici se révèle manquant ou faux.
 
 **Une chose qu'il ne devrait jamais demander : le mot de passe.** Il a le chemin du
 fichier et peut le lire au moment voulu. S'il vous demande de coller le mot de
-passe dans la conversation, refusez — cela ne fait partie d'aucune de ces
+passe dans la conversation, refusez, cela ne fait partie d'aucune de ces
 instructions.

@@ -50,7 +50,7 @@ foreach (ENV_FIELDS as $key) {
         $posted = trim((string) $_POST[$key]);
         // The password box comes back empty on every render, because its value is
         // never written into the HTML. An empty box therefore means "unchanged",
-        // not "cleared" — otherwise testing and then saving would wipe it and the
+        // not "cleared"; otherwise testing and then saving would wipe it and the
         // form would demand it again for no reason the user can see.
         if ($key !== 'AGENT_EMAIL_PASSWORD' || $posted !== '') {
             $values[$key] = $posted;
@@ -67,7 +67,7 @@ if ($action !== '') {
 
 // One action, in one order: check the settings against the real servers, and
 // write the file only if both of them accepted the account. A configuration
-// that does not authenticate is not a configuration — writing it would leave
+// that does not authenticate is not a configuration; writing it would leave
 // the agent with a file that looks finished and a mailbox it cannot open.
 if ($action === 'setup' && $errors === []) {
     $imap = probe_imap(
@@ -105,7 +105,7 @@ $existing = existing_config();
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agenteiamail — mailbox setup</title>
+<title>agenteiamail: mailbox setup</title>
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
@@ -126,7 +126,7 @@ $existing = existing_config();
 
   <h2>What happens next</h2>
   <p>Tell the agent the settings are in place. It will install the rest and check that
-     mail arrives — that part is its job, not yours.</p>
+     mail arrives; that part is its job, not yours.</p>
   <p>The one thing still worth doing yourself: send the agent an email and ask it what
      just arrived. If it answers within a couple of seconds, everything works.</p>
 
@@ -136,7 +136,7 @@ $existing = existing_config();
 
   <h1>Give the agent a mailbox</h1>
   <p class="lead">Seven settings from your email provider. Everything stays on this
-     machine — the page is not reachable from the internet.</p>
+     machine. The page is not reachable from the internet.</p>
 
   <?php if ($existing !== null): ?>
     <div class="panel warn">
@@ -153,12 +153,12 @@ $existing = existing_config();
     <h3>If your email came with your web hosting (cPanel)</h3>
     <p>This is the most common case, and the settings are already written down for you.</p>
     <ol>
-      <li>Sign in to cPanel — usually <code>yourdomain.com/cpanel</code>, or a link your host emailed you.</li>
+      <li>Sign in to cPanel, usually <code>yourdomain.com/cpanel</code>, or a link your host emailed you.</li>
       <li>Open <strong>Email Accounts</strong>.</li>
       <li>Find the address the agent will use, and click <strong>Connect Devices</strong>
           (older versions call it <em>Set Up Mail Client</em>).</li>
       <li>Look for <strong>Mail Client Manual Settings</strong>, and use the
-          <strong>Secure SSL/TLS Settings</strong> column — not the non-SSL one.</li>
+          <strong>Secure SSL/TLS Settings</strong> column, not the non-SSL one.</li>
     </ol>
     <p>Copy <em>Incoming Server</em> and its IMAP port into the reading section below,
        and <em>Outgoing Server</em> and its SMTP port into the sending section. The username
@@ -169,7 +169,7 @@ $existing = existing_config();
     <p>Server names are always the same: <code>imap.gmail.com</code> port <code>993</code>
        for reading, <code>smtp.gmail.com</code> port <code>465</code> for sending.</p>
     <p>The password is the part that catches people. Google will not accept your normal
-       one here — you need an <strong>app password</strong>, which requires 2-Step
+       one here. You need an <strong>app password</strong>, which requires 2-Step
        Verification to be switched on first. Create one at
        <code>myaccount.google.com</code> → Security → App passwords, and paste the
        16-character code it gives you.</p>
@@ -285,7 +285,7 @@ $existing = existing_config();
 
     <?php if ($report !== null): ?>
       <div class="panel bad">
-        <h2>Not saved yet — something here is not right</h2>
+        <h2>Not saved yet: something here is not right</h2>
 
         <h3>Reading mail</h3>
         <ul class="steps">
@@ -313,7 +313,7 @@ $existing = existing_config();
       <button type="submit" name="action" value="setup" class="primary">Check and save</button>
     </div>
 
-    <p class="quiet">This signs in to your mailbox and signs straight back out — it does not
+    <p class="quiet">This signs in to your mailbox and signs straight back out; it does not
        read, send, or change anything. The settings are saved only if your mail server
        accepts them, so there is nothing to undo if something here is wrong.</p>
   </form>

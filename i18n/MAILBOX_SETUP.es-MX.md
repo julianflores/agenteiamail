@@ -37,7 +37,7 @@ verdad vive tu correo casi nunca es `ejemplo.com`, y casi nunca es
 
 `mail.ejemplo.com` muchas veces **sí** resuelve, y ahí está la trampa: se ve bien,
 conecta, y luego resulta que el certificado TLS está emitido para el servidor de
-abajo y no para tu nombre bonito. La verificación falla — y como un error de
+abajo y no para tu nombre bonito. La verificación falla, y como un error de
 certificado llega disfrazado de error de red, el listener se queda reintentando
 para siempre con `connection lost` en la bitácora y nada que diga por qué.
 
@@ -51,7 +51,7 @@ para siempre con `connection lost` en la bitácora y nada que diga por qué.
 - **Cualquier otro:** busca "IMAP settings" en su documentación.
 
 **Compruébalo antes de anotarlo.** Esto imprime los nombres que el certificado
-cubre de verdad — el que uses tiene que ser uno de ellos:
+cubre de verdad. El que uses tiene que ser uno de ellos:
 
 ```bash
 openssl s_client -connect TU_SERVIDOR:993 -servername TU_SERVIDOR </dev/null 2>/dev/null \
@@ -71,7 +71,7 @@ chmod 600 ~/.openclaw/workspace/.env
 ```
 
 `chmod 600` significa que solo tu usuario puede leerlo. Hazlo **antes** de poner la
-contraseña, no después — un archivo que estuvo un rato legible para todos ya pudo
+contraseña, no después; un archivo que estuvo un rato legible para todos ya pudo
 haber sido leído.
 
 Luego ábrelo en un editor y llena:
@@ -89,7 +89,7 @@ AGENT_EMAIL_OUTGOING_SERVER_SMTP_PORT=465
 ```
 
 **Puertos:** el `993` para IMAP es prácticamente universal. Para SMTP, el `465` es
-TLS implícito y el `587` es STARTTLS — la página de tu proveedor dirá cuál. Si
+TLS implícito y el `587` es STARTTLS; la página de tu proveedor dirá cuál. Si
 tienes duda, prueba primero el `465`.
 
 **Usa un editor, no `echo`.** Todo lo que escribes en la línea de comandos se queda
@@ -105,4 +105,4 @@ esto resultó faltar o estar mal.
 
 **Una cosa que nunca debería pedirte: la contraseña.** Tiene la ruta del archivo y
 puede leerlo cuando lo necesite. Si te pide que pegues la contraseña en el chat,
-dile que no — eso no es un paso de ninguna de estas instrucciones.
+dile que no, eso no es un paso de ninguna de estas instrucciones.

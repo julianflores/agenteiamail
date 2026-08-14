@@ -1,5 +1,5 @@
 /* Setup page styling.
-   System fonts only — this machine may have no route to the internet, and a
+   System fonts only; this machine may have no route to the internet, and a
    webfont reference would be a silent request that never completes. */
 
 :root {
@@ -168,7 +168,7 @@ button.secondary { background: transparent;   color: var(--accent); }
 button:hover     { filter: brightness(1.08); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Provider instructions. <details> so it collapses with no JavaScript —
+/* Provider instructions. <details> so it collapses with no JavaScript;
    the page has a default-src 'none' policy and loads no scripts at all. */
 .help {
   border: 1px solid var(--line);
