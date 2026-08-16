@@ -4,8 +4,9 @@ Session-start hook — make a new session aware of mail it would otherwise miss.
 
 The listener notices mail within about a second and appends to mail.log. But a
 systemd service cannot push into an agent session; only a live event source can.
-So each session does two things: catch up on what landed while nothing was
-watching, and arm the watcher.
+So each session does three things: catch up on what landed while nothing was
+watching, arm the watcher, and say which version is installed, since a session
+start is the only moment an agent can be told any of it unprompted.
 
 Never fails the session: any unexpected error degrades to a quiet no-op, because a
 broken hook must not be able to block startup.
@@ -17,12 +18,15 @@ STATE_DIR = pathlib.Path.home() / ".local/state/agenteiamail"
 LOG = STATE_DIR / "mail.log"
 OFFSET_FILE = STATE_DIR / "seen.offset"
 WATCH_ERR = STATE_DIR / "watch.err.log"
-WATCH = pathlib.Path.home() / ".openclaw/workspace/agenteiamail/harness/watch.sh"
+REPO = pathlib.Path.home() / ".openclaw/workspace/agenteiamail"
+WATCH = REPO / "harness/watch.sh"
+VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
 WATCH_SERVICE = "agenteiamail-watch.service"
 
 MAX_REPLAY = 20   # enough to see overnight without flooding the context window
 MAX_WATCH_ERR = 5   # the last few lines say whether it is still failing
+VERSION_TIMEOUT = 20   # above version.sh's own 10s, so its timeout fires first
 
 
 def unit_down(unit):
@@ -52,6 +56,30 @@ def watcher_faults():
     except OSError:
         return []
     return [ln for ln in text.splitlines() if ln.strip()][-MAX_WATCH_ERR:]
+
+
+def version_line():
+    """
+    One line: which version is installed, and whether anything newer exists.
+
+    A session is the only moment this can be said unprompted, and an agent that
+    is never told never asks. The cost is one line of context per session.
+
+    `version.sh --line` owns the question, including its own once-a-day cache,
+    so this stays a wrapper. That keeps one implementation of the comparison
+    rather than two, and a harness that rewrites this file inherits the
+    behaviour rather than reimplementing it.
+
+    Nonzero exit is not silence. Out of date exits 2 and could-not-check exits
+    1, and those are the two answers worth hearing, so the line is read from
+    stdout whatever the status says.
+    """
+    try:
+        r = subprocess.run([str(VERSION_SH), "--line"], capture_output=True,
+                           text=True, timeout=VERSION_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None   # no clone at the expected path, or it hung: not worth a line
+    return r.stdout.strip() or None
 
 
 def read_backlog():
@@ -114,6 +142,10 @@ def main():
         parts.append(header + "\n" + "\n".join(lines))
     else:
         parts.append("No unseen mail since the last session acknowledged the log.")
+
+    version = version_line()
+    if version:
+        parts.append(version)
 
     parts.append(
         f"Arm a persistent event source running: bash {WATCH} {offset}\n"

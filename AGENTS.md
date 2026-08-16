@@ -76,6 +76,27 @@ touched.
 
 ---
 
+## Keeping the install current
+
+Your session start tells you which version you are on and whether a newer one
+exists. You can ask at any time:
+
+```bash
+scripts/version.sh
+```
+
+**A newer release is not an emergency and not a decision you make alone.** Tell
+your human it exists, say what the [`CHANGELOG.md`](CHANGELOG.md) entries
+between the two versions contain, and upgrade when they agree. Then follow
+[`UPGRADE.md`](UPGRADE.md) rather than working from `git pull` and memory: this
+tool's units are copies rather than links, so a template that changed in the
+repository does not reach your install on its own, and nothing complains when it
+does not.
+
+**If the check exits 1, it could not reach the remote.** That is not the same as
+being up to date, and you must not report it as such. Say that the check failed
+and why.
+
 ## If your human asks you to remove it
 
 Follow [`UNINSTALL.md`](UNINSTALL.md) rather than working from memory of what you

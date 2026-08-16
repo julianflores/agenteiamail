@@ -245,6 +245,49 @@ agent's own persistent instructions rather than left in a file it may not reread
 
 ---
 
+## Why the version is a file, and the check is a remote read
+
+The property this serves is the same one as everything else: an install must not
+be able to believe it is current while it is not.
+
+**The installed version is `VERSION`, not `git describe`.** A tag is a fact
+about a clone's git metadata, and there are four ordinary ways to have this
+software installed with that metadata absent or wrong: a tarball copy, a shallow
+clone, a detached HEAD, and a clone whose tags were never fetched. A file copies
+with the files. The cost is that it has to be bumped by hand at release time,
+which is a discipline problem rather than a silent-failure problem, and it fails
+in the direction of reporting an older version than you have.
+
+**The released version comes from `git ls-remote`, not the GitHub API.** No
+token to hold on a machine that already holds a mail password, no rate limit to
+hit, and it follows the clone's own `origin`, so a fork or a mirror answers for
+itself without being configured to. `GIT_TERMINAL_PROMPT=0` is load-bearing
+there: a remote that has gone private otherwise asks for a username on a
+terminal nobody is watching, and a hook waits on that until something kills it.
+
+**Failure and currency are different answers, and the code keeps them apart.**
+`version.sh` exits 1 when it could not reach the remote and never rounds that up
+to "up to date". This is the same mistake as a dead listener looking like a
+quiet mailbox: the absence of bad news is not good news, and every layer here
+that treats it as such has eventually cost somebody a real message.
+
+**The check runs at session start because nothing else would run it.** An agent
+that is never told it is behind does not think to ask, and this repository has
+already shipped a fix that no running install had any way to learn about. The
+line costs one line of context per session, and the network round trip is cached
+for a day, because an update that landed this morning is not worth a network
+call at every start.
+
+**Upgrading has its own document because a pull does not finish the job.** The
+systemd units are copies made at install time, not links into the repository, so
+a changed template does not reach a running install and nothing complains that
+it did not. `harness/session_start.py` is meant to be edited per harness, so a
+pull that touches it conflicts, and the conflict is the correct outcome rather
+than a nuisance to force past. Both of those are in [`UPGRADE.md`](UPGRADE.md)
+because they are the parts somebody working from memory would miss.
+
+---
+
 ## What this repository is, and what it is not
 
 This repo is the artifact. It was built from a 1,181-line replication guide that
