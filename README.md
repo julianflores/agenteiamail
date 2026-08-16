@@ -122,6 +122,28 @@ this back when it finishes, and you can hold it to the list:
 All of it is reversible; [`UNINSTALL.md`](UNINSTALL.md) removes every item on that
 list, in an order that does not leave you working from memory.
 
+## Keeping it up to date
+
+The installed version is in [`VERSION`](VERSION), and the agent is told which
+one it is running at the start of every session, along with whether anything
+newer has been released.
+
+You can ask it the same question directly:
+
+```bash
+scripts/version.sh
+```
+
+It reads the released version from this repository's tags, so there is no
+account and no token involved, and it says so plainly when it could not reach
+the network rather than reporting an install as current because nothing
+contradicted it.
+
+Upgrading is [`UPGRADE.md`](UPGRADE.md), and what changed between two versions
+is [`CHANGELOG.md`](CHANGELOG.md). Read the changelog first: a release
+occasionally needs a step beyond `git pull`, and the failure mode of skipping it
+is a listener that works until the next reboot.
+
 ## Security
 
 The agent works from its mail, so the question is not whether it takes
@@ -155,6 +177,8 @@ the roster is weaker than it looks.
 | [`webapp/README.md`](webapp/README.md) | Step 1 without a terminal: a local setup form |
 | [`AGENTS.md`](AGENTS.md) | What the agent follows. Start here if you are one. |
 | [`INSTALL.md`](INSTALL.md) | The deployment sequence, step by step |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed per release, and which releases need more than a pull |
+| [`UPGRADE.md`](UPGRADE.md) | Moving an existing install to a newer version |
 | [`DESIGN.md`](DESIGN.md) | Why the pieces are shaped this way; read before changing any of it |
 | [`UNINSTALL.md`](UNINSTALL.md) | How to take all of it back off |
 
@@ -172,6 +196,8 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
   ├─► harness/watch.sh            pushes each line into the live session
   └─► harness/rotate_logs.py      copytruncate rotation, on a user timer
 
+scripts/version.sh        installed version against the newest release, and
+                          what to do about the difference.
 himalaya                  reads and sends. The listener never fetches bodies.
 scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
 scripts/roster.py         the same allowlist, read by the listener to tag senders.

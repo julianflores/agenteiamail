@@ -13,6 +13,14 @@ like style and are not.
 
 > ### Already installed? Read this first
 >
+> **This document is for a first install. Moving an existing one to a newer
+> version is [`UPGRADE.md`](UPGRADE.md)**, and what changed between two versions
+> is [`CHANGELOG.md`](CHANGELOG.md). `scripts/version.sh` says which version you
+> are on and whether there is a newer one.
+>
+> One upgrade hazard predates both files and is worth naming here, because a
+> clone old enough to hit it is too old to be told about it any other way.
+>
 > The scripts moved into `scripts/` on 2026-08-09. **If you have a running
 > install, `git pull` will not break it immediately; it will break on the next
 > restart or reboot**, when systemd looks for a file that is no longer where the
@@ -458,6 +466,11 @@ other check in §7 passes, and no notification is ever delivered.
 Do not report success until every line passes.
 
 ```bash
+# 0. Which version you just installed, and whether it is the current one.
+#    Exit 2 means a newer release exists; exit 1 means the check could not
+#    reach the remote, which is not the same as being up to date.
+scripts/version.sh
+
 # 1. Running, and for more than a moment
 systemctl --user is-active agenteiamail-idle.service
 systemctl --user show agenteiamail-idle.service -p ActiveEnterTimestamp
