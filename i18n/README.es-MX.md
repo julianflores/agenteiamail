@@ -2,7 +2,7 @@
 
 [English](../README.md) · **Español (MX)** · [Español (ES)](README.es-ES.md) · [Français](README.fr-FR.md) · [Português (BR)](README.pt-BR.md)
 
-> Traducido de [`README.md`](../README.md) en el commit `9682aee`. Si algo aquí
+> Traducido de [`README.md`](../README.md) en el commit `fcdf34b`. Si algo aquí
 > contradice al original en inglés, **gana el inglés**, y avísanos, porque
 > significa que esta traducción se quedó atrás.
 
@@ -112,6 +112,29 @@ todo esto cuando termine, y puedes exigirle la lista:
   cierras sesión
 - Una regla permanente agregada a las instrucciones del propio agente
 
+Todo esto es reversible; [`UNINSTALL.md`](../UNINSTALL.md) quita cada punto de esa
+lista, en un orden que no te deja trabajando de memoria.
+
+## Cómo mantenerlo al día
+
+La versión instalada está en [`VERSION`](../VERSION), y al agente se le dice cuál
+está corriendo al inicio de cada sesión, junto con si ya salió alguna más nueva.
+
+Puedes preguntarle lo mismo directamente:
+
+```bash
+scripts/version.sh
+```
+
+Lee la versión publicada de las etiquetas de este repositorio, así que no hay
+cuenta ni token de por medio, y avisa claramente cuando no pudo alcanzar la red,
+en vez de dar por actualizada una instalación nada más porque nada lo contradijo.
+
+Actualizar es [`UPGRADE.md`](../UPGRADE.md), y lo que cambió entre dos versiones
+está en [`CHANGELOG.md`](../CHANGELOG.md). Lee primero el changelog: de vez en
+cuando una versión necesita algo más que un `git pull`, y la forma en que falla
+saltárselo es un listener que funciona hasta el siguiente reinicio.
+
 ## Seguridad
 
 El agente trabaja desde su correo, así que la pregunta no es si obedece
@@ -126,7 +149,7 @@ quién**.
   dirección de la lista con un encabezado.
 - **Agregar a alguien a `roster.txt` es decisión tuya**, nunca respuesta a algo que
   llegó por correo. Esa línea es lo que convierte a un remitente en alguien a quien
-  tu agente obedece.
+  tu agente obedece, así que vale la pena tratarla como lo que es.
 - Sin archivo de roster no hay nadie confiable; una instalación nueva lee correo y
   no actúa sobre nada hasta que tú escribas la lista.
 - La contraseña vive en un archivo con permisos `600` fuera del repositorio, y
@@ -146,9 +169,13 @@ Estos documentos están en inglés.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.es-MX.md`](MAILBOX_SETUP.es-MX.md) | Paso 1: el buzón y el archivo `.env` |
+| [`webapp/README.md`](../webapp/README.md) | El Paso 1 sin terminal: un formulario local |
 | [`AGENTS.md`](../AGENTS.md) | Lo que sigue el agente. Empieza aquí si eres uno. |
 | [`INSTALL.md`](../INSTALL.md) | La secuencia de instalación, paso por paso |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Qué cambió en cada versión, y cuáles piden algo más que un pull |
+| [`UPGRADE.md`](../UPGRADE.md) | Llevar una instalación ya existente a una versión más nueva |
 | [`DESIGN.md`](../DESIGN.md) | Por qué las piezas son así; léelo antes de cambiar cualquier cosa |
+| [`UNINSTALL.md`](../UNINSTALL.md) | Cómo quitarlo todo |
 
 ```
 scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexión
@@ -164,10 +191,14 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
   ├─► harness/watch.sh            empuja cada línea a la sesión en vivo
   └─► harness/rotate_logs.py      rotación con copytruncate, en un timer de usuario
 
+scripts/version.sh        la versión instalada frente a la más reciente publicada,
+                          y qué hacer con la diferencia.
 himalaya                  lee y envía. El listener nunca descarga cuerpos.
 scripts/send.sh + roster.txt  el envío está restringido a destinatarios autorizados.
 scripts/roster.py         la misma lista, que el listener lee para marcar remitentes.
 scripts/preflight.py      comprueba que una máquina puede correr esto antes de instalarlo.
+webapp/ + setup_web.sh    un formulario local que escribe el archivo de credenciales,
+                          para quien no quiere usar la terminal. Solo por loopback.
 ```
 
 ## Rutas en esta máquina

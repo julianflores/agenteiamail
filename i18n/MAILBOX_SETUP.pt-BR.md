@@ -2,7 +2,7 @@
 
 [English](../MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · [Français](MAILBOX_SETUP.fr-FR.md) · **Português (BR)**
 
-> Traduzido de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) no commit `b82b480`. Se algo
+> Traduzido de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) no commit `812dfe4`. Se algo
 > aqui contradisser o original em inglês, **o inglês prevalece**.
 
 Passo 1 do [README](README.pt-BR.md#como-configurar-no-seu-agente). Isto é você
@@ -10,6 +10,20 @@ quem faz, antes de envolver o agente, porque é preciso uma senha e senha não d
 passar por um chat.
 
 Dez minutos, e a maior parte vai em achar um nome de servidor.
+
+> **Existe um formulário para isso.** Se digitar um arquivo num terminal não é o
+> que você quer fazer, peça ao agente para rodar `scripts/setup_web.sh`. Isso não
+> quebra a regra acima: o agente só sobe uma página na máquina dele e te passa o
+> link. A senha quem digita na página é você, então ela continua não passando pelo
+> chat.
+>
+> A página pede os mesmos dados que este documento descreve, testa contra o seu
+> servidor de e-mail e escreve o arquivo para você, inclusive o problema do nome do
+> servidor que aparece mais abaixo, que ela diagnostica pelo nome em vez de deixar
+> você descobrir. Veja [`webapp/README.md`](../webapp/README.md).
+>
+> O resto desta página é o caminho manual, e continua valendo a leitura: explica
+> *por que* cada ajuste é o que é, e isso o formulário não consegue fazer.
 
 ---
 

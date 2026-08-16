@@ -2,7 +2,7 @@
 
 [English](../README.md) · [Español (MX)](README.es-MX.md) · **Español (ES)** · [Français](README.fr-FR.md) · [Português (BR)](README.pt-BR.md)
 
-> Traducido de [`README.md`](../README.md) en el commit `9682aee`. Si algo aquí
+> Traducido de [`README.md`](../README.md) en el commit `fcdf34b`. Si algo aquí
 > contradice al original en inglés, **manda el inglés**, y avísanos, porque
 > significa que esta traducción se ha quedado atrás.
 
@@ -112,6 +112,31 @@ informarte de todo esto cuando termine, y puedes exigirle la lista:
   sesión
 - Una regla permanente añadida a las instrucciones del propio agente
 
+Todo esto es reversible; [`UNINSTALL.md`](../UNINSTALL.md) elimina cada punto de
+esa lista, en un orden que no te deja trabajando de memoria.
+
+## Cómo mantenerlo al día
+
+La versión instalada está en [`VERSION`](../VERSION), y al agente se le dice cuál
+está ejecutando al inicio de cada sesión, junto con si ha salido alguna más
+reciente.
+
+Puedes preguntarle lo mismo directamente:
+
+```bash
+scripts/version.sh
+```
+
+Lee la versión publicada de las etiquetas de este repositorio, así que no hay
+cuenta ni token de por medio, y lo dice claramente cuando no ha podido llegar a la
+red, en vez de dar por actualizada una instalación solo porque nada lo ha
+contradicho.
+
+Actualizar es [`UPGRADE.md`](../UPGRADE.md), y lo que ha cambiado entre dos
+versiones está en [`CHANGELOG.md`](../CHANGELOG.md). Lee primero el changelog: de
+vez en cuando una versión necesita algo más que un `git pull`, y la forma en que
+falla saltárselo es un listener que funciona hasta el siguiente reinicio.
+
 ## Seguridad
 
 El agente trabaja desde su correo, así que la pregunta no es si obedece
@@ -126,7 +151,7 @@ quién**.
   dirección de la lista con una cabecera.
 - **Añadir a alguien a `roster.txt` es decisión tuya**, nunca respuesta a algo que
   ha llegado por correo. Esa línea es lo que convierte a un remitente en alguien a
-  quien tu agente obedece.
+  quien tu agente obedece, así que merece la pena tratarla como lo que es.
 - Sin fichero de roster no hay nadie de confianza: una instalación nueva lee correo
   y no actúa sobre nada hasta que escribas la lista.
 - La contraseña vive en un fichero con permisos `600` fuera del repositorio, y
@@ -146,9 +171,13 @@ Estos documentos están en inglés.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.es-ES.md`](MAILBOX_SETUP.es-ES.md) | Paso 1: el buzón y el fichero `.env` |
+| [`webapp/README.md`](../webapp/README.md) | El Paso 1 sin terminal: un formulario local |
 | [`AGENTS.md`](../AGENTS.md) | Lo que sigue el agente. Empieza aquí si eres uno. |
 | [`INSTALL.md`](../INSTALL.md) | La secuencia de instalación, paso a paso |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Qué ha cambiado en cada versión, y cuáles piden algo más que un pull |
+| [`UPGRADE.md`](../UPGRADE.md) | Llevar una instalación ya existente a una versión más reciente |
 | [`DESIGN.md`](../DESIGN.md) | Por qué las piezas son así; léelo antes de cambiar nada |
+| [`UNINSTALL.md`](../UNINSTALL.md) | Cómo quitarlo todo |
 
 ```
 scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexión
@@ -164,10 +193,14 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
   ├─► harness/watch.sh            envía cada línea a la sesión en vivo
   └─► harness/rotate_logs.py      rotación con copytruncate, en un timer de usuario
 
+scripts/version.sh        la versión instalada frente a la más reciente publicada,
+                          y qué hacer con la diferencia.
 himalaya                  lee y envía. El listener nunca descarga cuerpos.
 scripts/send.sh + roster.txt  el envío está restringido a destinatarios autorizados.
 scripts/roster.py         la misma lista, que el listener lee para marcar remitentes.
 scripts/preflight.py      comprueba que una máquina puede ejecutar esto antes de instalarlo.
+webapp/ + setup_web.sh    un formulario local que escribe el fichero de credenciales,
+                          para quien no quiere usar la terminal. Solo por loopback.
 ```
 
 ## Rutas en esta máquina

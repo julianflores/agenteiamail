@@ -2,7 +2,7 @@
 
 [English](../README.md) · [Español (MX)](README.es-MX.md) · [Español (ES)](README.es-ES.md) · **Français** · [Português (BR)](README.pt-BR.md)
 
-> Traduit de [`README.md`](../README.md) au commit `9682aee`. En cas de divergence
+> Traduit de [`README.md`](../README.md) au commit `fcdf34b`. En cas de divergence
 > avec l'original anglais, **c'est l'anglais qui fait foi**, et signalez-le nous,
 > car cela veut dire que cette traduction a pris du retard.
 
@@ -119,6 +119,30 @@ tout ceci en terminant, et vous pouvez lui en demander la liste :
   déconnexion
 - Une règle permanente ajoutée aux instructions de l'agent lui-même
 
+Tout cela est réversible ; [`UNINSTALL.md`](../UNINSTALL.md) retire chaque élément
+de cette liste, dans un ordre qui ne vous laisse pas travailler de mémoire.
+
+## Le tenir à jour
+
+La version installée se trouve dans [`VERSION`](../VERSION), et l'agent apprend
+laquelle il exécute au début de chaque session, ainsi que l'existence éventuelle
+d'une version plus récente.
+
+Vous pouvez lui poser la même question directement :
+
+```bash
+scripts/version.sh
+```
+
+Il lit la version publiée dans les étiquettes de ce dépôt : ni compte ni jeton
+d'accès. Et il le dit franchement lorsqu'il n'a pas pu joindre le réseau, plutôt
+que de déclarer une installation à jour au seul motif que rien ne l'a contredit.
+
+La mise à niveau, c'est [`UPGRADE.md`](../UPGRADE.md), et ce qui a changé entre
+deux versions se trouve dans [`CHANGELOG.md`](../CHANGELOG.md). Lisez d'abord le
+changelog : une version demande parfois autre chose qu'un `git pull`, et l'oublier
+donne un listener qui fonctionne jusqu'au prochain redémarrage.
+
 ## Sécurité
 
 L'agent travaille à partir de son courrier : la question n'est donc pas de savoir
@@ -133,7 +157,7 @@ mais **de qui** elles viennent.
   de la liste au moyen d'un en-tête.
 - **Ajouter quelqu'un à `roster.txt` est votre décision**, jamais une réponse à
   quelque chose arrivé par courrier. Cette ligne est ce qui fait d'un expéditeur
-  quelqu'un à qui votre agent obéit.
+  quelqu'un à qui votre agent obéit : elle mérite donc d'être traitée comme telle.
 - Sans fichier roster, personne n'est de confiance : une installation neuve lit le
   courrier et n'agit sur rien tant que vous n'avez pas écrit la liste.
 - Le mot de passe réside dans un fichier en `600` hors du dépôt, et ne transite
@@ -153,9 +177,13 @@ Ces documents sont en anglais.
 | | |
 |---|---|
 | [`MAILBOX_SETUP.fr-FR.md`](MAILBOX_SETUP.fr-FR.md) | Étape 1 : la boîte et le fichier `.env` |
+| [`webapp/README.md`](../webapp/README.md) | L'étape 1 sans terminal : un formulaire local |
 | [`AGENTS.md`](../AGENTS.md) | Ce que suit l'agent. Commencez ici si vous en êtes un. |
 | [`INSTALL.md`](../INSTALL.md) | La séquence d'installation, étape par étape |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Ce qui a changé à chaque version, et lesquelles demandent plus qu'un pull |
+| [`UPGRADE.md`](../UPGRADE.md) | Faire passer une installation existante à une version plus récente |
 | [`DESIGN.md`](../DESIGN.md) | Pourquoi les pièces ont cette forme ; à lire avant d'y toucher |
+| [`UNINSTALL.md`](../UNINSTALL.md) | Comment tout enlever |
 
 ```
 scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
@@ -171,10 +199,14 @@ scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
   ├─► harness/watch.sh            pousse chaque ligne dans la session en cours
   └─► harness/rotate_logs.py      rotation copytruncate, sur un timer utilisateur
 
+scripts/version.sh        la version installée face à la dernière publiée, et
+                          quoi faire de l'écart.
 himalaya                  lit et envoie. Le listener ne télécharge jamais les corps.
 scripts/send.sh + roster.txt  l'envoi est limité aux destinataires autorisés.
 scripts/roster.py         la même liste, lue par le listener pour marquer les expéditeurs.
 scripts/preflight.py      prouve qu'une machine peut faire tourner ceci avant de l'installer.
+webapp/ + setup_web.sh    un formulaire local qui écrit le fichier d'identifiants,
+                          pour qui ne veut pas de terminal. Loopback uniquement.
 ```
 
 ## Chemins sur cette machine

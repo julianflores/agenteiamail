@@ -2,7 +2,7 @@
 
 [English](../MAILBOX_SETUP.md) · [Español (MX)](MAILBOX_SETUP.es-MX.md) · [Español (ES)](MAILBOX_SETUP.es-ES.md) · **Français** · [Português (BR)](MAILBOX_SETUP.pt-BR.md)
 
-> Traduit de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) au commit `b82b480`. En cas de
+> Traduit de [`MAILBOX_SETUP.md`](../MAILBOX_SETUP.md) au commit `812dfe4`. En cas de
 > divergence avec l'original anglais, **c'est l'anglais qui fait foi**.
 
 Étape 1 du [README](README.fr-FR.md#mise-en-place-sur-votre-agent). Vous faites
@@ -10,6 +10,21 @@ ceci vous-même, avant d'impliquer l'agent, parce qu'il faut un mot de passe et
 qu'un mot de passe ne doit pas transiter par une conversation.
 
 Dix minutes, dont l'essentiel passe à trouver un nom de serveur.
+
+> **Il existe un formulaire pour cela.** Si taper un fichier dans un terminal ne
+> vous dit rien, demandez à l'agent de lancer `scripts/setup_web.sh`. Cela ne
+> contrevient pas à la règle ci-dessus : l'agent ne fait qu'ouvrir une page sur sa
+> propre machine et vous en donner le lien. C'est vous qui saisissez le mot de
+> passe dans la page, il ne transite donc toujours pas par la conversation.
+>
+> La page demande les mêmes réglages que décrit ce document, les vérifie auprès de
+> votre serveur de messagerie et écrit le fichier à votre place, y compris pour le
+> problème de nom d'hôte exposé plus bas, qu'elle diagnostique nommément au lieu de
+> vous laisser le découvrir. Voir [`webapp/README.md`](../webapp/README.md).
+>
+> Le reste de cette page est la voie manuelle, et reste utile à lire : elle explique
+> *pourquoi* chaque réglage est ce qu'il est, ce que le formulaire ne peut pas
+> faire.
 
 ---
 
