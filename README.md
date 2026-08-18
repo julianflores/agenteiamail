@@ -6,7 +6,9 @@ Push-style email for an AI agent. It finds out about new mail within about a
 second, without polling, and can read and send under a recipient allowlist.
 
 Built around [Himalaya](https://github.com/pimalaya/himalaya) for a plain
-IMAP/SMTP account, running on Ubuntu 24.04 under the OpenClaw harness.
+IMAP/SMTP account, running on Ubuntu 24.04 with either the OpenClaw or Hermes
+Agent harness. Hermes operators configure two authenticated routes as described
+in [`HERMES.md`](HERMES.md).
 
 ---
 

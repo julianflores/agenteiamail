@@ -448,6 +448,12 @@ cursor only once that adapter reports the runtime accepted it. A template is in
 present on the host, and refuses rather than guessing when none or several are.
 Set it explicitly if this machine runs more than one harness.
 
+For Hermes, configure the two authenticated routes, health URL, secret files,
+and trust boundary in [`HERMES.md`](HERMES.md). The included static route
+example is operator-reviewed configuration, not something the installer grants
+to itself. A successful `GET /health` proves reachability only; complete the two
+signed route and user-facing checks before declaring the install ready.
+
 **Run exactly one dispatcher.** It is the only consumer of the journal and the
 only writer of the cursor. A session must never start a second one: two consumers
 deliver the same message twice and race on one cursor file. `session_start.py`

@@ -178,9 +178,11 @@ try:
     check("an unknown runtime is refused", "SystemExit", "no error")
 except SystemExit as exc:
     check("an unknown runtime is refused by name", True, "nonesuch" in str(exc))
-    check("an unknown runtime lists what is supported", True, "openclaw" in str(exc))
+    check("an unknown runtime lists OpenClaw", True, "openclaw" in str(exc))
+    check("an unknown runtime lists Hermes", True, "hermes" in str(exc))
 
 check("openclaw is available in this checkout", True, "openclaw" in dispatch.available())
+check("hermes is available in this checkout", True, "hermes" in dispatch.available())
 check("an explicit runtime is taken as given", "openclaw", dispatch.select_runtime("openclaw"))
 
 # --- durability, locking, corruption, compaction -----------------------------
