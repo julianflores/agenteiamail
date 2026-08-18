@@ -1,0 +1,164 @@
+# Hermes Agent adapter
+
+`agenteiamail` can deliver its canonical event journal to two authenticated
+Hermes webhook routes. Unlisted senders go to a narrow direct-notification
+route. Exact roster matches go to an isolated one-shot agent route that can
+fetch the exact message by account, mailbox, UIDVALIDITY, and UID.
+
+This adapter uses Hermes **Generic HMAC V2**. It was exercised against Hermes
+Agent 0.20.4. An older gateway without `X-Webhook-Signature-V2` needs an
+explicit legacy setting and does not have replay protection.
+
+## Trust boundary
+
+`roster_match=true` means only that the RFC 5322 `From` address exactly matched
+a human-maintained list. It is **not authenticated identity**. The webhook
+contains sender and subject metadata but no message body. The roster agent must
+treat the webhook and the subsequently retrieved email as untrusted content;
+email may contain task instructions, but never system or developer instructions.
+
+The installer must not grant Hermes tools or skills. The operator reviews and
+adds the roster route because it can grant a webhook-triggered agent access to
+a mail client. [`examples/hermes-routes.yaml`](examples/hermes-routes.yaml) is
+a JSON-compatible YAML example, checked by
+`scripts/test_hermes_examples.py`; it is never installed automatically.
+
+## 1. Configure the Hermes routes
+
+Copy the two route entries from `examples/hermes-routes.yaml` into the
+`platforms.webhook.extra.routes` section of the intended Hermes profile's
+`config.yaml`, then replace:
+
+- both example secrets with **different random values**;
+- the notification delivery target and chat ID;
+- the roster-agent final delivery target and chat ID;
+- the `himalaya` skill/toolset names if that profile exposes mail differently.
+
+The notify route has `deliver_only: true`, so it sends the narrow rendered
+notification without model execution. The roster route omits `deliver_only`,
+so HTTP acceptance starts an asynchronous agent run. Its example grants only
+the `himalaya` skill and `terminal` toolset needed by that skill. Review this
+against the target profile; anyone who can sign a route with `terminal` can
+trigger those capabilities.
+
+The notify route carries `email.received` and `listener.error`; the roster route
+carries `email.received` only, so a listener fault can never start an agent run.
+
+Hermes stores static route secrets in its protected configuration. The adapter
+reads matching copies from separate mode-0600 files. It refuses symlinks,
+non-regular files, files owned by another user, and every mode other than 0600.
+Do not put either secret in a command argument, unit file, journal event, or URL.
+
+```bash
+install -d -m 700 ~/.config/agenteiamail/hermes
+install -m 600 /dev/null ~/.config/agenteiamail/hermes/notify.secret
+install -m 600 /dev/null ~/.config/agenteiamail/hermes/roster.secret
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))' \
+  > ~/.config/agenteiamail/hermes/notify.secret
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))' \
+  > ~/.config/agenteiamail/hermes/roster.secret
+chmod 600 ~/.config/agenteiamail/hermes/*.secret
+```
+
+Copy each generated value into only its matching static route. Keep the Hermes
+configuration mode 0600. Restart that isolated gateway after editing static
+routes.
+
+## 2. Configure the dispatcher
+
+Set these variables in the dispatcher service environment. The URL is supplied
+in full: the adapter does not inspect `~/.hermes`, guess a port, or infer a
+profile prefix.
+
+```ini
+Environment=AGENTEIAMAIL_RUNTIME=hermes
+Environment=HERMES_NOTIFY_URL=http://127.0.0.1:8644/webhooks/agenteiamail-notify
+Environment=HERMES_NOTIFY_SECRET_FILE=%h/.config/agenteiamail/hermes/notify.secret
+Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/webhooks/agenteiamail-roster
+Environment=HERMES_ROSTER_SECRET_FILE=%h/.config/agenteiamail/hermes/roster.secret
+Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
+Environment=HERMES_SIGNATURE_MODE=v2
+```
+
+A profile-bound route is also accepted unchanged, for example:
+
+```ini
+Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/p/mail-agent/webhooks/agenteiamail-roster
+```
+
+Use loopback unless the gateway is intentionally remote. A non-loopback URL is
+refused unless it uses HTTPS and the service explicitly sets
+`HERMES_ALLOW_REMOTE=1` after the operator verifies the destination and TLS.
+Credentials in route URLs are always refused.
+
+`HERMES_SIGNATURE_MODE=v2` is the default. `v1` sends the legacy
+`X-Webhook-Signature` over the body only and emits a replay-protection warning.
+The adapter never silently downgrades after a V2 failure.
+
+After editing the unit:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart agenteiamail-dispatch.service
+scripts/healthcheck.py
+```
+
+The health command performs a finite-timeout `GET` to `HERMES_HEALTH_URL`. A
+healthy response proves only that the webhook server answers. It does **not**
+prove either route name, secret, profile binding, filter, target, or agent run.
+
+## 3. Verify both routes
+
+Do not call the installation complete after `GET /health`.
+
+1. Send an external test email from an address **not** in `roster.txt`.
+2. Observe a real user-facing notification from `agenteiamail-notify` without a
+   model run.
+3. Send an external test email from an exact roster address.
+4. Observe the `agenteiamail-roster` route accept it.
+5. Separately observe the final agent output and confirm it fetched the exact
+   account, mailbox, UIDVALIDITY, and UID.
+6. Stop the test gateway, send another message, and confirm the journal cursor
+   does not advance. Restart the gateway and confirm the same event is then
+   accepted.
+7. Confirm `scripts/send.sh` still refuses a recipient absent from `roster.txt`.
+
+`scripts/healthcheck.py` records the last adapter detail. For Hermes agent mode,
+that detail deliberately distinguishes transport acceptance from completion.
+
+## Response and retry contract
+
+| Hermes response | Adapter result | Meaning |
+|---|---|---|
+| any `202` | accepted | Hermes queued an asynchronous agent run; completion is unconfirmed. |
+| `200 status=delivered` | accepted | Direct delivery completed. |
+| `200 status=duplicate` | accepted | Hermes already recorded this transport ID; after an ambiguous timeout, verify the user-facing result. |
+| `200 status=ignored` | configuration failure | The configured event filter did not route an event this adapter expected to route. |
+| any `3xx` | configuration failure | Webhook routes must not redirect; fix `HERMES_*_URL`. |
+| `400`, `401`, `403`, `404`, `413` | configuration failure | The ordered queue stops loudly without acknowledging the event. |
+| network error, timeout, `408`, `429`, other `5xx` | retry | The cursor remains still and the dispatcher retries in place. |
+
+Hermes records the request ID before attempting a direct-delivery target. After
+an explicit direct `502`, retrying the same request ID could return `duplicate`
+without trying the target again. The adapter therefore makes one immediate
+retry with a new transport-attempt ID while retaining the stable application
+`event_id`. Ordinary retries reuse the stable route-scoped transport ID.
+
+The dispatcher provides bounded exponential backoff. Delivery is at least once:
+a process can stop after Hermes accepts an event but before the journal cursor
+is persisted, and ambiguous timeouts cannot prove whether acceptance happened.
+
+## Wire contract
+
+For V2, the adapter serializes the canonical envelope once as compact,
+sorted-key UTF-8 JSON. It signs and sends those exact bytes:
+
+```text
+X-Webhook-Timestamp: <current Unix seconds>
+X-Webhook-Signature-V2: lowercase_hex(HMAC-SHA256(secret, timestamp + "." + body))
+X-Request-ID: <stable SHA-256-derived route-scoped transport ID>
+```
+
+A delayed attempt receives a fresh timestamp and signature. No `svix-*` header
+is sent. Fixed vectors and status/error behavior are covered by
+`scripts/test_hermes_adapter.py`.

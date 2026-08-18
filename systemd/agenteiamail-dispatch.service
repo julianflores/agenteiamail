@@ -20,6 +20,15 @@ Environment=AGENTEIAMAIL_RUNTIME=auto
 # harness binary installed by npm is invisible here while an interactive shell
 # finds it. Set the full path if autodetection cannot.
 #Environment=OPENCLAW=%h/.npm-global/bin/openclaw
+# Hermes uses full operator-supplied URLs and reads each route secret from a
+# protected file. Keep the route secrets different. GET /health proves only the
+# gateway answers; signed smoke events must still verify both routes.
+#Environment=HERMES_NOTIFY_URL=http://127.0.0.1:8644/webhooks/agenteiamail-notify
+#Environment=HERMES_NOTIFY_SECRET_FILE=%h/.config/agenteiamail/hermes/notify.secret
+#Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/webhooks/agenteiamail-roster
+#Environment=HERMES_ROSTER_SECRET_FILE=%h/.config/agenteiamail/hermes/roster.secret
+#Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
+#Environment=HERMES_SIGNATURE_MODE=v2
 ExecStart=/usr/bin/python3 /path/to/agenteiamail/harness/dispatch.py
 WorkingDirectory=/path/to/agenteiamail
 Restart=always

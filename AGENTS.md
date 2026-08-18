@@ -81,6 +81,10 @@ exists for.
 
 **4. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
 credentials, Himalaya, the service, harness wiring, verification, troubleshooting.
+For a Hermes runtime, also follow [`HERMES.md`](HERMES.md). Do not silently add
+webhook routes, tools, or skills to a Hermes profile: show the operator the
+static route example, explain the direct-notification and roster-agent trust
+boundaries, and have them approve the target profile and delivery destinations.
 
 **5. Read [`DESIGN.md`](DESIGN.md) before changing anything.** Several lines in
 this codebase look like style and are load-bearing. It says which, and what breaks
