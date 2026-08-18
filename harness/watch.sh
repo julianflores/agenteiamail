@@ -60,10 +60,14 @@ fi
 # keeps its own copy of this flag; the cost is at most one duplicate line.
 injection_failing=0
 
+# Returns 0 only when the notification actually reached the session. The caller
+# uses that to decide whether the event may be acknowledged, so "no openclaw to
+# call" has to count as a failure: mail that was logged and never delivered is
+# exactly what must survive to be replayed.
 emit_system_event() {
     local line=$1
     local err
-    [ -x "${OPENCLAW:-}" ] || return 0
+    [ -x "${OPENCLAW:-}" ] || return 1
 
     # A failed injection must not kill the watcher: one lost notification is
     # recoverable, a dead watcher is not. Non-fatal, but never silent.
@@ -80,20 +84,55 @@ emit_system_event() {
         echo "Mail is being logged but NOT delivered to the session. The watcher keeps running." >&2
         injection_failing=1
     fi
-    return 0
+    return 1
 }
 
-# Arming the watch is what acknowledges the backlog the hook just replayed.
-# Written up front so a session that arms and sees no mail does not make the next
-# session replay the same messages.
-printf '%s' "$start" >"$OFFSET_FILE"
+# The cursor is written by whole replacement so a reader never sees a half-written
+# number, and only ever by this watcher - it is the one thing that decides what a
+# later session replays.
+record_cursor() {
+    printf '%s' "$1" >"$OFFSET_FILE.tmp" 2>/dev/null &&
+        mv -f "$OFFSET_FILE.tmp" "$OFFSET_FILE" 2>/dev/null
+}
+
+# Baseline a fresh install so a restart before the first delivery does not rewind
+# to the beginning of the log. An existing cursor is never overwritten here:
+# arming a watch is not evidence that anything was delivered, and treating it as
+# such is what allowed an undelivered message to be acknowledged.
+[ -f "$OFFSET_FILE" ] || record_cursor "$start"
+
+cursor=$start
+# Cleared for good the first time a delivery fails. The cursor is a byte offset
+# and cannot describe a hole, so it stops at the first line that did not arrive
+# rather than skipping past it; everything from there on is replayed next
+# session. That is at-least-once by choice - a duplicate notification is a
+# nuisance, a dropped one is the failure this design exists to prevent.
+contiguous=1
 
 # New mail.
+#
+# Two ways of losing mail silently used to live in this loop. The cursor was
+# written whether or not emit_system_event delivered anything, so a failed
+# injection was recorded as seen and never replayed. And it was written as the
+# log's current size rather than the end of the line just handled, so anything
+# appended while a delivery was blocked was skipped as well. Both looked exactly
+# like a quiet mailbox.
 tail -c "+$((start + 1))" -F "$LOG" 2>/dev/null | while IFS= read -r line; do
- [ -n "$line" ] || continue
+ # Count what was consumed, blank lines included, or the cursor drifts out of
+ # step with the file it indexes into.
+ width=$(printf '%s\n' "$line" | wc -c | tr -d ' ')
+
+ if [ -z "$line" ]; then
+  [ "$contiguous" -eq 1 ] && { cursor=$((cursor + width)); record_cursor "$cursor"; }
+  continue
+ fi
+
  printf '%s\n' "$line"
- emit_system_event "$line"
- wc -c <"$LOG" 2>/dev/null | tr -d ' ' >"$OFFSET_FILE"
+ if emit_system_event "$line"; then
+  [ "$contiguous" -eq 1 ] && { cursor=$((cursor + width)); record_cursor "$cursor"; }
+ else
+  contiguous=0
+ fi
 done &
 
 # Listener failures. Without these, a dead listener is indistinguishable from a

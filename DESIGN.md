@@ -38,10 +38,22 @@ Two facts collide:
 So: a long-lived listener that can hear but not speak, a harness-side watcher that
 can speak but not persist, and a log file joining them.
 
-**The offset file is the contract between the two halves.** `session_start.py`
-fires once and reports everything since the last acknowledged byte; `watch.sh` then
-tails from that same byte. Without a shared bookmark, mail landing in the gap
-between those two events is either reported twice or lost.
+**The offset file records what has been delivered, and the supervised `watch.sh`
+is its only writer.** It advances by exactly the bytes of a line once that line's
+notification has been accepted, and stops at the first line that was not accepted:
+a byte offset cannot describe a hole, so everything from there on is replayed
+rather than skipped. `session_start.py` reads the same byte to show what is still
+pending, and never writes it.
+
+Both properties were once the other way round, and both lost mail in the way this
+design least tolerates - invisibly. The cursor advanced whether or not delivery
+succeeded, and it recorded the log's current size rather than the end of the line
+just handled, so a refused injection buried that message and any that arrived
+while it was being attempted. A session that armed its own `watch.sh` alongside
+the service made a second writer of the same file, so the two raced.
+
+Delivery is therefore **at least once**. A duplicate notification is a nuisance;
+a dropped one is the failure this design exists to prevent.
 
 **The listener is only a doorbell.** It reports *that* mail arrived and from whom,
 and never fetches bodies. Reading and sending belong to Himalaya. A bug in one

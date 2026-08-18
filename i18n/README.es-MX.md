@@ -185,10 +185,12 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
 ~/.local/state/agenteiamail/
   mail.log                el flujo de eventos
   idle.err.log            diagnóstico, se vigila aparte
-  seen.offset             hasta dónde ya se le avisó al agente
+  seen.offset             hasta dónde se confirmó la entrega
   │
-  ├─► harness/session_start.py    repite lo pendiente al iniciar una sesión
-  ├─► harness/watch.sh            empuja cada línea a la sesión en vivo
+  ├─► harness/session_start.py    muestra lo pendiente; nunca lo da por entregado
+  ├─► harness/watch.sh            el único consumidor supervisado; empuja cada
+  │                               línea a la sesión en vivo y es dueño de
+  │                               seen.offset
   └─► harness/rotate_logs.py      rotación con copytruncate, en un timer de usuario
 
 scripts/version.sh        la versión instalada frente a la más reciente publicada,
