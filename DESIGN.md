@@ -40,10 +40,19 @@ can speak but not persist, and a log file joining them.
 
 **The offset file records what has been delivered, and the supervised `watch.sh`
 is its only writer.** It advances by exactly the bytes of a line once that line's
-notification has been accepted, and stops at the first line that was not accepted:
-a byte offset cannot describe a hole, so everything from there on is replayed
-rather than skipped. `session_start.py` reads the same byte to show what is still
+notification has been accepted, and never reads past a line it has not delivered:
+a byte offset cannot describe a hole, so the loop retries in place rather than
+stepping over one. `session_start.py` reads the same byte to show what is still
 pending, and never writes it.
+
+**A delivery that keeps failing stops the watcher rather than freezing it.** The
+retries are bounded; when they are spent the process exits, systemd restarts it,
+and it resumes from the last confirmed byte. Freezing the cursor and staying alive
+was tried first and has no way out: the process is healthy, so `Restart=always`
+never fires, and nothing else advances the cursor. A failure that keeps repeating
+trips `StartLimitBurst` and leaves the unit failed, where the session hook reports
+it. The supervisor is the recovery path, so the watcher has to actually fail for
+it to work.
 
 Both properties were once the other way round, and both lost mail in the way this
 design least tolerates - invisibly. The cursor advanced whether or not delivery

@@ -69,8 +69,10 @@ emit_system_event() {
     local err
     [ -x "${OPENCLAW:-}" ] || return 1
 
-    # A failed injection must not kill the watcher: one lost notification is
-    # recoverable, a dead watcher is not. Non-fatal, but never silent.
+    # One refusal is not fatal on its own; deliver() decides what happens next by
+    # retrying this call. What must never happen is losing the notification
+    # quietly, so a failure is reported here and refused to the caller, and the
+    # watcher stops rather than carrying on if the retries run out.
     if err=$("$OPENCLAW" system event --mode now --text "$line" 2>&1); then
         if [ "$injection_failing" -ne 0 ]; then
             echo "openclaw injection recovered — events are reaching the session again." >&2
@@ -81,7 +83,7 @@ emit_system_event() {
 
     if [ "$injection_failing" -eq 0 ]; then
         echo "openclaw injection failed: ${err:-no output}" >&2
-        echo "Mail is being logged but NOT delivered to the session. The watcher keeps running." >&2
+        echo "Mail is being logged but NOT delivered to the session. Retrying; if that does not clear, the watcher stops and systemd restarts it from the last confirmed message." >&2
         injection_failing=1
     fi
     return 1
@@ -102,12 +104,50 @@ record_cursor() {
 [ -f "$OFFSET_FILE" ] || record_cursor "$start"
 
 cursor=$start
-# Cleared for good the first time a delivery fails. The cursor is a byte offset
-# and cannot describe a hole, so it stops at the first line that did not arrive
-# rather than skipping past it; everything from there on is replayed next
-# session. That is at-least-once by choice - a duplicate notification is a
-# nuisance, a dropped one is the failure this design exists to prevent.
-contiguous=1
+
+# How hard to try before giving the line up. The delay doubles each time, so the
+# defaults spend about 30 seconds on a line before the watcher stops. Overridable
+# mainly so the tests do not have to wait that out.
+DELIVERY_ATTEMPTS=${DELIVERY_ATTEMPTS:-5}
+DELIVERY_BACKOFF=${DELIVERY_BACKOFF:-2}
+
+# Deliver one line, or say that it could not be delivered.
+#
+# Retrying in place is what keeps the ordering guarantee: the cursor is a byte
+# offset and cannot describe a hole, so the loop must not read past a line it has
+# not delivered. A transient failure - openclaw restarting, a momentary refusal -
+# therefore recovers here without anything else having to notice.
+deliver() {
+    local line=$1 attempt=1 delay=$DELIVERY_BACKOFF
+    while :; do
+        emit_system_event "$line" && return 0
+        [ "$attempt" -ge "$DELIVERY_ATTEMPTS" ] && return 1
+        sleep "$delay"
+        attempt=$((attempt + 1))
+        delay=$((delay * 2))
+    done
+}
+
+# When the retries are spent, stop the watcher rather than carrying on with a
+# cursor that can no longer move.
+#
+# An earlier version froze the cursor instead and kept running. Nothing could
+# recover from that: the process stayed alive and healthy, so Restart=always
+# never fired, and the hook that used to start a fresh watcher each session no
+# longer does. The cursor stayed wrong until somebody restarted the service by
+# hand.
+#
+# Exiting hands the problem to the supervisor that exists for it. systemd
+# restarts, watch_service.sh resumes from the last confirmed byte, and the line
+# is tried again in order. A failure that keeps happening trips StartLimitBurst
+# and leaves the unit failed, which session_start.py already reports as MAIL
+# WATCHER IS DOWN. Stopping loudly beats freezing quietly.
+give_up() {
+    echo "delivery failed after $DELIVERY_ATTEMPTS attempts: $1" >&2
+    echo "Stopping the watcher so it restarts and resumes from the last confirmed message." >&2
+    kill -TERM $$ 2>/dev/null
+    exit 1
+}
 
 # New mail.
 #
@@ -117,22 +157,25 @@ contiguous=1
 # log's current size rather than the end of the line just handled, so anything
 # appended while a delivery was blocked was skipped as well. Both looked exactly
 # like a quiet mailbox.
+#
+# The cursor is contiguous by construction now: the loop never reads past a line
+# it has not delivered, because deliver() either gets it through or ends the
+# watcher.
 tail -c "+$((start + 1))" -F "$LOG" 2>/dev/null | while IFS= read -r line; do
  # Count what was consumed, blank lines included, or the cursor drifts out of
  # step with the file it indexes into.
  width=$(printf '%s\n' "$line" | wc -c | tr -d ' ')
 
  if [ -z "$line" ]; then
-  [ "$contiguous" -eq 1 ] && { cursor=$((cursor + width)); record_cursor "$cursor"; }
+  cursor=$((cursor + width))
+  record_cursor "$cursor"
   continue
  fi
 
  printf '%s\n' "$line"
- if emit_system_event "$line"; then
-  [ "$contiguous" -eq 1 ] && { cursor=$((cursor + width)); record_cursor "$cursor"; }
- else
-  contiguous=0
- fi
+ deliver "$line" || give_up "$line"
+ cursor=$((cursor + width))
+ record_cursor "$cursor"
 done &
 
 # Listener failures. Without these, a dead listener is indistinguishable from a
