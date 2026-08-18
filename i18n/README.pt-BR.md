@@ -184,10 +184,12 @@ scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDL
 ~/.local/state/agenteiamail/
   mail.log                o fluxo de eventos
   idle.err.log            diagnóstico, monitorado à parte
-  seen.offset             até onde o agente já foi avisado
+  seen.offset             até onde a entrega foi confirmada
   │
-  ├─► harness/session_start.py    repassa o acumulado ao iniciar uma sessão
-  ├─► harness/watch.sh            empurra cada linha para a sessão ativa
+  ├─► harness/session_start.py    mostra o que está pendente; nunca dá por entregue
+  ├─► harness/watch.sh            o único consumidor supervisionado; empurra cada
+  │                               linha para a sessão ativa e é dono do
+  │                               seen.offset
   └─► harness/rotate_logs.py      rotação com copytruncate, num timer de usuário
 
 scripts/version.sh        a versão instalada contra a mais recente publicada, e o

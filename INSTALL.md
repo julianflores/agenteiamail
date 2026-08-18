@@ -413,6 +413,12 @@ has already been done and it is a dead end.
 The working pattern is the inverse: `watch.sh` **pushes** into the session with
 `openclaw system event --mode now`. It is an active producer, not a passive stream.
 
+**Run exactly one of them.** The systemd unit is the supervised consumer and the
+only writer of `seen.offset`; it keeps running when no session is live, which is
+the whole point. A session must never start its own `watch.sh` alongside it - two
+consumers deliver the same message twice and race on one cursor file.
+`session_start.py` therefore reports what is pending and stops there.
+
 The one piece that may need adapting to your harness version is the output payload
 of `session_start.py`; it is marked in the file.
 

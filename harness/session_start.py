@@ -4,9 +4,14 @@ Session-start hook — make a new session aware of mail it would otherwise miss.
 
 The listener notices mail within about a second and appends to mail.log. But a
 systemd service cannot push into an agent session; only a live event source can.
-So each session does three things: catch up on what landed while nothing was
-watching, arm the watcher, and say which version is installed, since a session
-start is the only moment an agent can be told any of it unprompted.
+So each session does two things: show what the watcher has not yet delivered, and
+say which version is installed, since a session start is the only moment an agent
+can be told either of them unprompted.
+
+It does not start a watcher. The supervised service is the single consumer of the
+log, and the sole writer of the cursor. A session that armed its own copy made two
+consumers of one stream racing on one cursor file, which duplicated events and
+corrupted the record of what had been seen.
 
 Never fails the session: any unexpected error degrades to a quiet no-op, because a
 broken hook must not be able to block startup.
@@ -19,7 +24,6 @@ LOG = STATE_DIR / "mail.log"
 OFFSET_FILE = STATE_DIR / "seen.offset"
 WATCH_ERR = STATE_DIR / "watch.err.log"
 REPO = pathlib.Path.home() / ".openclaw/workspace/agenteiamail"
-WATCH = REPO / "harness/watch.sh"
 VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
 WATCH_SERVICE = "agenteiamail-watch.service"
@@ -108,7 +112,7 @@ def read_backlog():
 
 
 def main():
-    lines, offset, capped = read_backlog()
+    lines, _, capped = read_backlog()
     down = unit_down(SERVICE)
     watch_down = unit_down(WATCH_SERVICE)
     faults = watcher_faults()
@@ -137,8 +141,11 @@ def main():
         )
 
     if lines:
-        header = (f"Mail that arrived while no session was watching ({len(lines)} message(s)"
-                  + (f", trimmed to the most recent {MAX_REPLAY}" if capped else "") + "):")
+        header = (f"Mail the watcher has not acknowledged delivering ({len(lines)} message(s)"
+                  + (f", trimmed to the most recent {MAX_REPLAY}" if capped else "")
+                  + "). It stays pending until delivery succeeds, so expect the "
+                  "watcher to deliver it again rather than treating this as the "
+                  "only copy:")
         parts.append(header + "\n" + "\n".join(lines))
     else:
         parts.append("No unseen mail since the last session acknowledged the log.")
@@ -146,12 +153,6 @@ def main():
     version = version_line()
     if version:
         parts.append(version)
-
-    parts.append(
-        f"Arm a persistent event source running: bash {WATCH} {offset}\n"
-        "Its stdout lines are new-mail notifications; lines prefixed [listener] are "
-        "listener faults that need looking at."
-    )
 
     # ---- ADAPT THIS BLOCK TO OPENCLAW'S HOOK CONTRACT ----------------------
     # The original emits Claude Code's shape. Replace with whatever OpenClaw

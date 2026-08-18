@@ -16,6 +16,56 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.2.1 (2026-08-18)
+
+**Three ways of losing mail without saying so.** All three lived in the cursor
+that decides what a later session replays, and all three failed the same way:
+the message was gone, nothing was logged as wrong, and the install looked exactly
+like a mailbox with nothing in it. Found by review of `main` at `7d7efcc`
+([#35](https://github.com/julianflores/agenteiamail/issues/35)).
+
+- **A failed injection was recorded as delivered.**
+  [`harness/watch.sh`](harness/watch.sh) advanced `seen.offset` after every
+  `emit_system_event`, which deliberately returns success so that a failure
+  cannot kill the watcher. The two together meant a refused `openclaw system
+  event` acknowledged the message anyway, and the next session's replay started
+  past it. `emit_system_event` now reports whether delivery happened, and the
+  cursor moves only when it did. Having no `openclaw` to call at all counts as a
+  failure, for the same reason.
+- **The cursor recorded the log's size, not the line it had handled.** It was
+  written as `wc -c` of the whole file, so anything appended while a delivery was
+  in flight was stepped over. It now advances by exactly the bytes of the line
+  just delivered, counted as bytes so a non-ASCII subject cannot leave it short.
+- **A session started a second watcher next to the service.** The systemd unit
+  runs `watch.sh` continuously while `session_start.py` told the agent to arm
+  another one, putting two consumers on one stream and two writers on one cursor.
+  The supervised service is now the only consumer and the only writer;
+  `session_start.py` shows what is still pending and acknowledges nothing.
+
+Delivery is now **at least once**: on failure the cursor stops at the first line
+that did not arrive rather than skipping it, so that line and everything after it
+are replayed. Expect an occasional duplicate notification after a delivery
+failure. That is the intended trade.
+
+- **8 assertions in [`scripts/test_watch.sh`](scripts/test_watch.sh)**, covering
+  each defect above. They fail against 1.2.0.
+
+### Upgrade actions
+
+**Restart the watcher after pulling**, or the old code keeps running with the old
+cursor behaviour:
+
+```bash
+systemctl --user restart agenteiamail-watch.service
+```
+
+**If your harness hook was generated from an older `session_start.py`**, its
+output no longer asks the session to arm a watcher. Nothing needs removing, but a
+session that is still being told to start one is running the duplicate consumer
+this release removes.
+
+---
+
 ## 1.2.0 (2026-08-16)
 
 **An install can now tell whether it is current.** Until this release there was
