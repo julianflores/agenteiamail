@@ -11,6 +11,7 @@ loop, so they are tested here.
 """
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -182,15 +183,147 @@ except SystemExit as exc:
 check("openclaw is available in this checkout", True, "openclaw" in dispatch.available())
 check("an explicit runtime is taken as given", "openclaw", dispatch.select_runtime("openclaw"))
 
+# --- durability, locking, corruption, compaction -----------------------------
+#
+# Every case below was a way of losing or duplicating an event that the first
+# version of this code allowed. They are the reason the journal is not simply a
+# file that gets appended to and read.
+
+import subprocess
+import threading
+
+# A short write leaves a truncated line in the queue, and one os.write is not
+# obliged to take everything it is given.
+big = "x" * 200000
+j, c = journal_with("small")
+before = j.stat().st_size
+ev.append(j, ev.mail_event(
+    account="a@b.c", mailbox="INBOX", uidvalidity=1, uid=500,
+    sender_name="Long", sender_address="l@x.com", subject=big, sent_at="",
+    roster_match=False, notification_text="[mail] long"))
+records = [r for r, _ in ev.read_from(j, 0)]
+check("a large record is written whole", 2, len(records))
+check("a large record reads back intact", len(big), len(records[-1]["subject"]))
+
+# The listener persists its UID after this returns. If append reports success
+# without the bytes being on disk, a crash in between loses the message.
+j2, _ = journal_with("durable")
+check("append reports the true end of file", j2.stat().st_size,
+      [off for _, off in ev.read_from(j2, 0)][-1])
+
+# A journal that cannot be written must raise, not return quietly. The listener
+# relies on that to refuse to acknowledge a message it did not queue.
+unwritable = pathlib.Path(tempfile.mkdtemp()) / "nodir"
+unwritable.write_text("i am a file, not a directory")
+try:
+    ev.append(unwritable / "events.jsonl", {"event_id": "x"})
+    check("an unwritable journal raises", "raised", "returned quietly")
+except (OSError, ValueError):
+    check("an unwritable journal raises rather than returning quietly", True, True)
+
+# A complete record that will not parse stops the queue. Skipping it advanced
+# the cursor past it as soon as anything behind it was accepted, which is a
+# dead-letter policy nobody chose.
+j, c = journal_with("uno", "dos")
+first_end = [off for _, off in ev.read_from(j, 0)][0]
+with j.open("ab") as fh:
+    fh.write(b"{ this is not json }\n")
+ev.append(j, ev.mail_event(
+    account="a@b.c", mailbox="INBOX", uidvalidity=42, uid=9, sender_name="After",
+    sender_address="a@x.com", subject="behind the damage", sent_at="",
+    roster_match=False, notification_text="[mail] after"))
+seen_kinds = [type(r).__name__ for r, _ in ev.read_from(j, 0)]
+check("a damaged record is surfaced, not skipped", True, "Corrupt" in seen_kinds)
+
+fake = Fake()
+dispatch.run_once(fake, j, c)
+check("the cursor stops at the damaged record", first_end * 2, ev.read_cursor(c))
+check("nothing behind a damaged record is delivered", 2, len(fake.seen))
+check("the record behind the damage is not delivered",
+      [], [x for x in fake.seen if x == "imap:INBOX:42:9"])
+
+# Two dispatchers on one journal deliver the same record twice.
+lock = pathlib.Path(tempfile.mkdtemp()) / "dispatch.lock"
+held = dispatch.claim(lock)
+try:
+    dispatch.claim(lock)
+    check("a second dispatcher is refused", "SystemExit", "it started")
+except SystemExit as exc:
+    check("a second dispatcher is refused", True, "another dispatcher" in str(exc))
+os.close(held)
+second = dispatch.claim(lock)
+check("the lock is released when the holder exits", True, second > 0)
+os.close(second)
+
+# Compaction used to read the size, then truncate, with an append able to land
+# in between and be destroyed.
+j, c = journal_with("uno", "dos")
+ev.write_cursor(c, j.stat().st_size)
+freed = ev.compact(j, c, min_size=1)
+check("a fully delivered journal compacts", True, freed > 0)
+check("compaction empties the file", 0, j.stat().st_size)
+check("compaction resets the cursor", 0, ev.read_cursor(c))
+
+j, c = journal_with("uno", "dos")
+ev.write_cursor(c, 0)
+check("an undelivered journal is never compacted", 0, ev.compact(j, c, min_size=1))
+check("an undelivered journal keeps its records", 2, len([r for r, _ in ev.read_from(j, 0)]))
+
+j, c = journal_with("uno")
+ev.write_cursor(c, j.stat().st_size)
+appended = []
+
+def appender():
+    for i in range(60):
+        appended.append(ev.append(j, ev.mail_event(
+            account="a@b.c", mailbox="INBOX", uidvalidity=42, uid=1000 + i,
+            sender_name="Racer", sender_address="r@x.com", subject=f"concurrent {i}",
+            sent_at="", roster_match=False, notification_text=f"[mail] concurrent {i}")))
+
+t = threading.Thread(target=appender)
+t.start()
+for _ in range(60):
+    ev.compact(j, c, min_size=1)
+t.join()
+
+# Nothing in this test is ever delivered, so every one of the 60 appended events
+# must still be readable from wherever the cursor ended up. Compaction may only
+# fire while the cursor covers the whole file, which is true here exactly once,
+# before the first append lands; after that it must decline every time.
+undelivered = [r for r, _ in ev.read_from(j, ev.read_cursor(c))]
+check("compaction never destroys an event that was not delivered",
+      60, len([r for r in undelivered if isinstance(r, dict)
+               and r.get("subject", "").startswith("concurrent")]))
+check("no record is left damaged by a concurrent compaction",
+      [], [r for r in undelivered if isinstance(r, ev.Corrupt)])
+
+# --- listener faults --------------------------------------------------------
+
+fault = ev.listener_error(account="a@b.c", message="connection lost (TimeoutError)")
+check("a listener fault is an event like any other", "listener.error", fault["event_type"])
+check("a listener fault renders for a runtime that takes one string",
+      True, fault["notification_text"].startswith("[listener]"))
+same_fault = ev.listener_error(account="a@b.c", message="connection lost (TimeoutError)",
+                               observed_at=fault["observed_at"])
+check("the same fault gets the same id in another process",
+      fault["event_id"], same_fault["event_id"])
+
+stable = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, 'harness'); import event;"
+     "print(event.listener_error(account='a@b.c', message='m', observed_at='t')['event_id'])"],
+    capture_output=True, text=True, cwd=str(ROOT))
+check("fault ids do not change with the process hash seed",
+      ev.listener_error(account="a@b.c", message="m", observed_at="t")["event_id"],
+      stable.stdout.strip())
+
 # --- the OpenClaw adapter ---------------------------------------------------
 #
 # The binary is faked, so this proves the command shape and how each exit code is
 # classified. It cannot prove a real openclaw accepts it; only an install can,
 # which is why FR3 is verified on a live host rather than here.
 
-import os
 import stat
-import subprocess
 
 from adapters import openclaw
 

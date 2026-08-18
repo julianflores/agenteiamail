@@ -54,14 +54,38 @@ implemented rather than pretending otherwise.
 - **A stuck record holds the queue rather than being skipped**, loudly, on stderr
   and at the next session start. There is deliberately no dead-letter policy: a
   byte offset cannot describe a hole.
-- **Journal compaction** in [`harness/rotate_logs.py`](harness/rotate_logs.py),
-  which empties `events.jsonl` only when the cursor proves everything in it was
+- **Journal compaction runs in the dispatcher**, which is the only process that
+  knows what has been delivered, and takes the journal lock before it decides. It
+  empties `events.jsonl` only when the cursor proves everything in it was
   delivered. The journal is never rotated with the logs; the cursor is an offset
-  into that exact file.
+  into that exact file, and a rotator on a timer could truncate away an event
+  that had just been appended and never seen.
+- **A record is written whole, flushed, and only then acknowledged.** One
+  `os.write` may write fewer bytes than it was given, and the listener persists
+  its last-seen UID after the append returns: if that UID reaches the disk and
+  the record does not, the message is gone for good. The write now loops to
+  completion and `fsync`s before reporting an offset.
+- **A journal the listener cannot write blocks acknowledgement.** It used to log
+  the failure and carry on, and the caller advanced the UID anyway, so a full
+  disk or a permission error dropped the message permanently with a line in
+  `mail.log` as the only trace. The UID now stays where it is and the messages
+  are picked up again once the journal is writable.
+- **Only one dispatcher may run.** It takes an exclusive lock at startup and
+  refuses to start beside another, because two would read the same cursor and
+  hand the runtime the same event twice.
+- **A damaged record stops the queue** rather than being stepped over. Skipping
+  an unparseable line advanced the cursor past it as soon as anything behind it
+  was accepted, which is a dead-letter policy nobody chose and nobody was told
+  about.
+- **Listener faults are events.** `listener.error` envelopes go into the same
+  journal as the mail, on transitions only, so an outage writes one record and a
+  recovery writes one more. A fault reported only where nobody looks is a fault
+  nobody sees.
 
-- **39 assertions in [`scripts/test_dispatch.py`](scripts/test_dispatch.py)**,
-  covering the envelope, the journal, the cursor rules, runtime selection and the
-  OpenClaw adapter against a faked binary.
+- **60 assertions in [`scripts/test_dispatch.py`](scripts/test_dispatch.py)**,
+  covering the envelope, the journal, the cursor rules, runtime selection, the
+  OpenClaw adapter against a faked binary, and each of the loss and duplication
+  cases above including a concurrent append racing compaction.
 
 ### Upgrade actions
 
@@ -90,6 +114,8 @@ first messages delivered after upgrading are the ones that arrive after it. Mail
 that arrived while you were upgrading is in `mail.log` and in the listener's UID
 state, not lost, but it will not be redelivered. Upgrade when the mailbox is
 quiet if that matters to you.
+
+---
 
 ## 1.2.3 (2026-08-18)
 

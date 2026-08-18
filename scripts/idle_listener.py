@@ -52,6 +52,10 @@ def emit(line):
     print(line, flush=True)
 
 
+class NotQueued(Exception):
+    """The journal could not take a record, so nothing may be acknowledged."""
+
+
 def record(journal_path, envelope):
     """
     Put one event in the journal, and the same event on the operator's log.
@@ -61,16 +65,42 @@ def record(journal_path, envelope):
     happened. Writing them in two places is how they start describing different
     mail.
 
-    A journal that cannot be written is reported and then survived. Losing the
-    ability to deliver is bad; losing the listener as well, and with it the
-    record that anything arrived, is worse.
+    **Raises if the journal could not take it**, and the caller must not advance
+    the last-seen UID when it does. That UID is the only thing that decides
+    whether a message is ever fetched again: acknowledging one that reached
+    neither the queue nor a runtime loses it for good, on a full disk or a
+    permission error, with a line in mail.log as the only trace. Writing the
+    operator line is not queueing.
     """
-    emit(envelope.get("notification_text", ""))
     try:
         ev.append(journal_path, envelope)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         log(f"could not write the event journal at {journal_path}: {exc}")
-        log("Mail is being logged but NOT queued for delivery. This needs a person.")
+        log("This message is NOT queued for delivery, so its UID is deliberately "
+            "not being acknowledged. It will be picked up again once the journal "
+            "is writable. Nothing is lost; nothing is moving either.")
+        raise NotQueued(str(exc)) from exc
+    emit(envelope.get("notification_text", ""))
+
+
+def record_fault(journal_path, account, message, last):
+    """
+    Put a listener fault in the same stream as the mail.
+
+    A fault reported only where nobody looks is a fault nobody sees, and silence
+    that reads as an empty mailbox is the failure this project exists to prevent.
+    So it travels the path that is already being watched.
+
+    Only transitions are recorded. An outage retries every few seconds for hours,
+    and one record per attempt would bury the mail it is sitting next to.
+    """
+    if message == last:
+        return last
+    try:
+        ev.append(journal_path, ev.listener_error(account=account, message=message))
+    except (OSError, ValueError) as exc:
+        log(f"could not journal the listener fault: {exc}")
+    return message
 
 
 def log(line):
@@ -319,6 +349,9 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
         # treats everything as read-only until a human writes the file.
         log(f"no roster at {roster_path}; no sender will be tagged as trusted")
     backoff = BACKOFF_MIN
+    # The last fault put in the journal. Transitions only: an outage retries for
+    # hours, and one record per attempt would bury the mail sitting next to it.
+    fault = None
     state = load_state(state_path)
     last_uid = state.get("last_uid") if state.get("mailbox") == mailbox else None
 
@@ -356,9 +389,15 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
             for uid, fields in pending:
                 record(journal_path, ev.mail_event(
                     account=account, mailbox=mailbox, uidvalidity=validity, uid=uid, **fields))
+                # Only now. The record is on disk and flushed, so acknowledging
+                # this UID cannot outlive the thing it is acknowledging.
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
+            if fault is not None:
+                fault = record_fault(journal_path, account,
+                                     "listener recovered; mail is being seen again", fault)
+                fault = None
             backoff = BACKOFF_MIN
 
             while not _stop:
@@ -380,10 +419,24 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
                 if found and once:
                     return 0
 
+        except NotQueued as exc:
+            if _stop:
+                break
+            # The mailbox is fine; the disk is not. The UID was not advanced, so
+            # the same messages come back on the next pass. Wait rather than spin.
+            fault = record_fault(journal_path, account, f"journal unwritable: {exc}", fault)
+            log(f"journal unwritable; retrying in {backoff}s")
+            slept = 0
+            while slept < backoff and not _stop:
+                time.sleep(1)
+                slept += 1
+            backoff = min(backoff * 2, BACKOFF_MAX)
         except (imaplib.IMAP4.error, ConnectionError, OSError, socket.error) as exc:
             if _stop:
                 break
-            log(f"connection lost ({type(exc).__name__}: {exc}); retrying in {backoff}s")
+            message = f"connection lost ({type(exc).__name__}: {exc})"
+            fault = record_fault(journal_path, account, message, fault)
+            log(f"{message}; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:
                 time.sleep(1)

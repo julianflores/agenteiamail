@@ -59,12 +59,36 @@ Reading a file by offset removes every part of that. A record that cannot be
 delivered is simply retried, forever if need be, while the cursor stays where it
 is.
 
+**One dispatcher, enforced rather than assumed.** It takes an exclusive lock at
+startup. The unit is meant to be the only one, but "meant to" is not a mechanism:
+a copy run by hand for debugging is enough to deliver every event twice, and the
+duplicate looks like nothing at all from outside.
+
+**The journal has a lock too, and it exists for compaction.** Appending needs no
+lock against another append; it is one `O_APPEND` write. Compaction reads the
+size, decides, and truncates, so without a shared lock an append landing between
+the decision and the truncation is destroyed after being counted as delivered.
+Compaction therefore runs in the dispatcher, the only process that knows what has
+been delivered, rather than in the log rotator, which is a different process on a
+timer that knows neither.
+
+**A record is durable before it is acknowledged.** The listener persists its
+last-seen UID after appending, and that UID is the only thing deciding whether a
+message is ever fetched again. If it reaches the disk and the record does not,
+the message is gone. So the append writes every byte, `fsync`s, and only then
+returns the offset that lets the UID move.
+
 **So a stuck record holds the queue, loudly, instead of being stepped over.**
 There is no dead-letter policy: a byte offset cannot describe a hole, and a
 skipped record nobody counted is precisely the silent loss this project exists to
 prevent. The dispatcher says what is wrong on stderr, the session hook reports it
 at the start of the next session, and mail keeps accumulating in a journal that
 loses nothing.
+
+**A damaged record stops everything behind it.** A complete line that will not
+parse is not skipped: skipping it advanced the cursor past it the moment anything
+behind it was accepted, which is a dead-letter policy nobody chose. It stops the
+queue and says so, and a person decides.
 
 **Delivery is at least once.** A runtime may be handed the same event twice: the
 dispatcher can be stopped between a runtime accepting an event and the cursor

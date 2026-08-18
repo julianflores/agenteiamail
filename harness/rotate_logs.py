@@ -13,11 +13,10 @@ STATE_FILE = STATE_DIR / "rotate-state.json"
 MAX_ROTATIONS = 4
 MIN_INTERVAL = 7 * 24 * 60 * 60
 
-JOURNAL = STATE_DIR / "events.jsonl"
-CURSOR = STATE_DIR / "dispatch.offset"
-# Compact the journal once it is worth compacting. Small enough that it never
-# grows without bound, large enough that this is a rare event.
-JOURNAL_MAX = 4 * 1024 * 1024
+# The event journal is deliberately not rotated here. It is a queue, not a log:
+# the cursor is a byte offset into that exact file, and a rotator on a timer has
+# no idea what has been delivered. The dispatcher compacts it instead, under the
+# journal lock, because it is the only process that knows.
 
 
 def load_state() -> dict[str, float]:
@@ -54,46 +53,6 @@ def rotate(path: Path) -> None:
         fh.truncate(0)
 
 
-def compact_journal() -> bool:
-    """
-    Empty the event journal, but only when every record in it has been delivered.
-
-    The journal is not rotated with the logs, and must not be: the cursor is a
-    byte offset into this exact file, so moving or truncating it underneath a
-    dispatcher that still has records to read would step over them. Rotation is
-    for things a person reads; this is a queue.
-
-    So it is only ever emptied when the cursor has reached the end, which means
-    a runtime has accepted everything in it. Truncating first and resetting the
-    cursor second is deliberate: interrupted in between, the cursor points past
-    the end of an empty file, which readers already treat as "start again from
-    the beginning" and which is correct, because there is nothing left to read.
-    """
-    try:
-        if not JOURNAL.is_file():
-            return False
-        size = JOURNAL.stat().st_size
-        if size < JOURNAL_MAX:
-            return False
-        try:
-            cursor = int(CURSOR.read_text().strip() or 0)
-        except (OSError, ValueError):
-            return False
-        if cursor < size:
-            print(f"not compacting {JOURNAL}: {size - cursor} bytes still undelivered")
-            return False
-        with JOURNAL.open("r+b") as fh:
-            fh.truncate(0)
-        tmp = CURSOR.with_suffix(CURSOR.suffix + ".tmp")
-        tmp.write_text("0")
-        os.replace(tmp, CURSOR)
-        print(f"compacted {JOURNAL} ({size} bytes, all delivered)")
-        return True
-    except OSError as exc:
-        print(f"could not compact {JOURNAL}: {exc}", file=os.sys.stderr)
-        return False
-
-
 def main() -> int:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     now = time.time()
@@ -113,8 +72,6 @@ def main() -> int:
             print(f"rotated {path}")
         except OSError as exc:
             print(f"could not rotate {path}: {exc}", file=os.sys.stderr)
-
-    compact_journal()
 
     if changed:
         save_state(state)

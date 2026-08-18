@@ -20,6 +20,8 @@ of moving it when the runtime had not.
 """
 
 import argparse
+import errno
+import fcntl
 import importlib
 import os
 import sys
@@ -35,6 +37,10 @@ STATE_DIR = Path(os.environ.get(
     "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
+LOCK = STATE_DIR / "dispatch.lock"
+# Compact once the journal is worth compacting, and only from here: the
+# dispatcher is the only process that knows what it has delivered.
+JOURNAL_MAX = int(os.environ.get("DISPATCH_JOURNAL_MAX", 4 * 1024 * 1024))
 
 KNOWN_RUNTIMES = ("openclaw", "hermes")
 
@@ -59,6 +65,38 @@ def log(message):
     visible. session_start.py reads it at the start of the next session.
     """
     print(message, file=sys.stderr, flush=True)
+
+
+def claim(lock_path):
+    """
+    Take exclusive ownership of delivery, or refuse to start.
+
+    Two dispatchers on one journal read the same cursor and deliver the same
+    record before either writes the new offset. The unit is meant to be the only
+    one, but "meant to" is not a mechanism: a hand-run copy for debugging is
+    enough, and the duplicate it causes looks like nothing at all from the
+    outside.
+
+    The handle is returned and deliberately not closed. It is held for the life
+    of the process; the kernel drops it when this exits, however it exits.
+    """
+    path = Path(lock_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(handle)
+        if exc.errno in (errno.EACCES, errno.EAGAIN):
+            raise SystemExit(
+                f"another dispatcher already holds {path}.\n"
+                "Only one may deliver: two would hand the same event to the runtime "
+                "twice and race on one cursor.\n"
+                "Check `systemctl --user status agenteiamail-dispatch.service`."
+            )
+        raise
+    os.write(handle, str(os.getpid()).encode())
+    return handle
 
 
 def load_adapter(name):
@@ -184,11 +222,38 @@ def run_once(adapter, journal, cursor_path, stop=lambda: False):
     for record, end in ev.read_from(journal, cursor):
         if stop():
             break
+
+        if isinstance(record, ev.Corrupt):
+            # Whole, and unparseable. Something wrote or damaged this file, and
+            # nothing here can tell what the record said. Advancing past it would
+            # be a dead-letter policy nobody chose; the queue stops instead.
+            log(f"the event journal has a damaged record at byte {record.offset}: {record.raw!r}")
+            log("Delivery has stopped here rather than stepping over it, so nothing behind "
+                "it will be delivered either. This needs a person: inspect "
+                f"{journal}, and if the record is genuinely unrecoverable, remove that "
+                f"line and the dispatcher will carry on from it.")
+            break
+
         if not deliver_with_retries(adapter, record, stop):
             break
         ev.write_cursor(cursor_path, end)
         delivered += 1
     return delivered
+
+
+def maybe_compact(journal, cursor_path):
+    """
+    Empty a fully delivered journal, from the process that knows it is delivered.
+
+    Compaction used to live in the log rotator, which is a different process on a
+    timer with no idea what had been delivered and no lock: it could check the
+    size, have the listener append, and then truncate away an event nobody had
+    seen. Here it runs between drains, in the only process that owns the cursor,
+    and `ev.compact` re-checks under the journal lock before touching anything.
+    """
+    freed = ev.compact(journal, cursor_path, min_size=JOURNAL_MAX)
+    if freed:
+        log(f"compacted the event journal ({freed} bytes, all delivered)")
 
 
 def main(argv=None):
@@ -202,6 +267,7 @@ def main(argv=None):
 
     runtime = select_runtime(args.runtime)
     adapter = load_adapter(runtime)
+    claim(LOCK)
 
     ready = adapter.check()
     if ready.status != ACCEPTED:
@@ -232,6 +298,7 @@ def main(argv=None):
 
     while not stop():
         run_once(adapter, args.journal, args.cursor, stop)
+        maybe_compact(args.journal, args.cursor)
         _sleep(POLL, stop)
     return 0
 

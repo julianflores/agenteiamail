@@ -20,9 +20,12 @@ records a runtime has accepted, so the answer to "what has been delivered" is on
 number on disk that survives a restart.
 """
 
+import fcntl
+import hashlib
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -98,53 +101,146 @@ def listener_error(*, account, message, observed_at=None):
     somewhere a delivery is not looked at is a fault nobody sees, and silence
     that reads as an empty mailbox is the failure this project exists to prevent.
     """
+    # Resolved first, because the id is derived from it. Hashing the argument
+    # rather than the value gave the same fault two different ids depending on
+    # whether the caller passed a time or let this fill one in.
+    observed_at = observed_at or _now()
     return {
         "schema_version": SCHEMA_VERSION,
         "event_type": LISTENER_ERROR,
-        "event_id": f"listener:{_now()}:{abs(hash(message)) % 10**8}",
+        "event_id": "listener:" + hashlib.sha256(
+            f"{observed_at}|{message}".encode("utf-8")).hexdigest()[:16],
         "source": "agenteiamail",
         "account": (account or "").strip().lower(),
-        "observed_at": observed_at or _now(),
+        "observed_at": observed_at,
         "message": message,
         "notification_text": f"[listener] {message}",
     }
 
 
+LOCK_SUFFIX = ".lock"
+
+
+@contextmanager
+def locked(journal):
+    """
+    Hold the journal lock.
+
+    Appending is a single `O_APPEND` write and needs no lock against another
+    append. The lock exists for compaction, which reads the size, decides, and
+    truncates: without it an append landing between the decision and the
+    truncation is destroyed, and it was never delivered. One lock taken by both
+    closes that window.
+
+    The lock is a separate file, not the journal, so truncating the journal
+    cannot disturb it.
+    """
+    path = Path(str(journal) + LOCK_SUFFIX)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def append(journal, record):
     """
-    Add one record. Returns the offset just past it, which is what a consumer
-    stores once it has delivered it.
+    Add one record durably. Returns the offset just past it.
 
-    One `write` of one line, opened for append, so a reader either sees the whole
-    record or none of it. There is exactly one writer, and it does not need a
-    lock to stay whole.
+    Raises on any failure, and the caller must treat that as "this message is
+    not queued". Returning quietly here is how a message gets marked seen by the
+    listener while existing nowhere a dispatcher will look.
+
+    Three things this has to get right, in order:
+
+    - **Write every byte.** One `os.write` may write fewer bytes than it was
+      given. A short write leaves a truncated line in the queue.
+    - **Then flush it to disk.** The listener persists its last-seen UID after
+      this returns, and that state is what stops a message being fetched twice.
+      If the UID reaches the disk and the record does not, a crash in between
+      loses the message for good. `fsync` is what orders those two.
+    - **Only then report the offset.** It is the caller's evidence the record is
+      safe to acknowledge.
     """
     journal = Path(journal)
     journal.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
     data = line.encode("utf-8")
-    fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(fd, data)
-        return os.lseek(fd, 0, os.SEEK_CUR)
-    finally:
-        os.close(fd)
+    with locked(journal):
+        fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            written = 0
+            while written < len(data):
+                written += os.write(fd, data[written:])
+            os.fsync(fd)
+            return os.lseek(fd, 0, os.SEEK_CUR)
+        finally:
+            os.close(fd)
+
+
+def compact(journal, cursor_path, min_size=0):
+    """
+    Empty the journal, but only while holding the lock and only when the cursor
+    proves every record in it was delivered. Returns the number of bytes freed.
+
+    The size is read inside the lock, so an append cannot land between the
+    decision and the truncation. Truncating before resetting the cursor is
+    deliberate: interrupted in between, the cursor points past the end of an
+    empty file, which readers already treat as "start from the beginning", and
+    that is correct because there is nothing left to read.
+    """
+    journal = Path(journal)
+    with locked(journal):
+        if not journal.is_file():
+            return 0
+        size = journal.stat().st_size
+        if size < min_size or size == 0:
+            return 0
+        if read_cursor(cursor_path) < size:
+            return 0
+        with journal.open("r+b") as fh:
+            fh.truncate(0)
+            fh.flush()
+            os.fsync(fh.fileno())
+        write_cursor(cursor_path, 0)
+        return size
+
+
+class Corrupt:
+    """
+    A complete record that will not parse.
+
+    Yielded rather than skipped. Skipping it advanced the cursor past it as soon
+    as anything after it was accepted, which is a dead-letter policy nobody chose
+    and no one was told about. It stops the queue instead, loudly, and a person
+    decides what to do about it.
+    """
+
+    __slots__ = ("raw", "offset")
+
+    def __init__(self, raw, offset):
+        self.raw = raw
+        self.offset = offset
 
 
 def read_from(journal, offset):
     """
-    Yield (record, offset_past_it) for whole records at or after `offset`.
+    Yield (record, offset_past_it) for records at or after `offset`.
 
-    A trailing fragment is left alone rather than parsed: the writer may be
-    partway through it, and it will be complete by the next read. A line that is
-    complete but not valid JSON is skipped with its offset still advanced, since
-    stopping forever on one damaged record would block every good one behind it.
+    A trailing fragment is left alone: the writer may be partway through it, and
+    it will be whole by the next read. A complete line that will not parse is
+    yielded as `Corrupt` so the consumer can refuse to move past it.
     """
     journal = Path(journal)
     if not journal.is_file():
         return
     size = journal.stat().st_size
-    # A journal shorter than the cursor means it was rotated or replaced.
+    # A journal shorter than the cursor means it was compacted or replaced.
     if offset > size:
         offset = 0
     with journal.open("rb") as fh:
@@ -159,7 +255,7 @@ def read_from(journal, offset):
         try:
             yield json.loads(text.decode("utf-8")), pos
         except (ValueError, UnicodeDecodeError):
-            continue
+            yield Corrupt(text[:200], pos), pos
 
 
 def read_cursor(path):
