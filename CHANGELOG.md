@@ -16,6 +16,35 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.2.3 (2026-08-18)
+
+**A new install could not start on a host with no mailbox, which is the host the
+setup form exists for.** `AGENTS.md` sent the agent to `scripts/preflight.py` at
+step 1, before the credentials fork at step 2. Preflight has nothing to check
+without credentials, so it asked for them on a terminal, found none because an
+agent runs non-interactively, and exited 1. Step 1 also said to stop on failure
+and not work around it, which is the right rule, so an agent following the file
+correctly stopped before ever reaching the form.
+Reported in [#31](https://github.com/julianflores/agenteiamail/issues/31).
+
+- **The path in [`AGENTS.md`](AGENTS.md) is reordered** so each check runs when
+  it has something to check. The systemd user session comes first and needs
+  nothing but the host; the credentials fork comes second and needs only PHP;
+  preflight comes third, with an account to test against. Steps 3 to 6 renumber
+  to 4 to 7; nothing else in them changed, and the "stop, do not work around it"
+  rule stays attached to preflight in its new position.
+- **[`scripts/preflight.py`](scripts/preflight.py) now says what is actually
+  wrong** when it is run with no credentials and no terminal, and points at the
+  setup form instead of asking for an IMAP host. The reorder fixes the documented
+  path; this fixes the tool for anyone who arrives at it in a different order.
+
+- **8 assertions in [`scripts/test_preflight.sh`](scripts/test_preflight.sh)**,
+  covering the empty and missing credential cases and confirming that a
+  configured account still gets past the guard and reaches the server. Four fail
+  against 1.2.2.
+
+---
+
 ## 1.2.2 (2026-08-18)
 
 **The 1.2.1 cursor fix could not recover from the failure it handled.** Stopping
