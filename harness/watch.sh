@@ -69,8 +69,10 @@ emit_system_event() {
     local err
     [ -x "${OPENCLAW:-}" ] || return 1
 
-    # A failed injection must not kill the watcher: one lost notification is
-    # recoverable, a dead watcher is not. Non-fatal, but never silent.
+    # One refusal is not fatal on its own; deliver() decides what happens next by
+    # retrying this call. What must never happen is losing the notification
+    # quietly, so a failure is reported here and refused to the caller, and the
+    # watcher stops rather than carrying on if the retries run out.
     if err=$("$OPENCLAW" system event --mode now --text "$line" 2>&1); then
         if [ "$injection_failing" -ne 0 ]; then
             echo "openclaw injection recovered — events are reaching the session again." >&2
@@ -81,7 +83,7 @@ emit_system_event() {
 
     if [ "$injection_failing" -eq 0 ]; then
         echo "openclaw injection failed: ${err:-no output}" >&2
-        echo "Mail is being logged but NOT delivered to the session. The watcher keeps running." >&2
+        echo "Mail is being logged but NOT delivered to the session. Retrying; if that does not clear, the watcher stops and systemd restarts it from the last confirmed message." >&2
         injection_failing=1
     fi
     return 1
