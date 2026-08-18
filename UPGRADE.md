@@ -149,3 +149,13 @@ Which version to which version, anything from an **Upgrade actions** section
 that you applied, and any unit file you re-copied. The same rule as the install:
 everything that matters here lives outside the repository, and without the list
 they have a changed system and no record of what changed.
+
+## After any upgrade
+
+```bash
+scripts/healthcheck.py
+```
+
+Nonzero means mail cannot currently be detected or delivered, and it says which.
+Checking that nothing arrived is not the same check, and a quiet mailbox will
+pass it whether or not anything is listening.
