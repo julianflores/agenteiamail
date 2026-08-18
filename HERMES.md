@@ -25,14 +25,39 @@ a JSON-compatible YAML example, checked by
 
 ## 1. Configure the Hermes routes
 
-Copy the two route entries from `examples/hermes-routes.yaml` into the
-`platforms.webhook.extra.routes` section of the intended Hermes profile's
-`config.yaml`, then replace:
+The checked example is for a **standalone profile gateway**. Copy its two route
+entries into that gateway profile's `platforms.webhook.extra.routes`, then
+replace:
 
 - both example secrets with **different random values**;
 - the notification delivery target and chat ID;
 - the roster-agent final delivery target and chat ID;
 - the `himalaya` skill/toolset names if that profile exposes mail differently.
+
+For a **multiplexed gateway**, port-binding webhook configuration and all route
+definitions belong only in the default profile's `config.yaml`. Enable
+`gateway.multiplex_profiles`, add `profile: mail-agent` to **both** route
+entries, and do not enable `platforms.webhook` in the secondary profile. Use
+both profile-prefixed route URLs:
+
+```yaml
+gateway:
+  multiplex_profiles: true
+platforms:
+  webhook:
+    extra:
+      routes:
+        agenteiamail-notify:
+          profile: mail-agent
+          # copy the remaining notify fields from the checked example
+        agenteiamail-roster:
+          profile: mail-agent
+          # copy the remaining roster fields from the checked example
+```
+
+Without each route's matching `profile`, a `/p/mail-agent/...` request fails
+closed with 404. Without multiplexing, Hermes ignores the profile prefix; do
+not present such a URL as profile-bound.
 
 The notify route has `deliver_only: true`, so it sends the narrow rendered
 notification without model execution. The roster route omits `deliver_only`,
@@ -40,9 +65,6 @@ so HTTP acceptance starts an asynchronous agent run. Its example grants only
 the `himalaya` skill and `terminal` toolset needed by that skill. Review this
 against the target profile; anyone who can sign a route with `terminal` can
 trigger those capabilities.
-
-The notify route carries `email.received` and `listener.error`; the roster route
-carries `email.received` only, so a listener fault can never start an agent run.
 
 Hermes stores static route secrets in its protected configuration. The adapter
 reads matching copies from separate mode-0600 files. It refuses symlinks,
@@ -80,10 +102,13 @@ Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
 Environment=HERMES_SIGNATURE_MODE=v2
 ```
 
-A profile-bound route is also accepted unchanged, for example:
+For the multiplexed `mail-agent` example above, set both route URLs; keep the
+shared gateway health URL unprefixed:
 
 ```ini
+Environment=HERMES_NOTIFY_URL=http://127.0.0.1:8644/p/mail-agent/webhooks/agenteiamail-notify
 Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/p/mail-agent/webhooks/agenteiamail-roster
+Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
 ```
 
 Use loopback unless the gateway is intentionally remote. A non-loopback URL is
@@ -118,10 +143,12 @@ Do not call the installation complete after `GET /health`.
 4. Observe the `agenteiamail-roster` route accept it.
 5. Separately observe the final agent output and confirm it fetched the exact
    account, mailbox, UIDVALIDITY, and UID.
-6. Stop the test gateway, send another message, and confirm the journal cursor
+6. Trigger or inject a canonical `listener.error` and confirm the direct notify
+   route surfaces it rather than leaving it as an ignored head-of-line event.
+7. Stop the test gateway, send another message, and confirm the journal cursor
    does not advance. Restart the gateway and confirm the same event is then
    accepted.
-7. Confirm `scripts/send.sh` still refuses a recipient absent from `roster.txt`.
+8. Confirm `scripts/send.sh` still refuses a recipient absent from `roster.txt`.
 
 `scripts/healthcheck.py` records the last adapter detail. For Hermes agent mode,
 that detail deliberately distinguishes transport acceptance from completion.
@@ -130,23 +157,27 @@ that detail deliberately distinguishes transport acceptance from completion.
 
 | Hermes response | Adapter result | Meaning |
 |---|---|---|
-| any `202` | accepted | Hermes queued an asynchronous agent run; completion is unconfirmed. |
-| `200 status=delivered` | accepted | Direct delivery completed. |
+| `202 status=accepted` on roster route | accepted | Hermes queued an asynchronous agent run; completion is unconfirmed. |
+| `200 status=delivered` on notify route | accepted | Direct delivery completed. |
 | `200 status=duplicate` | accepted | Hermes already recorded this transport ID; after an ambiguous timeout, verify the user-facing result. |
+| accepted/delivered status on the wrong route mode, or a mismatched response `route` | configuration failure | Route URLs or secrets may be swapped; the routing boundary is not acknowledged. |
 | `200 status=ignored` | configuration failure | The configured event filter did not route an event this adapter expected to route. |
-| any `3xx` | configuration failure | Webhook routes must not redirect; fix `HERMES_*_URL`. |
-| `400`, `401`, `403`, `404`, `413` | configuration failure | The ordered queue stops loudly without acknowledging the event. |
+| redirect, `400`, `401`, `403`, `404`, `413` | configuration failure | The ordered queue stops loudly without acknowledging the event. |
 | network error, timeout, `408`, `429`, other `5xx` | retry | The cursor remains still and the dispatcher retries in place. |
 
 Hermes records the request ID before attempting a direct-delivery target. After
 an explicit direct `502`, retrying the same request ID could return `duplicate`
-without trying the target again. The adapter therefore makes one immediate
-retry with a new transport-attempt ID while retaining the stable application
-`event_id`. Ordinary retries reuse the stable route-scoped transport ID.
+without trying the target again. The adapter therefore persists the current
+direct-attempt ID under `$AGENTEIAMAIL_STATE/hermes-attempts/`, records a known
+failed attempt before returning, and makes at most one immediate retry with a
+new ID. A later dispatcher call rotates away from every persisted known-failed
+ID, including across process restarts. The canonical application `event_id`
+never changes.
 
-The dispatcher provides bounded exponential backoff. Delivery is at least once:
-a process can stop after Hermes accepts an event but before the journal cursor
-is persisted, and ambiguous timeouts cannot prove whether acceptance happened.
+The dispatcher provides bounded exponential backoff with jitter and paces
+accepted catch-up records after an outage. Delivery is at least once: a process
+can stop after Hermes accepts an event but before the journal cursor is
+persisted, and ambiguous timeouts cannot prove whether acceptance happened.
 
 ## Wire contract
 
@@ -156,7 +187,7 @@ sorted-key UTF-8 JSON. It signs and sends those exact bytes:
 ```text
 X-Webhook-Timestamp: <current Unix seconds>
 X-Webhook-Signature-V2: lowercase_hex(HMAC-SHA256(secret, timestamp + "." + body))
-X-Request-ID: <stable SHA-256-derived route-scoped transport ID>
+X-Request-ID: <stable SHA-256-derived account-and-route-scoped transport ID>
 ```
 
 A delayed attempt receives a fresh timestamp and signature. No `svix-*` header

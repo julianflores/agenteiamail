@@ -9,7 +9,7 @@
           "agenteiamail-notify": {
             "secret": "replace-with-a-unique-notify-route-secret",
             "events": ["email.received", "listener.error"],
-            "prompt": "agenteiamail: {notification_text}",
+            "prompt": "New email notification: {notification_text}",
             "deliver": "telegram",
             "deliver_only": true,
             "deliver_extra": {

@@ -9,6 +9,7 @@ import os
 import stat
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -18,6 +19,11 @@ from . import accepted, config, retry
 
 NAME = "hermes"
 TIMEOUT = 30
+MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+class _ResponseTooLarge(Exception):
+    pass
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -25,10 +31,20 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(
-    _NoRedirect,
-    urllib.request.ProxyHandler({}),
-)
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _open(request):
+    return _OPENER.open(request, timeout=TIMEOUT)
+
+
+def _read_response(handle):
+    raw = handle.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise _ResponseTooLarge(
+            f"Hermes response exceeds {MAX_RESPONSE_BYTES} bytes"
+        )
+    return raw
 
 
 def _signature_mode():
@@ -79,12 +95,90 @@ def _url_error(url):
 
 def _request_id(envelope, url):
     route_class = "roster" if envelope.get("roster_match") else "notify"
-    material = f"{envelope.get('event_id', '')}\0{url}".encode("utf-8")
+    material = (
+        f"{envelope.get('account', '')}\0{envelope.get('event_id', '')}\0{url}"
+    ).encode("utf-8")
     return f"agenteiamail-{route_class}-v1-" + hashlib.sha256(material).hexdigest()
 
 
+def _attempt_path(envelope, url):
+    material = (
+        f"{envelope.get('account', '')}\0{envelope.get('event_id', '')}\0{url}"
+    ).encode("utf-8")
+    state = Path(os.environ.get(
+        "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail"
+    )).expanduser()
+    return state / "hermes-attempts" / (hashlib.sha256(material).hexdigest() + ".json")
+
+
+def _attempt_read(path):
+    if not path.exists():
+        return None, ""
+    if path.is_symlink():
+        return None, f"Hermes attempt state {path} must not be a symlink"
+    try:
+        file_stat = path.stat()
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.geteuid():
+            return None, f"Hermes attempt state {path} must be a service-owned regular file"
+        if stat.S_IMODE(file_stat.st_mode) != 0o600:
+            return None, f"Hermes attempt state {path} must have mode 0600"
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value.get("attempt_id"), str) or type(value.get("failed")) is not bool:
+            raise ValueError("invalid fields")
+        return value, ""
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return None, f"cannot read Hermes attempt state {path}: {exc}"
+
+
+def _attempt_write(path, attempt_id, failed):
+    directory = path.parent
+    temporary = directory / (path.name + ".tmp-" + uuid.uuid4().hex)
+    try:
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory_stat = directory.stat()
+        if (
+            directory.is_symlink()
+            or not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(directory_stat.st_mode) & 0o077
+        ):
+            return f"Hermes attempt-state directory {directory} must be service-owned mode 0700"
+        data = json.dumps(
+            {"attempt_id": attempt_id, "failed": failed},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return ""
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return f"cannot persist Hermes direct-attempt state at {path}: {exc}"
+
+
+def _attempt_clear(path):
+    try:
+        path.unlink(missing_ok=True)
+        return ""
+    except OSError as exc:
+        return f"cannot clear Hermes direct-attempt state at {path}: {exc}"
+
+
 def _load_secret(secret_file):
-    secret_path = Path(secret_file)
+    secret_path = Path(secret_file).expanduser()
     requirement = (
         "secret must be a non-symlink regular file owned by the service user "
         "with mode 0600"
@@ -94,7 +188,7 @@ def _load_secret(secret_file):
             return None, requirement
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(secret_path, flags)
-        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "rb") as handle:
             secret_stat = os.fstat(handle.fileno())
             if (
                 not stat.S_ISREG(secret_stat.st_mode)
@@ -102,8 +196,8 @@ def _load_secret(secret_file):
                 or secret_stat.st_uid != os.geteuid()
             ):
                 return None, requirement
-            secret = handle.read().strip().encode("utf-8")
-    except (OSError, UnicodeError) as exc:
+            secret = handle.read().rstrip(b"\r\n")
+    except OSError as exc:
         return None, f"{requirement}; file cannot be read: {exc}"
     if not secret:
         return None, "secret file is empty"
@@ -153,19 +247,34 @@ def _route_settings():
     return routes, None
 
 
-def _classify(http_status, payload):
+def _classify(http_status, payload, route_class, expected_route):
     status = payload.get("status") if isinstance(payload, dict) else None
-    if http_status == 202:
-        detail = "Hermes queued the agent run (HTTP 202); completion is unconfirmed"
-        if status != "accepted":
-            detail += f"; response status was {status!r}"
-        return accepted(detail)
-    if http_status == 200 and status == "delivered":
-        return accepted("Hermes completed direct delivery (HTTP 200)")
+    response_route = payload.get("route") if isinstance(payload, dict) else None
+    if response_route and response_route != expected_route:
+        return config(
+            f"Hermes answered for route {response_route!r}, not configured route "
+            f"{expected_route!r}. Check the route URL and secret pairing."
+        )
     if http_status == 200 and status == "duplicate":
         return accepted(
             "Hermes recognized a duplicate transport ID (HTTP 200); verify "
             "user-facing delivery after any ambiguous timeout"
+        )
+    if route_class == "roster" and http_status == 202 and status == "accepted":
+        return accepted(
+            "Hermes queued the agent run (HTTP 202); completion is unconfirmed"
+        )
+    if route_class == "notify" and http_status == 200 and status == "delivered":
+        return accepted("Hermes completed direct delivery (HTTP 200)")
+    if http_status in (200, 202) and status in ("accepted", "delivered"):
+        expected = (
+            "direct HTTP 200 delivered"
+            if route_class == "notify"
+            else "agent HTTP 202 accepted"
+        )
+        return config(
+            f"Hermes returned {http_status} status={status!r} for the {route_class} "
+            f"route; expected {expected}. Check that route URLs and secrets are not swapped."
         )
     if http_status == 200 and status == "ignored":
         return config(
@@ -174,8 +283,8 @@ def _classify(http_status, payload):
         )
     if 300 <= http_status <= 399:
         return config(
-            f"Hermes route returned redirect HTTP {http_status}. Fix HERMES_*_URL; "
-            "webhook routes must not redirect."
+            f"Hermes route returned redirect HTTP {http_status}. Redirects are "
+            "refused so signatures and exact POST bodies cannot cross origins."
         )
     if http_status in (400, 401, 403, 404, 413):
         return config(
@@ -212,11 +321,11 @@ def _send(url, secret, body, request_id):
         headers=headers,
     )
     try:
-        with _OPENER.open(request, timeout=TIMEOUT) as response:
-            raw = response.read()
+        with _open(request) as response:
+            raw = _read_response(response)
             http_status = response.status
     except urllib.error.HTTPError as exc:
-        raw = exc.read()
+        raw = _read_response(exc)
         http_status = exc.code
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -231,6 +340,11 @@ def deliver(envelope):
             "Hermes cannot deliver an envelope without event_id. Inspect the "
             "journal record; ordered delivery remains halted."
         )
+    if not str(envelope.get("account", "")).strip():
+        return config(
+            "Hermes cannot derive an account-scoped transport ID without account. "
+            "Inspect the journal record; ordered delivery remains halted."
+        )
     if (
         envelope.get("event_type") == "email.received"
         and type(envelope.get("roster_match")) is not bool
@@ -244,26 +358,59 @@ def deliver(envelope):
         return route_error
     route_class = "roster" if envelope.get("roster_match") else "notify"
     url, secret = routes[route_class]
+    expected_route = urllib.parse.urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
 
     body = _body(envelope)
     signature_version = _signature_mode()
     request_id = _request_id(envelope, url)
+    attempt_path = None
+    if route_class == "notify":
+        attempt_path = _attempt_path(envelope, url)
+        attempt, attempt_error = _attempt_read(attempt_path)
+        if attempt_error:
+            return config(attempt_error + "; ordered delivery remains halted")
+        if attempt is None:
+            attempt = {"attempt_id": request_id, "failed": False}
+            attempt_error = _attempt_write(attempt_path, request_id, False)
+        elif attempt["failed"]:
+            request_id = request_id + "-attempt-" + uuid.uuid4().hex
+            attempt_error = _attempt_write(attempt_path, request_id, False)
+        else:
+            request_id = attempt["attempt_id"]
+            attempt_error = ""
+        if attempt_error:
+            return config(attempt_error + "; no direct request was sent")
+
+    http_status, payload = 0, {}
     try:
-        http_status, payload = _send(url, secret, body, request_id)
-        if http_status == 502 and not envelope.get("roster_match"):
-            # Hermes records the delivery ID before attempting direct delivery.
-            # Reusing it after an explicit 502 would return duplicate without
-            # trying the user-facing target again, so this known-failed attempt
-            # gets a new transport ID while the application event_id stays put.
-            attempt_id = request_id + "-attempt-" + uuid.uuid4().hex
-            http_status, payload = _send(url, secret, body, attempt_id)
+        maximum_attempts = 2 if route_class == "notify" else 1
+        for attempt_number in range(maximum_attempts):
+            http_status, payload = _send(url, secret, body, request_id)
+            if http_status != 502 or route_class != "notify":
+                break
+            attempt_error = _attempt_write(attempt_path, request_id, True)
+            if attempt_error:
+                return config(attempt_error + "; ordered delivery remains halted")
+            if attempt_number + 1 < maximum_attempts:
+                request_id = (
+                    _request_id(envelope, url) + "-attempt-" + uuid.uuid4().hex
+                )
+                attempt_error = _attempt_write(attempt_path, request_id, False)
+                if attempt_error:
+                    return config(attempt_error + "; no retry request was sent")
+    except _ResponseTooLarge as exc:
+        return config(f"{exc}; check HERMES_*_URL and gateway response limits")
     except (OSError, urllib.error.URLError) as exc:
         return retry(
             "Hermes route is unreachable or timed out; retrying the stable "
             f"transport ID has duplicate risk if the gateway accepted it: {exc}"
         )
 
-    result = _classify(http_status, payload)
+    result = _classify(http_status, payload, route_class, expected_route)
+    if result.ok and attempt_path is not None:
+        attempt_error = _attempt_clear(attempt_path)
+        if attempt_error:
+            return config(attempt_error + "; ordered delivery remains halted")
     if signature_version == "v1":
         warning = "Legacy V1 has no replay protection; migrate the Hermes route to V2."
         result.detail = f"{result.detail}; {warning}" if result.detail else warning
@@ -290,12 +437,21 @@ def _health(url):
         headers={"Accept": "application/json"},
     )
     try:
-        with _OPENER.open(request, timeout=TIMEOUT) as response:
-            raw = response.read()
+        with _open(request) as response:
+            raw = _read_response(response)
             http_status = response.status
     except urllib.error.HTTPError as exc:
-        raw = exc.read()
         http_status = exc.code
+        try:
+            raw = _read_response(exc)
+        except _ResponseTooLarge as size_error:
+            return config(
+                f"{size_error}; fix HERMES_HEALTH_URL or gateway response limits"
+            )
+    except _ResponseTooLarge as exc:
+        return config(
+            f"{exc}; fix HERMES_HEALTH_URL or gateway response limits"
+        )
     except (OSError, urllib.error.URLError) as exc:
         return retry(f"Hermes health endpoint is unreachable or timed out: {exc}")
     try:
@@ -309,8 +465,8 @@ def _health(url):
         )
     if 300 <= http_status <= 399:
         return config(
-            f"Hermes health URL returned redirect HTTP {http_status}. Fix "
-            "HERMES_HEALTH_URL; health endpoints must not redirect."
+            f"Hermes health URL returned redirect HTTP {http_status}; use the "
+            "final validated health URL directly."
         )
     if http_status in (400, 401, 403, 404, 413):
         return config(

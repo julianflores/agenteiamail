@@ -185,6 +185,28 @@ check("openclaw is available in this checkout", True, "openclaw" in dispatch.ava
 check("hermes is available in this checkout", True, "hermes" in dispatch.available())
 check("an explicit runtime is taken as given", "openclaw", dispatch.select_runtime("openclaw"))
 
+original_uniform = dispatch.random.uniform
+original_jitter = dispatch.RETRY_JITTER
+dispatch.random.uniform = lambda _low, high: high
+dispatch.RETRY_JITTER = 0.2
+check("retry jitter is capped at the configured maximum", 10, dispatch._jitter(10, 10))
+check("retry jitter varies an uncapped delay", 6, dispatch._jitter(5, 10))
+dispatch.random.uniform = original_uniform
+dispatch.RETRY_JITTER = original_jitter
+
+original_sleep = dispatch._sleep
+original_pace = dispatch.CATCHUP_PACE
+paced_sleeps = []
+dispatch._sleep = lambda seconds, _stop: paced_sleeps.append(seconds)
+dispatch.CATCHUP_PACE = 0.05
+dispatch.RETRY_JITTER = 0
+paced_journal, paced_cursor = journal_with("one", "two")
+dispatch.run_once(Fake(default=accepted()), paced_journal, paced_cursor)
+check("catch-up delivery is paced after each accepted record", [0.05, 0.05], paced_sleeps)
+dispatch._sleep = original_sleep
+dispatch.CATCHUP_PACE = original_pace
+dispatch.RETRY_JITTER = original_jitter
+
 # --- durability, locking, corruption, compaction -----------------------------
 #
 # Every case below was a way of losing or duplicating an event that the first
