@@ -69,7 +69,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$php_bin" -S "127.0.0.1:$PORT" -t "$ROOT/webapp" >>"$LOG" 2>&1 &
+# Resolve the credentials path here and hand it to the server, so the form and
+# the tools it is configuring cannot disagree about which file matters. The rule
+# lives in harness/paths.py; envpath.sh is the shell half of it.
+# shellcheck source=envpath.sh
+. "$ROOT/scripts/envpath.sh"
+AGENTEIAMAIL_ENV="${AGENTEIAMAIL_ENV:-$(agenteiamail_env_file)}"
+export AGENTEIAMAIL_ENV
+
+AGENTEIAMAIL_ENV="$AGENTEIAMAIL_ENV" "$php_bin" -S "127.0.0.1:$PORT" -t "$ROOT/webapp" >>"$LOG" 2>&1 &
 server_pid=$!
 
 sleep 1
@@ -107,7 +115,7 @@ EOF
 # rather than merely checking that it exists — this gets run again to *change*
 # settings, and an existing file would otherwise end the script before the page
 # had been opened.
-target="$HOME/.openclaw/workspace/.env"
+target="$AGENTEIAMAIL_ENV"
 fingerprint() { [ -e "$target" ] && cat "$target" 2>/dev/null | cksum || echo absent; }
 before=$(fingerprint)
 

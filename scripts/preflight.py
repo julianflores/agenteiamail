@@ -9,7 +9,10 @@ import ssl
 import sys
 from pathlib import Path
 
-ENV = Path(os.environ.get("AGENTEIAMAIL_ENV", "~/.config/agenteiamail/env")).expanduser()
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "harness"))
+from paths import env_file   # noqa: E402
+
+ENV = env_file()
 
 # Both key schemas, same order of preference as idle_listener.py. INSTALL.md tells
 # you to point at an existing workspace .env, so this has to read one.

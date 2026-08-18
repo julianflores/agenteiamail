@@ -88,7 +88,13 @@ if ($action === 'setup' && $errors === []) {
         [$ok, $where] = write_env(render_env($values));
         if ($ok) {
             $saved = $where;
-            [$linked, $linkNote] = link_default_path($where);
+            // Only when the file went somewhere other than the default. A new
+            // install writes straight to the default path, and linking a file to
+            // itself is at best a no-op and at worst replaces the file with a
+            // link to nothing.
+            [$linked, $linkNote] = ($where === env_link_path())
+                ? [true, 'written at the default path']
+                : link_default_path($where);
             $linkWarning = $linked ? null : $linkNote;
             // Nothing keeps the password in memory once it is on disk.
             unset($_SESSION['values']);

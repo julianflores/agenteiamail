@@ -23,7 +23,7 @@ dois minutos conferindo que funciona de verdade.
 ### Passo 1: Dê uma caixa de e-mail a ele
 
 O agente precisa de uma conta de e-mail própria, e dos dados de conexão dessa
-conta escritos em `~/.openclaw/workspace/.env`.
+conta escritos em `~/.config/agenteiamail/env`.
 
 **O [MAILBOX_SETUP.pt-BR.md](MAILBOX_SETUP.pt-BR.md) explica passo a passo**: qual conta usar,
 onde encontrar o nome do servidor (a única parte que sempre dá errado), e como
@@ -37,7 +37,7 @@ passar por um chat.
 Cole isto para o seu agente:
 
 ```text
-Sua conta de e-mail já está configurada em ~/.openclaw/workspace/.env
+Sua conta de e-mail já está configurada em ~/.config/agenteiamail/env
 
 Instale este repositório para poder usá-la:
 https://github.com/julianflores/agenteiamail
@@ -207,7 +207,7 @@ webapp/ + setup_web.sh    um formulário local que escreve o arquivo de credenci
 
 ## Caminhos nesta máquina
 
-- Repositório: `~/.openclaw/workspace/agenteiamail`
+- Repositório: em qualquer lugar; `~/.local/share/agenteiamail` se não houver preferência
 - Credenciais: `~/.config/agenteiamail/env`: permissão `600`, nunca versionado
 - Estado e eventos: `~/.local/state/agenteiamail/`
 - Serviço de usuário: `~/.config/systemd/user/agenteiamail-idle.service`

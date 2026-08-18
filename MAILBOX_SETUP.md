@@ -77,9 +77,9 @@ If the name you typed does not appear in that output, use one that does.
 ## Create the file
 
 ```bash
-mkdir -p ~/.openclaw/workspace
-touch ~/.openclaw/workspace/.env
-chmod 600 ~/.openclaw/workspace/.env
+mkdir -p ~/.config/agenteiamail
+touch ~/.config/agenteiamail/env
+chmod 600 ~/.config/agenteiamail/env
 ```
 
 `chmod 600` means only your user can read it. Do this **before** putting the

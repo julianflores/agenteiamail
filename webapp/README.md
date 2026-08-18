@@ -2,7 +2,7 @@
 
 A form that collects the seven mailbox settings, signs in to the mail server to
 confirm they work, and, only if the server accepts the account, writes
-`~/.openclaw/workspace/.env`.
+`~/.config/agenteiamail/env`.
 
 That is the same file a power user writes by hand before running the install
 prompt, and its absence is what tells the agent no mailbox has been configured
@@ -130,7 +130,7 @@ webapp/index.php        the form, the report, and the confirmation
 webapp/lib/guard.php    loopback check, one-time key, CSRF, headers
 webapp/lib/validate.php field checks, each one a mistake seen in the wild
 webapp/lib/probe.php    live IMAP and SMTP sign-in
-webapp/lib/envfile.php  writing ~/.openclaw/workspace/.env, and the symlink
+webapp/lib/envfile.php  writing the resolved credentials file, and the symlink
 webapp/assets/app.css   no webfonts: this host may have no internet route
 scripts/setup_web.sh    generates the key, serves the page, stops when saved
 ```

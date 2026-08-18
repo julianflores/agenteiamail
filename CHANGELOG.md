@@ -16,6 +16,55 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.4.0 (2026-08-18)
+
+**Nothing assumes a harness any more.** The delivery half stopped knowing about
+one in 1.3.0; the paths still did. A clone had to sit at
+`~/.openclaw/workspace/agenteiamail` or the session hook silently did nothing,
+and the setup form wrote credentials into `~/.openclaw/workspace/.env` on hosts
+with no OpenClaw on them. FR6 of
+[#35](https://github.com/julianflores/agenteiamail/issues/35).
+
+- **One rule about where the credentials live**, in
+  [`harness/paths.py`](harness/paths.py) with the shell half in
+  [`scripts/envpath.sh`](scripts/envpath.sh): `AGENTEIAMAIL_ENV` if set, then an
+  existing `~/.config/agenteiamail/env` (including the symlink older installs
+  left there), then a legacy `~/.openclaw/workspace/.env`, then the neutral path
+  for a new install. The listener, preflight, `send.sh` and the setup form all
+  ask it rather than each keeping their own default.
+- **An existing install keeps its credentials where they are.** They are read
+  where they lie and never copied to a second location to satisfy a convention:
+  a second copy of a password is a second thing to leak. Nothing is written into
+  a harness's own `.env`, OpenClaw's or Hermes's.
+- **The clone can be anywhere.** `harness/session_start.py` finds the repository
+  from its own location instead of a hard-coded path. That failure was invisible
+  by construction, since the hook swallows its own errors so a session is never
+  blocked: a clone elsewhere produced no version line, no pending mail, and no
+  complaint. `~/.local/share/agenteiamail` is the suggested default for a new
+  install, and nothing requires it.
+- **A different mail deployment on the same host is not adopted.** Only the two
+  paths this project has itself written are ever looked at.
+
+- **23 assertions in [`scripts/test_paths.sh`](scripts/test_paths.sh)**, which
+  check the Python, shell and PHP resolvers give the same answer for a fresh
+  host, a legacy OpenClaw install, the symlinked arrangement, a dangling link, an
+  explicit override, and an unrelated deployment sitting alongside.
+
+### Upgrade actions
+
+**None required.** An existing install resolves to the file it already uses. If
+you would rather move to the neutral path, move the file and delete the symlink
+in one step, and restart both services:
+
+```bash
+mv ~/.openclaw/workspace/.env ~/.config/agenteiamail/env.real
+rm -f ~/.config/agenteiamail/env
+mv ~/.config/agenteiamail/env.real ~/.config/agenteiamail/env
+systemctl --user restart agenteiamail-idle.service agenteiamail-dispatch.service
+```
+
+---
+
 ## 1.3.0 (2026-08-18)
 
 **The delivery half no longer knows what a harness is.** Until now, delivering to
