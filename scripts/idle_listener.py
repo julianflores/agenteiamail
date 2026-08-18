@@ -18,14 +18,18 @@ Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once]
 Exit:   0 clean shutdown · 1 configuration or login failure (not retryable)
 """
 
-import argparse, email, email.utils, imaplib, json, os, pathlib, re
+import argparse, datetime, email, email.utils, imaplib, json, os, pathlib, re
 import select, signal, socket, ssl, sys, time
 from email.header import decode_header, make_header
 
 from roster import DEFAULT_ROSTER, roster_addresses, sender_is_listed
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "harness"))
+import event as ev
+
 DEFAULT_ENV   = "~/.config/agenteiamail/env"
 DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
+DEFAULT_JOURNAL = "~/.local/state/agenteiamail/events.jsonl"
 
 # RFC 2177: a client must re-issue IDLE at least every 29 minutes.
 IDLE_REFRESH = 25 * 60
@@ -44,8 +48,116 @@ def _handle_stop(signum, frame):
 
 
 def emit(line):
-    """One line on stdout == one notification."""
+    """One line on stdout, which the unit appends to mail.log for a person."""
     print(line, flush=True)
+
+
+class NotQueued(Exception):
+    """The journal could not take a record, so nothing may be acknowledged."""
+
+
+def record(journal_path, envelope):
+    """
+    Put one event in the journal, and the same event on the operator's log.
+
+    Both, always, and from here only. The journal is what a runtime adapter
+    delivers from; mail.log is what a human reads when they want to know what
+    happened. Writing them in two places is how they start describing different
+    mail.
+
+    **Raises if the journal could not take it**, and the caller must not advance
+    the last-seen UID when it does. That UID is the only thing that decides
+    whether a message is ever fetched again: acknowledging one that reached
+    neither the queue nor a runtime loses it for good, on a full disk or a
+    permission error, with a line in mail.log as the only trace. Writing the
+    operator line is not queueing.
+    """
+    try:
+        ev.append(journal_path, envelope)
+    except (OSError, ValueError) as exc:
+        log(f"could not write the event journal at {journal_path}: {exc}")
+        log("This message is NOT queued for delivery, so its UID is deliberately "
+            "not being acknowledged. It will be picked up again once the journal "
+            "is writable. Nothing is lost; nothing is moving either.")
+        raise NotQueued(str(exc)) from exc
+    emit(envelope.get("notification_text", ""))
+
+
+RECOVERED = "listener recovered; mail is being seen again"
+
+
+def journal_fault(journal_path, account, message):
+    """
+    Put a listener fault in the same stream as the mail. True only if it landed.
+
+    A fault reported only where nobody looks is a fault nobody sees, and silence
+    that reads as an empty mailbox is the failure this project exists to prevent.
+    So it travels the path that is already being watched.
+    """
+    try:
+        ev.append(journal_path, ev.listener_error(account=account, message=message))
+        return True
+    except (OSError, ValueError) as exc:
+        log(f"could not journal the listener fault: {exc}")
+        return False
+
+
+class FaultLog:
+    """
+    What the journal has actually been told about the listener's health.
+
+    Two pieces of state, and the distinction between them is the whole point:
+
+    - `recorded` is the fault the journal really holds. It suppresses repeats,
+      because an outage retries every few seconds for hours and one record per
+      attempt would bury the mail sitting beside it.
+    - `pending` is a transition that has not been written yet, because the
+      attempt to write it failed.
+
+    Keeping only the first loses whole outages. A failed append left nothing
+    owed, and the retry meant to fix it never came: on the pass where the
+    listener recovers, nothing asks about the fault again, so the recovery finds
+    no recorded outage and writes nothing either. The episode goes entirely
+    unreported, which is exactly the silence this design refuses.
+
+    So what is owed is carried until it is written, and recovery settles that
+    debt before declaring itself, which also keeps the two in the order they
+    happened.
+    """
+
+    def __init__(self, journal_path, account):
+        self.journal = journal_path
+        self.account = account
+        self.recorded = None
+        self.pending = None
+
+    def flush(self):
+        """Write what is owed. Safe on every pass; does nothing when nothing is."""
+        if self.pending is None:
+            return
+        if journal_fault(self.journal, self.account, self.pending):
+            self.recorded = self.pending
+            self.pending = None
+
+    def fault(self, message):
+        """Something is wrong, and this is what it is."""
+        if message != self.recorded:
+            self.pending = message
+        self.flush()
+
+    def recovered(self):
+        """
+        Working again. Writes the outage first if it never made it in.
+
+        Nothing is written when nothing went wrong, and nothing is cleared until
+        the recovery itself is durable: a recovery that could not be written must
+        leave the outage open rather than quietly ending it.
+        """
+        self.flush()
+        if self.recorded is None:
+            return
+        if journal_fault(self.journal, self.account, RECOVERED):
+            self.recorded = None
 
 
 def log(line):
@@ -76,14 +188,30 @@ def decode_hdr(value):
 
 
 def describe(sender, subject, date, trusted=False):
+    """The operator's line. `parts` returns the same thing plus the fields the
+    envelope needs, so nothing downstream has to parse this back apart."""
+    return parts(sender, subject, date, trusted)["notification_text"]
+
+
+def parts(sender, subject, date, trusted=False):
+    """
+    One message, rendered and structured at the same time.
+
+    Both come from here so they cannot disagree. Rendering in one place and
+    extracting fields somewhere else is how a log line and a payload end up
+    describing different messages.
+    """
     name, addr = email.utils.parseaddr(sender)
     who = name or addr or "unknown"
 
     # Two clocks matter: when the sender stamped it, and when we noticed. The gap
     # is the latency this design exists to shrink, so report both.
     sent = ""
+    sent_iso = ""
     try:
-        sent = email.utils.parsedate_to_datetime(date).astimezone().strftime("%H:%M:%S")
+        stamped = email.utils.parsedate_to_datetime(date)
+        sent = stamped.astimezone().strftime("%H:%M:%S")
+        sent_iso = stamped.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         pass
     when = time.strftime("%H:%M:%S") + (f", sent {sent}" if sent else "")
@@ -99,7 +227,14 @@ def describe(sender, subject, date, trusted=False):
         body = f"{head} — {title} (via {who})"
     else:
         body = f"{who} — {subject or '(no subject)'}"
-    return f"[mail {when}] {body}"
+    return {
+        "notification_text": f"[mail {when}] {body}",
+        "sender_name": name,
+        "sender_address": addr,
+        "subject": subject or "",
+        "sent_at": sent_iso,
+        "roster_match": bool(trusted),
+    }
 
 
 # Two key schemas are accepted, so a host that already keeps credentials for its
@@ -206,7 +341,7 @@ def newest_uid(conn):
 
 
 def fetch_since(conn, last_uid, allowed):
-    """[(uid, line)] for every message with UID > last_uid.
+    """[(uid, parts)] for every message with UID > last_uid.
 
     Headers only — BODY.PEEK of three fields. The listener never downloads a
     body and never marks anything read; reading is the agent's job, through
@@ -224,10 +359,10 @@ def fetch_since(conn, last_uid, allowed):
         if typ != "OK" or not payload or not isinstance(payload[0], tuple):
             continue
         msg = email.message_from_bytes(payload[0][1])
-        out.append((uid, describe(decode_hdr(msg.get("From")),
-                                  decode_hdr(msg.get("Subject")),
-                                  msg.get("Date", ""),
-                                  sender_is_listed(msg, allowed))))
+        out.append((uid, parts(decode_hdr(msg.get("From")),
+                               decode_hdr(msg.get("Subject")),
+                               msg.get("Date", ""),
+                               sender_is_listed(msg, allowed))))
     return out
 
 
@@ -263,13 +398,16 @@ def idle(conn, timeout):
                 break
 
 
-def run(env_path, mailbox, once, state_path, roster_path):
+def run(env_path, mailbox, once, state_path, roster_path, journal_path):
     env = load_env(env_path)
+    account = lookup(env, "user")
     if not roster_path.is_file():
         # Not fatal. Mail still gets reported; nothing gets tagged, so the agent
         # treats everything as read-only until a human writes the file.
         log(f"no roster at {roster_path}; no sender will be tagged as trusted")
     backoff = BACKOFF_MIN
+    # What the journal has been told about the listener's own health.
+    faults = FaultLog(journal_path, account)
     state = load_state(state_path)
     last_uid = state.get("last_uid") if state.get("mailbox") == mailbox else None
 
@@ -304,11 +442,16 @@ def run(env_path, mailbox, once, state_path, roster_path):
             pending = fetch_since(conn, last_uid, roster_addresses(roster_path))
             if len(pending) > 1:
                 emit(f"[mail] catching up — {len(pending)} messages arrived while offline")
-            for uid, line in pending:
-                emit(line)
+            for uid, fields in pending:
+                record(journal_path, ev.mail_event(
+                    account=account, mailbox=mailbox, uidvalidity=validity, uid=uid, **fields))
+                # Only now. The record is on disk and flushed, so acknowledging
+                # this UID cannot outlive the thing it is acknowledging.
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
+            # Settles anything owed from an earlier outage before saying it is over.
+            faults.recovered()
             backoff = BACKOFF_MIN
 
             while not _stop:
@@ -319,8 +462,9 @@ def run(env_path, mailbox, once, state_path, roster_path):
                 found = False
                 # Re-read the roster every batch. Adding someone takes effect on
                 # their next message, with no restart and no lost notification.
-                for uid, line in fetch_since(conn, last_uid, roster_addresses(roster_path)):
-                    emit(line)
+                for uid, fields in fetch_since(conn, last_uid, roster_addresses(roster_path)):
+                    record(journal_path, ev.mail_event(
+                        account=account, mailbox=mailbox, uidvalidity=validity, uid=uid, **fields))
                     last_uid = uid
                     found = True
                     # Persist per message, not per batch: a crash mid-batch must
@@ -329,10 +473,24 @@ def run(env_path, mailbox, once, state_path, roster_path):
                 if found and once:
                     return 0
 
+        except NotQueued as exc:
+            if _stop:
+                break
+            # The mailbox is fine; the disk is not. The UID was not advanced, so
+            # the same messages come back on the next pass. Wait rather than spin.
+            faults.fault(f"journal unwritable: {exc}")
+            log(f"journal unwritable; retrying in {backoff}s")
+            slept = 0
+            while slept < backoff and not _stop:
+                time.sleep(1)
+                slept += 1
+            backoff = min(backoff * 2, BACKOFF_MAX)
         except (imaplib.IMAP4.error, ConnectionError, OSError, socket.error) as exc:
             if _stop:
                 break
-            log(f"connection lost ({type(exc).__name__}: {exc}); retrying in {backoff}s")
+            message = f"connection lost ({type(exc).__name__}: {exc})"
+            faults.fault(message)
+            log(f"{message}; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:
                 time.sleep(1)
@@ -354,6 +512,8 @@ def main():
     p.add_argument("--once", action="store_true", help="exit after the first batch")
     p.add_argument("--state", default=DEFAULT_STATE,
                    help="where to persist the last reported UID ('none' to disable)")
+    p.add_argument("--journal", default=DEFAULT_JOURNAL,
+                   help="append-only event journal the dispatcher reads")
     p.add_argument("--roster", default=str(DEFAULT_ROSTER),
                    help="trusted-sender list; their mail is tagged 'roster'")
     args = p.parse_args()
@@ -371,6 +531,7 @@ def main():
         args.once,
         pathlib.Path(args.state).expanduser(),
         pathlib.Path(args.roster).expanduser(),
+        pathlib.Path(args.journal).expanduser(),
     )
 
 

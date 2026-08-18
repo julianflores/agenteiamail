@@ -349,7 +349,7 @@ credentials file. systemd does not expand `~`, so use `%h` or a full path.
 
 ```bash
 install -Dm644 systemd/agenteiamail-idle.service       ~/.config/systemd/user/
-install -Dm644 systemd/agenteiamail-watch.service      ~/.config/systemd/user/
+install -Dm644 systemd/agenteiamail-dispatch.service   ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.service  ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.timer    ~/.config/systemd/user/
 
@@ -399,32 +399,37 @@ Set up rotation too: `harness/rotate_logs.py` driven by a user timer. It uses
 
 ## 6. Harness wiring
 
-`harness/watch.sh` and `harness/session_start.py` are in this repo and working.
+`harness/dispatch.py` and `harness/session_start.py` are in this repo and working.
 
-**`harness/watch_service.sh` is the wrapper a systemd unit should call**, not
-`watch.sh` directly. It works out the byte offset to resume from: the stored one,
-or the current log size on a first run, and then execs `watch.sh` with it. A
-template is in [`systemd/agenteiamail-watch.service`](systemd/agenteiamail-watch.service).
+**`harness/dispatch.py` is what the systemd unit runs.** It reads the event
+journal the listener writes, hands each record to a runtime adapter, and moves the
+cursor only once that adapter reports the runtime accepted it. A template is in
+[`systemd/agenteiamail-dispatch.service`](systemd/agenteiamail-dispatch.service).
+
+**Choose the runtime with `AGENTEIAMAIL_RUNTIME`** in that unit: `openclaw`,
+`hermes`, or `auto`. `auto` picks only when exactly one supported runtime is
+present on the host, and refuses rather than guessing when none or several are.
+Set it explicitly if this machine runs more than one harness.
+
+**Run exactly one dispatcher.** It is the only consumer of the journal and the
+only writer of the cursor. A session must never start a second one: two consumers
+deliver the same message twice and race on one cursor file. `session_start.py`
+reports what is still queued and stops there.
 
 **OpenClaw has no facility for consuming a script's stdout as an event stream**,
 there is no `--stream-command` in its cron. Do not go looking for one; that search
 has already been done and it is a dead end.
 
-The working pattern is the inverse: `watch.sh` **pushes** into the session with
-`openclaw system event --mode now`. It is an active producer, not a passive stream.
-
-**Run exactly one of them.** The systemd unit is the supervised consumer and the
-only writer of `seen.offset`; it keeps running when no session is live, which is
-the whole point. A session must never start its own `watch.sh` alongside it - two
-consumers deliver the same message twice and race on one cursor file.
-`session_start.py` therefore reports what is pending and stops there.
+The working pattern is the inverse: the OpenClaw adapter **pushes** into the
+session with `openclaw system event --mode now`. It is an active producer, not a
+passive stream.
 
 The one piece that may need adapting to your harness version is the output payload
 of `session_start.py`; it is marked in the file.
 
-**Check the watcher can actually reach `openclaw`.** A systemd user service gets a
+**Check the dispatcher can actually reach `openclaw`.** A systemd user service gets a
 minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
-invisible to it even though your shell finds it. `watch.sh` looks in the usual
+invisible to it even though your shell finds it. The adapter looks in the usual
 per-user locations and **says so on its own stderr if it finds nothing**.
 
 **Finding it is not enough: it has to be able to run.** `openclaw` is a Node
@@ -459,7 +464,7 @@ So check it explicitly after enabling the watcher:
 
 ```bash
 grep -iE "openclaw not found|injection failed" ~/.local/state/agenteiamail/watch.err.log
-journalctl --user -u agenteiamail-watch.service | grep -iE "openclaw not found|injection failed"
+journalctl --user -u agenteiamail-dispatch.service | grep -iE "openclaw not found|injection failed"
 ```
 
 Both silent means it resolved. Without this the watcher runs, the log fills, every
@@ -492,7 +497,7 @@ himalaya envelope list -a agenteiamail -s 3
 
 # 4b. The watcher found openclaw: silence here is the pass
 grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/null \
-  || journalctl --user -u agenteiamail-watch.service 2>/dev/null | grep -i "openclaw not found" \
+  || journalctl --user -u agenteiamail-dispatch.service 2>/dev/null | grep -i "openclaw not found" \
   || echo "watcher: openclaw resolved"
 
 # 5. End to end: have someone external send you mail

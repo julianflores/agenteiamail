@@ -1,0 +1,37 @@
+# Template. Replace /path/to/agenteiamail with your clone's absolute path.
+#
+# One dispatcher, and only one. It is the sole consumer of the event journal and
+# the sole writer of the cursor that says what has been delivered. A session must
+# never start a second one: two consumers race on one cursor and deliver the same
+# message twice.
+
+[Unit]
+Description=agenteiamail dispatcher (delivers journalled events to the configured runtime)
+After=agenteiamail-idle.service
+
+[Service]
+Type=simple
+# AGENTEIAMAIL_RUNTIME selects the adapter: openclaw, hermes, or auto. `auto`
+# chooses only when exactly one runtime is present, and refuses rather than
+# guessing when none or several are. Set it explicitly on a host running more
+# than one harness.
+Environment=AGENTEIAMAIL_RUNTIME=auto
+# A systemd user service gets a minimal PATH with nothing under $HOME, so a
+# harness binary installed by npm is invisible here while an interactive shell
+# finds it. Set the full path if autodetection cannot.
+#Environment=OPENCLAW=%h/.npm-global/bin/openclaw
+ExecStart=/usr/bin/python3 /path/to/agenteiamail/harness/dispatch.py
+WorkingDirectory=/path/to/agenteiamail
+Restart=always
+RestartSec=10
+
+# The dispatcher has its own logs, separate from the listener's. Its stderr is
+# the only place a delivery failure can land: it cannot report through the
+# runtime it is failing to reach. Somebody has to read this file, and
+# session_start.py does at the start of every session.
+StandardOutput=append:%h/.local/state/agenteiamail/dispatch.log
+StandardError=append:%h/.local/state/agenteiamail/dispatch.err.log
+SyslogIdentifier=agenteiamail-dispatch
+
+[Install]
+WantedBy=default.target

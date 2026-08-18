@@ -13,6 +13,11 @@ STATE_FILE = STATE_DIR / "rotate-state.json"
 MAX_ROTATIONS = 4
 MIN_INTERVAL = 7 * 24 * 60 * 60
 
+# The event journal is deliberately not rotated here. It is a queue, not a log:
+# the cursor is a byte offset into that exact file, and a rotator on a timer has
+# no idea what has been delivered. The dispatcher compacts it instead, under the
+# journal lock, because it is the only process that knows.
+
 
 def load_state() -> dict[str, float]:
     try:

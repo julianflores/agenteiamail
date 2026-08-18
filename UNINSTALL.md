@@ -44,8 +44,8 @@ A full install has four: `idle.service`, `watch.service`, `logrotate.service` an
 rest. That is expected, not an error.
 
 ```bash
-systemctl --user stop    agenteiamail-idle.service agenteiamail-watch.service
-systemctl --user disable agenteiamail-idle.service agenteiamail-watch.service
+systemctl --user stop    agenteiamail-idle.service agenteiamail-dispatch.service
+systemctl --user disable agenteiamail-idle.service agenteiamail-dispatch.service
 systemctl --user stop    agenteiamail-logrotate.timer
 systemctl --user disable agenteiamail-logrotate.timer
 

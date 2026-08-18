@@ -190,11 +190,15 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
 ~/.local/state/agenteiamail/
   mail.log                the event stream
   idle.err.log            diagnostics, watched separately
-  seen.offset             how far delivery has been confirmed
+  events.jsonl            the queue: one canonical envelope per line
+  dispatch.offset         how far delivery has been confirmed
   │
-  ├─► harness/session_start.py    shows what is still pending; never acknowledges
-  ├─► harness/watch.sh            the one supervised consumer; pushes each line
-  │                               into the live session and owns seen.offset
+  ├─► harness/dispatch.py         the one supervised consumer. Reads the journal,
+  │                               hands each event to a runtime adapter, and moves
+  │                               the cursor only once the runtime accepts it
+  │     └─► harness/adapters/     openclaw today, hermes next. The only code here
+  │                               that knows what a harness is
+  ├─► harness/session_start.py    shows what is still queued; never acknowledges
   └─► harness/rotate_logs.py      copytruncate rotation, on a user timer
 
 scripts/version.sh        installed version against the newest release, and

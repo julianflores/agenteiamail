@@ -35,34 +35,73 @@ Two facts collide:
    that context. Only something the harness runs can put words in front of the
    agent.
 
-So: a long-lived listener that can hear but not speak, a harness-side watcher that
-can speak but not persist, and a log file joining them.
+So: a long-lived listener that can hear but not speak, a harness-side dispatcher
+that can speak, and a journal joining them.
 
-**The offset file records what has been delivered, and the supervised `watch.sh`
-is its only writer.** It advances by exactly the bytes of a line once that line's
-notification has been accepted, and never reads past a line it has not delivered:
-a byte offset cannot describe a hole, so the loop retries in place rather than
-stepping over one. `session_start.py` reads the same byte to show what is still
-pending, and never writes it.
+**The journal is the contract between the two halves.** The listener appends one
+canonical envelope per line to `events.jsonl` and never delivers anything. The
+dispatcher reads that file from a byte offset, hands each record to a runtime
+adapter, and advances the cursor **only once the adapter reports the runtime took
+it**. Neither half knows anything about the other, which is what makes a second
+harness an adapter rather than a fork.
 
-**A delivery that keeps failing stops the watcher rather than freezing it.** The
-retries are bounded; when they are spent the process exits, systemd restarts it,
-and it resumes from the last confirmed byte. Freezing the cursor and staying alive
-was tried first and has no way out: the process is healthy, so `Restart=always`
-never fires, and nothing else advances the cursor. A failure that keeps repeating
-trips `StartLimitBurst` and leaves the unit failed, where the session hook reports
-it. The supervisor is the recovery path, so the watcher has to actually fail for
-it to work.
+**A record is structure, not prose.** Before the journal, delivering to another
+harness meant parsing a line written for a person to read. The envelope carries
+the sender, subject, mailbox, account, UID and roster result as fields, plus the
+rendered line for the runtime whose delivery call takes exactly one string.
 
-Both properties were once the other way round, and both lost mail in the way this
-design least tolerates - invisibly. The cursor advanced whether or not delivery
-succeeded, and it recorded the log's current size rather than the end of the line
-just handled, so a refused injection buried that message and any that arrived
-while it was being attempted. A session that armed its own `watch.sh` alongside
-the service made a second writer of the same file, so the two raced.
+**Nothing is consumed by being read**, and that is the whole reason the journal
+exists rather than a tail of the log. The old watcher read through `tail -F`, so
+a line it had taken was gone from the pipe whether or not it had been delivered;
+retrying meant holding it in memory, and recovering from a sustained failure
+meant killing the process so a supervisor could restart it from a stored offset.
+Reading a file by offset removes every part of that. A record that cannot be
+delivered is simply retried, forever if need be, while the cursor stays where it
+is.
 
-Delivery is therefore **at least once**. A duplicate notification is a nuisance;
-a dropped one is the failure this design exists to prevent.
+**One dispatcher, enforced rather than assumed.** It takes an exclusive lock at
+startup. The unit is meant to be the only one, but "meant to" is not a mechanism:
+a copy run by hand for debugging is enough to deliver every event twice, and the
+duplicate looks like nothing at all from outside.
+
+**The journal has a lock too, and it exists for compaction.** Appending needs no
+lock against another append; it is one `O_APPEND` write. Compaction reads the
+size, decides, and truncates, so without a shared lock an append landing between
+the decision and the truncation is destroyed after being counted as delivered.
+Compaction therefore runs in the dispatcher, the only process that knows what has
+been delivered, rather than in the log rotator, which is a different process on a
+timer that knows neither.
+
+**A record is durable before it is acknowledged.** The listener persists its
+last-seen UID after appending, and that UID is the only thing deciding whether a
+message is ever fetched again. If it reaches the disk and the record does not,
+the message is gone. So the append writes every byte, `fsync`s, and only then
+returns the offset that lets the UID move.
+
+**So a stuck record holds the queue, loudly, instead of being stepped over.**
+There is no dead-letter policy: a byte offset cannot describe a hole, and a
+skipped record nobody counted is precisely the silent loss this project exists to
+prevent. The dispatcher says what is wrong on stderr, the session hook reports it
+at the start of the next session, and mail keeps accumulating in a journal that
+loses nothing.
+
+**A damaged record stops everything behind it.** A complete line that will not
+parse is not skipped: skipping it advanced the cursor past it the moment anything
+behind it was accepted, which is a dead-letter policy nobody chose. It stops the
+queue and says so, and a person decides.
+
+**Delivery is at least once.** A runtime may be handed the same event twice: the
+dispatcher can be stopped between a runtime accepting an event and the cursor
+being written, and a mailbox rebuilt on the server changes UIDVALIDITY, which
+changes every event ID. Both produce duplicates rather than losses. `event_id` is
+stable across restarts precisely so a consumer can recognise one.
+
+**`roster_match` is not identity.** It is an exact match against a
+human-maintained allowlist, compared against a `From` header that anyone can
+forge. It decides routing and nothing else. The envelope carries
+`authenticated_sender` separately, and it stays false until something actually
+validates provider authentication results. No consumer may present the first as
+the second.
 
 **The listener is only a doorbell.** It reports *that* mail arrived and from whom,
 and never fetches bodies. Reading and sending belong to Himalaya. A bug in one
@@ -161,9 +200,12 @@ quiet mailbox. This is the single worst failure mode available here, because the
 agent will confidently report no new mail while blind. That is the exact scenario
 the whole design exists to prevent, and one `grep` on stderr is what prevents it.
 
-**`emit_system_event` swallows its own failures** with `|| true`. If the injection
-call fails and the watcher dies with it, one lost notification becomes a lost
-watcher, and a lost watcher fails silently. One missed message is recoverable.
+**A failed injection must not become a failed dispatcher, and must not become a
+delivered event either.** Both were tried and both were wrong. Swallowing the
+failure kept the process alive and acknowledged mail that never arrived; refusing
+to acknowledge it but carrying on left a cursor that could never move again. The
+adapter now reports which of the three things happened, and the dispatcher retries
+in place without ever stepping past the record.
 
 **`send.sh` writes a full header block, not the three headers it needs.** This is
 two failures deep, and the second only appeared once the first was fixed.
@@ -199,7 +241,7 @@ line written afterwards goes to a file nobody reads. Silently.
 
 ---
 
-## Why the watcher pushes instead of being read
+## Why the dispatcher pushes instead of being read
 
 The first version of this design assumed the harness would consume a script's
 stdout as an event stream, the way Claude Code's Monitor tool does.
@@ -207,7 +249,7 @@ stdout as an event stream, the way Claude Code's Monitor tool does.
 **OpenClaw has no such primitive.** There is no `--stream-command` in its cron.
 That search has been done; it is a dead end.
 
-The inverse works: `watch.sh` is an **active producer** that injects each line with
+The inverse works: `dispatch.py` is an **active producer** that injects each event with
 `openclaw system event --mode now`. If you port this to another harness, that is
 the seam to look at first; the rest is harness-independent.
 
