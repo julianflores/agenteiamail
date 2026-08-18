@@ -23,6 +23,7 @@ class _Handler(BaseHTTPRequestHandler):
     requests = []
     health_requests = []
     response_queue = []
+    redirect_location = None
     response_status = 202
     response_body = {
         "status": "accepted",
@@ -41,6 +42,11 @@ class _Handler(BaseHTTPRequestHandler):
                 type(self).response_status,
                 type(self).response_body,
             )
+        if 300 <= response_status <= 399 and type(self).redirect_location:
+            self.send_response(response_status)
+            self.send_header("Location", type(self).redirect_location)
+            self.end_headers()
+            return
         response = dict(response_body)
         response["delivery_id"] = self.headers.get("X-Request-ID")
         data = json.dumps(response).encode("utf-8")
@@ -68,6 +74,7 @@ class HermesAdapterTest(unittest.TestCase):
         _Handler.requests = []
         _Handler.health_requests = []
         _Handler.response_queue = []
+        _Handler.redirect_location = None
         _Handler.response_status = 202
         _Handler.response_body = {
             "status": "accepted",
@@ -137,6 +144,24 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertNotIn("X-Webhook-Signature", headers)
         self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
 
+    def test_listener_error_uses_notify_route_without_roster_match(self):
+        fault = {
+            "schema_version": 1,
+            "event_type": "listener.error",
+            "event_id": "listener:1700000000:deadbeef",
+            "source": "agenteiamail",
+            "notification_text": "[listener] simulated fault",
+        }
+
+        result = hermes.deliver(fault)
+
+        self.assertTrue(result.ok, result.detail)
+        self.assertEqual(1, len(_Handler.requests))
+        self.assertEqual(
+            "/webhooks/agenteiamail-notify",
+            _Handler.requests[0][0],
+        )
+
     def test_plain_http_non_loopback_route_is_configuration_error(self):
         os.environ["HERMES_ROSTER_URL"] = "http://example.com/webhooks/agenteiamail-roster"
         result = hermes.deliver(self.envelope)
@@ -150,6 +175,8 @@ class HermesAdapterTest(unittest.TestCase):
             (200, "duplicate", "accepted"),
             (200, "ignored", "config"),
             (202, "accepted", "accepted"),
+            (202, "queued", "accepted"),
+            (302, "redirect", "config"),
             (400, "error", "config"),
             (401, "error", "config"),
             (403, "error", "config"),
@@ -166,6 +193,30 @@ class HermesAdapterTest(unittest.TestCase):
                 _Handler.response_body = {"status": json_status}
                 result = hermes.deliver(self.envelope)
                 self.assertEqual(expected, result.status, result.detail)
+
+    def test_redirect_is_configuration_error_and_is_not_followed(self):
+        target = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+        try:
+            _Handler.response_status = 307
+            _Handler.redirect_location = (
+                f"http://127.0.0.1:{target.server_port}/redirect-target"
+            )
+
+            result = hermes.deliver(self.envelope)
+
+            self.assertEqual("config", result.status)
+            self.assertIn("HERMES_*_URL", result.detail)
+            self.assertEqual(1, len(_Handler.requests))
+            self.assertEqual(
+                "/webhooks/agenteiamail-roster",
+                _Handler.requests[0][0],
+            )
+        finally:
+            target.shutdown()
+            target.server_close()
+            target_thread.join(timeout=2)
 
     def test_explicit_direct_502_retries_with_a_new_transport_id(self):
         self.envelope["roster_match"] = False
@@ -349,8 +400,8 @@ class HermesAdapterTest(unittest.TestCase):
 
     def test_network_error_is_retryable_and_does_not_expose_secret(self):
         with mock.patch.object(
-            hermes.urllib.request,
-            "urlopen",
+            hermes._OPENER,
+            "open",
             side_effect=hermes.urllib.error.URLError("simulated outage"),
         ):
             result = hermes.deliver(self.envelope)

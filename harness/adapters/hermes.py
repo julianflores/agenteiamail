@@ -20,6 +20,17 @@ NAME = "hermes"
 TIMEOUT = 30
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(
+    _NoRedirect,
+    urllib.request.ProxyHandler({}),
+)
+
+
 def _signature_mode():
     """V2 by default; VERSION remains a compatibility alias for early adopters."""
     return os.environ.get(
@@ -144,10 +155,11 @@ def _route_settings():
 
 def _classify(http_status, payload):
     status = payload.get("status") if isinstance(payload, dict) else None
-    if http_status == 202 and status == "accepted":
-        return accepted(
-            "Hermes queued the agent run (HTTP 202); completion is unconfirmed"
-        )
+    if http_status == 202:
+        detail = "Hermes queued the agent run (HTTP 202); completion is unconfirmed"
+        if status != "accepted":
+            detail += f"; response status was {status!r}"
+        return accepted(detail)
     if http_status == 200 and status == "delivered":
         return accepted("Hermes completed direct delivery (HTTP 200)")
     if http_status == 200 and status == "duplicate":
@@ -159,6 +171,11 @@ def _classify(http_status, payload):
         return config(
             "Hermes ignored an event the adapter expected to route. Check route "
             "event filters and HERMES_*_URL."
+        )
+    if 300 <= http_status <= 399:
+        return config(
+            f"Hermes route returned redirect HTTP {http_status}. Fix HERMES_*_URL; "
+            "webhook routes must not redirect."
         )
     if http_status in (400, 401, 403, 404, 413):
         return config(
@@ -195,7 +212,7 @@ def _send(url, secret, body, request_id):
         headers=headers,
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
             raw = response.read()
             http_status = response.status
     except urllib.error.HTTPError as exc:
@@ -273,7 +290,7 @@ def _health(url):
         headers={"Accept": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
             raw = response.read()
             http_status = response.status
     except urllib.error.HTTPError as exc:
@@ -289,6 +306,11 @@ def _health(url):
         return accepted(
             "Hermes webhook server answers GET /health; this is reachability, "
             "not route readiness or agent completion"
+        )
+    if 300 <= http_status <= 399:
+        return config(
+            f"Hermes health URL returned redirect HTTP {http_status}. Fix "
+            "HERMES_HEALTH_URL; health endpoints must not redirect."
         )
     if http_status in (400, 401, 403, 404, 413):
         return config(

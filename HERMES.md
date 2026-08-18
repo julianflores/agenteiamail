@@ -41,6 +41,9 @@ the `himalaya` skill and `terminal` toolset needed by that skill. Review this
 against the target profile; anyone who can sign a route with `terminal` can
 trigger those capabilities.
 
+The notify route carries `email.received` and `listener.error`; the roster route
+carries `email.received` only, so a listener fault can never start an agent run.
+
 Hermes stores static route secrets in its protected configuration. The adapter
 reads matching copies from separate mode-0600 files. It refuses symlinks,
 non-regular files, files owned by another user, and every mode other than 0600.
@@ -127,10 +130,11 @@ that detail deliberately distinguishes transport acceptance from completion.
 
 | Hermes response | Adapter result | Meaning |
 |---|---|---|
-| `202 status=accepted` | accepted | Hermes queued an asynchronous agent run; completion is unconfirmed. |
+| any `202` | accepted | Hermes queued an asynchronous agent run; completion is unconfirmed. |
 | `200 status=delivered` | accepted | Direct delivery completed. |
 | `200 status=duplicate` | accepted | Hermes already recorded this transport ID; after an ambiguous timeout, verify the user-facing result. |
 | `200 status=ignored` | configuration failure | The configured event filter did not route an event this adapter expected to route. |
+| any `3xx` | configuration failure | Webhook routes must not redirect; fix `HERMES_*_URL`. |
 | `400`, `401`, `403`, `404`, `413` | configuration failure | The ordered queue stops loudly without acknowledging the event. |
 | network error, timeout, `408`, `429`, other `5xx` | retry | The cursor remains still and the dispatcher retries in place. |
 

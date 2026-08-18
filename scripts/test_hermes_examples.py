@@ -35,7 +35,11 @@ check("the two route secrets are unique", notify["secret"] != roster["secret"])
 check("notify route is direct delivery", notify.get("deliver_only") is True)
 check("notify route has no model tools", not notify.get("toolsets"))
 check("notify route does not load a skill", not notify.get("skills"))
-check("both routes accept only email.received", notify.get("events") == ["email.received"]
+check("notify route accepts listener.error",
+      "listener.error" in notify.get("events", []))
+check("roster route refuses listener.error",
+      "listener.error" not in roster.get("events", []))
+check("both routes accept email.received", "email.received" in notify.get("events", [])
       and roster.get("events") == ["email.received"])
 check("roster route runs an agent", roster.get("deliver_only") is not True)
 check("roster route names the mail skill", roster.get("skills") == ["himalaya"])
