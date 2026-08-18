@@ -393,6 +393,35 @@ dispatch.note_delivery(one, "last_error", "imap:INBOX:42:1", "runtime-b",
 check("the same detail under a different kind is written", True,
       "last_error" in json.loads(one.read_text()))
 
+# A remembered answer says what was written, never that it is still there.
+dispatch._WRITTEN.clear()
+gone = j.parent / "gone.json"
+dispatch.note_delivery(gone, *same)
+gone.unlink()
+dispatch.note_delivery(gone, *same)
+check("a deleted status file is recreated by the next identical result", True, gone.is_file())
+check("and carries the same answer", "runtime-a",
+      json.loads(gone.read_text())["last_accepted"]["runtime"])
+
+# Replaced rather than removed: a different file at the same path is not the
+# record this process wrote.
+replaced = j.parent / "replaced.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(replaced, *same)
+replaced.write_text("{}")
+dispatch.note_delivery(replaced, *same)
+check("a status file replaced underneath is rewritten", "runtime-a",
+      json.loads(replaced.read_text())["last_accepted"]["runtime"])
+
+# An untouched file is still not rewritten, which is the point of the cache.
+steady = j.parent / "steady.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(steady, *same)
+first_write = steady.stat().st_mtime_ns
+dispatch.note_delivery(steady, *same)
+check("an untouched file with an unchanged answer is left alone",
+      first_write, steady.stat().st_mtime_ns)
+
 # A write that failed has not happened, and must not suppress the next attempt.
 wall = j.parent / "wall"
 wall.write_text("a file where a directory would need to be")

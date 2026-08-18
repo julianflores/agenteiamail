@@ -77,7 +77,26 @@ def log(message):
 # changed is not written again. Keyed by the resolved path, because one process
 # may write more than one, and holding every field that is persisted, because
 # anything left out of the key is a change this cannot see.
+#
+# The remembered answer is paired with the state of the file it went into. A
+# cached answer says what was written, never that it is still there: delete the
+# file under a running dispatcher and, without this, the same continuing result
+# is suppressed for the life of the process and the record never comes back.
 _WRITTEN = {}
+
+
+def _generation(path):
+    """
+    Enough of a file's identity to notice it was replaced or removed.
+
+    None when it is not there, which is what makes absence a mismatch rather
+    than an unknown.
+    """
+    try:
+        st = path.stat()
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return None
 
 
 def note_delivery(status_path, kind, event_id, runtime, detail):
@@ -102,7 +121,8 @@ def note_delivery(status_path, kind, event_id, runtime, detail):
     path = Path(status_path)
     resolved = str(path.expanduser())
     answer = (kind, event_id, runtime, detail or "")
-    if _WRITTEN.get(resolved) == answer:
+    remembered = _WRITTEN.get(resolved)
+    if remembered is not None and remembered == (answer, _generation(path)):
         return
 
     entry = {
@@ -129,7 +149,7 @@ def note_delivery(status_path, kind, event_id, runtime, detail):
         log(f"could not write the delivery status at {path}: {exc}")
         return
 
-    _WRITTEN[resolved] = answer
+    _WRITTEN[resolved] = (answer, _generation(path))
 
 
 def claim(lock_path):
