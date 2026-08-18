@@ -66,6 +66,10 @@ the `himalaya` skill and `terminal` toolset needed by that skill. Review this
 against the target profile; anyone who can sign a route with `terminal` can
 trigger those capabilities.
 
+The notify route accepts `email.received` and `listener.error`; the roster route
+accepts `email.received` only. Listener faults therefore surface through direct
+delivery and can never start an agent run.
+
 Hermes stores static route secrets in its protected configuration. The adapter
 reads matching copies from separate mode-0600 files. It refuses symlinks,
 non-regular files, files owned by another user, and every mode other than 0600.
