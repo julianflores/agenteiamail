@@ -73,7 +73,14 @@ def log(message):
     print(message, file=sys.stderr, flush=True)
 
 
-def note_delivery(status_path, kind, event_id, runtime, detail, _last={}):
+# What has already been written to each status file, so an answer that has not
+# changed is not written again. Keyed by the resolved path, because one process
+# may write more than one, and holding every field that is persisted, because
+# anything left out of the key is a change this cannot see.
+_WRITTEN = {}
+
+
+def note_delivery(status_path, kind, event_id, runtime, detail):
     """
     Record what the runtime said about one event, for a health check to render.
 
@@ -84,12 +91,19 @@ def note_delivery(status_path, kind, event_id, runtime, detail, _last={}):
 
     Written only when the answer changes. A runtime that is down produces one
     result per retry, and rewriting the same sentence every two seconds would
-    turn a diagnostic into a disk load.
+    turn a diagnostic into a disk load. What counts as "the same answer" is every
+    field that gets persisted, at the path it gets persisted to: a key missing a
+    field cannot see that field change, and the write it suppresses is the one
+    that would have corrected the record.
+
+    The key is set after the write, never before. Recording an intention as an
+    accomplishment is how a failed write suppresses its own retry.
     """
-    key = (kind, event_id, detail)
-    if _last.get("key") == key:
+    path = Path(status_path)
+    resolved = str(path.expanduser())
+    answer = (kind, event_id, runtime, detail or "")
+    if _WRITTEN.get(resolved) == answer:
         return
-    _last["key"] = key
 
     entry = {
         "event_id": event_id,
@@ -97,7 +111,6 @@ def note_delivery(status_path, kind, event_id, runtime, detail, _last={}):
         "runtime": runtime,
         "detail": detail or "",
     }
-    path = Path(status_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -111,8 +124,12 @@ def note_delivery(status_path, kind, event_id, runtime, detail, _last={}):
         os.replace(tmp, path)
     except OSError as exc:
         # Losing the status file loses a diagnostic, not an event. Delivery is
-        # not held up for it.
+        # not held up for it, and the answer stays unrecorded so the next result
+        # tries again.
         log(f"could not write the delivery status at {path}: {exc}")
+        return
+
+    _WRITTEN[resolved] = answer
 
 
 def claim(lock_path):

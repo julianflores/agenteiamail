@@ -349,7 +349,7 @@ j, c = journal_with("uno")
 status = j.parent / "delivery.json"
 fake = Fake(script=[retry("gateway timed out"), accepted("HTTP 200 status=delivered")])
 dispatch.RETRY_MIN = dispatch.RETRY_MAX = 0.01
-dispatch.note_delivery.__defaults__[-1].clear()
+dispatch._WRITTEN.clear()
 dispatch.run_once(fake, j, c, status_path=status)
 recorded = json.loads(status.read_text())
 check("a refusal is recorded as well", True, "gateway timed out" in recorded["last_error"]["detail"])
@@ -362,12 +362,45 @@ check("a refusal records which status it was", True,
 # every two seconds for the same sentence.
 j, c = journal_with("uno")
 status = j.parent / "delivery.json"
-dispatch.note_delivery.__defaults__[-1].clear()
+dispatch._WRITTEN.clear()
 fake = Fake(default=retry("still down"))
 dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 5, status_path=status)
 first = status.stat().st_mtime_ns
 dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 10, status_path=status)
 check("an unchanged answer is not rewritten", first, status.stat().st_mtime_ns)
+
+# Suppression must not blind the record to a change. Anything left out of the
+# key is a change it cannot see, and the write it skips is the one that would
+# have corrected the file.
+j, c = journal_with("uno")
+one = j.parent / "one.json"
+two = j.parent / "two.json"
+dispatch._WRITTEN.clear()
+same = ("last_accepted", "imap:INBOX:42:1", "runtime-a", "HTTP 200 status=delivered")
+dispatch.note_delivery(one, *same)
+dispatch.note_delivery(two, *same)
+check("the same answer at a different path is still written", True, two.is_file())
+check("and both files carry it", "runtime-a",
+      json.loads(two.read_text())["last_accepted"]["runtime"])
+
+dispatch.note_delivery(one, "last_accepted", "imap:INBOX:42:1", "runtime-b",
+                       "HTTP 200 status=delivered")
+check("a changed runtime with otherwise identical values is written",
+      "runtime-b", json.loads(one.read_text())["last_accepted"]["runtime"])
+
+dispatch.note_delivery(one, "last_error", "imap:INBOX:42:1", "runtime-b",
+                       "HTTP 200 status=delivered")
+check("the same detail under a different kind is written", True,
+      "last_error" in json.loads(one.read_text()))
+
+# A write that failed has not happened, and must not suppress the next attempt.
+wall = j.parent / "wall"
+wall.write_text("a file where a directory would need to be")
+blocked = wall / "delivery.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(blocked, *same)
+check("a failed write is not remembered as done", None,
+      dispatch._WRITTEN.get(str(blocked)))
 
 # --- the fault transition state ---------------------------------------------
 #
