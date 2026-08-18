@@ -42,11 +42,22 @@ exactly the one where every individual thing looks fine. FR8 of
   burst that arrived a second ago from a backlog nothing has touched since
   yesterday; the age of the oldest record is what separates them, and it is read
   from the record rather than the file's timestamp, which compaction disturbs.
+- **What the runtime last said is recorded by the dispatcher**, in
+  `delivery.json`: the last accepted event id, when, which runtime, and the
+  adapter's own words verbatim. A health check cannot ask an adapter what
+  happened an hour ago, and must never reconstruct it from a reachability check,
+  because a gateway answering now says nothing about whether something accepted
+  earlier was ever acted on. Where a runtime only acknowledges receipt, that
+  distinction is the difference between "handed over" and "done", and only the
+  first is ever known here.
+- **That record holds an identifier and a sentence, never the mail.** No sender,
+  no subject, no payload, no credentials, asserted rather than intended, at mode
+  `600`.
 - **It never prints a credential**, asserted rather than intended.
 - `AGENTS.md` gains it as step 6, and as a standing rule: say "no new mail" only
   when something checked.
 
-- **22 assertions in
+- **28 assertions in
   [`scripts/test_healthcheck.py`](scripts/test_healthcheck.py)**, each one about
   whether a failure that looks like nothing is reported as a failure.
 

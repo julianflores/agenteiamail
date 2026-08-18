@@ -37,6 +37,7 @@ LISTENER_STATE = STATE_DIR / "idle.json"
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
 DISPATCH_ERR = STATE_DIR / "dispatch.err.log"
+DELIVERY = STATE_DIR / "delivery.json"
 IDLE_ERR = STATE_DIR / "idle.err.log"
 
 LISTENER_UNIT = "agenteiamail-idle.service"
@@ -114,6 +115,28 @@ def queue_facts():
             out["oldest_age_seconds"] = max(0, int(time.time() - seen))
         except (ValueError, OverflowError):
             pass
+    return out
+
+
+def delivery_facts():
+    """
+    What the runtime last said, as the dispatcher recorded it.
+
+    Read rather than inferred, and never reconstructed from a reachability
+    check: a gateway answering now is not evidence that something accepted an
+    hour ago was ever acted on. Where a runtime only acknowledges receipt, that
+    distinction is the difference between "we handed it over" and "it was done",
+    and only the first is ever known here.
+    """
+    out = {"last_accepted": None, "last_error": None}
+    try:
+        stored = json.loads(DELIVERY.read_text())
+    except (OSError, ValueError):
+        return out
+    for key in out:
+        entry = stored.get(key)
+        if isinstance(entry, dict):
+            out[key] = {k: entry.get(k) for k in ("event_id", "at", "runtime", "detail")}
     return out
 
 
@@ -230,9 +253,18 @@ def render(facts, problems, warnings):
     if listener["last_error"]:
         out.append(f"             last diagnostic: {listener['last_error']}")
     out.append(f"dispatcher   {facts['dispatcher_unit']}")
-    last_err = tail(DISPATCH_ERR)
-    if last_err:
-        out.append(f"             last diagnostic: {last_err[0]}")
+    delivery = facts["delivery"]
+    accepted = delivery["last_accepted"]
+    if accepted:
+        out.append(f"             last accepted {accepted['event_id']} "
+                   f"by {accepted['runtime']} at {accepted['at']}")
+        if accepted["detail"]:
+            out.append(f"             runtime said: {accepted['detail']}")
+    else:
+        out.append("             nothing has been accepted by a runtime yet")
+    if delivery["last_error"]:
+        err = delivery["last_error"]
+        out.append(f"             last refusal {err['event_id']} at {err['at']}: {err['detail']}")
     age = queue["oldest_age_seconds"]
     out.append(f"queue        {queue['pending']} waiting"
                + (f", oldest {age // 60}m{age % 60:02d}s" if age is not None else "")
@@ -244,6 +276,11 @@ def render(facts, problems, warnings):
     out.append(f"repo         {config['repo']}")
     if config["version"]:
         out.append(f"version      {config['version']}")
+
+    if not facts["delivery"]["last_accepted"] and not facts["delivery"]["last_error"]:
+        recent = tail(DISPATCH_ERR)
+        if recent:
+            out.append(f"             dispatcher log: {recent[0]}")
 
     if problems:
         out.append("")
@@ -272,6 +309,7 @@ def main(argv=None):
         "dispatcher_unit": unit_state(DISPATCH_UNIT),
         "queue": queue_facts(),
         "runtime": runtime_facts(),
+        "delivery": delivery_facts(),
         "config": config_facts(),
     }
     problems, warnings = assess(facts)

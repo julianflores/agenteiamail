@@ -317,6 +317,58 @@ check("fault ids do not change with the process hash seed",
       ev.listener_error(account="a@b.c", message="m", observed_at="t")["event_id"],
       stable.stdout.strip())
 
+# --- what the runtime last said ---------------------------------------------
+#
+# A health check cannot ask an adapter what happened an hour ago, and must never
+# reconstruct it from a reachability check: a gateway answering now says nothing
+# about whether something accepted earlier was ever acted on. So the dispatcher
+# records it, because it is the thing that decided the cursor could move.
+
+j, c = journal_with("uno", "dos")
+status = j.parent / "delivery.json"
+fake = Fake(default=accepted("HTTP 202 status=accepted; agent completion externally unconfirmed"))
+dispatch.run_once(fake, j, c, status_path=status)
+recorded = json.loads(status.read_text())
+check("an accepted delivery is recorded", "imap:INBOX:42:2",
+      recorded["last_accepted"]["event_id"])
+check("the adapter's own words are kept verbatim",
+      "HTTP 202 status=accepted; agent completion externally unconfirmed",
+      recorded["last_accepted"]["detail"])
+check("the runtime that took it is named", "fake", recorded["last_accepted"]["runtime"])
+check("nothing was refused", None, recorded.get("last_error"))
+
+# The status file is readable by anyone who can read the state directory, so it
+# holds an identifier and a sentence, never the mail.
+raw = status.read_text()
+for leak in ("Dulce", "dmercado@example.com", "uno", "dos", "notification_text"):
+    check(f"the status file does not carry {leak!r}", False, leak in raw)
+check("the status file is not world readable", "0o600",
+      oct(status.stat().st_mode & 0o777))
+
+j, c = journal_with("uno")
+status = j.parent / "delivery.json"
+fake = Fake(script=[retry("gateway timed out"), accepted("HTTP 200 status=delivered")])
+dispatch.RETRY_MIN = dispatch.RETRY_MAX = 0.01
+dispatch.note_delivery.__defaults__[-1].clear()
+dispatch.run_once(fake, j, c, status_path=status)
+recorded = json.loads(status.read_text())
+check("a refusal is recorded as well", True, "gateway timed out" in recorded["last_error"]["detail"])
+check("and the eventual acceptance replaces nothing but itself",
+      "HTTP 200 status=delivered", recorded["last_accepted"]["detail"])
+check("a refusal records which status it was", True,
+      recorded["last_error"]["detail"].startswith("retry:"))
+
+# A runtime that is down answers once per retry; the file must not be rewritten
+# every two seconds for the same sentence.
+j, c = journal_with("uno")
+status = j.parent / "delivery.json"
+dispatch.note_delivery.__defaults__[-1].clear()
+fake = Fake(default=retry("still down"))
+dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 5, status_path=status)
+first = status.stat().st_mtime_ns
+dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 10, status_path=status)
+check("an unchanged answer is not rewritten", first, status.stat().st_mtime_ns)
+
 # --- the fault transition state ---------------------------------------------
 #
 # The sequence that matters is the one run() actually performs: a fault fails to

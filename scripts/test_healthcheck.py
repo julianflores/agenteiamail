@@ -54,6 +54,7 @@ class Fixture:
         hc.CURSOR = self.dir / "dispatch.offset"
         hc.DISPATCH_ERR = self.dir / "dispatch.err.log"
         hc.IDLE_ERR = self.dir / "idle.err.log"
+        hc.DELIVERY = self.dir / "delivery.json"
 
         hc.LISTENER_STATE.write_text(json.dumps(
             {"mailbox": "INBOX", "uidvalidity": "42", "last_uid": 117}))
@@ -100,6 +101,7 @@ class Fixture:
             "dispatcher_unit": hc.unit_state(hc.DISPATCH_UNIT),
             "queue": hc.queue_facts(),
             "runtime": hc.runtime_facts(),
+            "delivery": hc.delivery_facts(),
             "config": hc.config_facts(),
         }
         problems, warnings = hc.assess(facts)
@@ -190,6 +192,38 @@ f.env.unlink()
 _, problems, _ = f.run()
 check("missing credentials are a failure", True,
       any("no credentials" in p for p in problems))
+
+# --- what the runtime last said ----------------------------------------------
+
+f = Fixture()
+(f.dir / "delivery.json").write_text(json.dumps({
+    "last_accepted": {"event_id": "imap:INBOX:42:117", "at": "2026-08-18T19:20:00Z",
+                      "runtime": "hermes",
+                      "detail": "HTTP 202 status=accepted; agent completion "
+                                "externally unconfirmed"},
+    "last_error": {"event_id": "imap:INBOX:42:118", "at": "2026-08-18T19:21:00Z",
+                   "runtime": "hermes", "detail": "retry: gateway timed out"},
+}))
+hc.DELIVERY = f.dir / "delivery.json"
+_, text = f.exit_code()
+check("the last accepted delivery is reported", True, "imap:INBOX:42:117" in text)
+check("with the runtime that accepted it", True, "by hermes" in text)
+check("the runtime's own words are shown, not summarised", True,
+      "agent completion externally unconfirmed" in text)
+check("a later refusal is shown too", True, "gateway timed out" in text)
+
+# Reachability is checked live and separately; it must not be read backwards as
+# evidence that something accepted earlier was ever acted on.
+facts, _, _ = f.run()
+check("reachability does not overwrite the recorded acceptance",
+      "HTTP 202 status=accepted; agent completion externally unconfirmed",
+      facts["delivery"]["last_accepted"]["detail"])
+
+f = Fixture()
+hc.DELIVERY = f.dir / "nothing.json"
+_, text = f.exit_code()
+check("an install that has delivered nothing says so", True,
+      "nothing has been accepted by a runtime yet" in text)
 
 # --- the caveat that stops somebody reading "ok" and leaving ------------------
 
