@@ -7,6 +7,16 @@
 Description=agenteiamail watcher (pushes new-mail events into the session)
 After=agenteiamail-idle.service
 
+# The watcher exits when it cannot deliver a message, so that it restarts and
+# retries from the last confirmed byte rather than running on with a cursor that
+# can no longer move. These bounds decide when repeating that stops being a
+# recovery and starts being a loop: six starts in ten minutes and systemd leaves
+# the unit failed, where session_start.py reports it as MAIL WATCHER IS DOWN.
+# Without them a permanently broken openclaw would restart forever and never say
+# so anywhere a person looks.
+StartLimitIntervalSec=600
+StartLimitBurst=6
+
 [Service]
 Type=simple
 ExecStart=/usr/bin/bash /path/to/agenteiamail/harness/watch_service.sh

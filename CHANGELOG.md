@@ -16,6 +16,50 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.2.2 (2026-08-18)
+
+**The 1.2.1 cursor fix could not recover from the failure it handled.** Stopping
+the cursor at the first undelivered line was right; leaving it stopped for the
+lifetime of the process was not. Nothing could restart it: the watcher stayed
+alive and healthy so `Restart=always` never fired, and 1.2.1 had just removed the
+session hook that used to arm a fresh watcher. One transient refusal left the
+install delivering mail live while `seen.offset` stayed permanently behind, and
+the only way out was restarting the service by hand. Reported by
+[@apollohermesfl](https://github.com/apollohermesfl) reviewing
+[#36](https://github.com/julianflores/agenteiamail/pull/36).
+
+- **A failed line is retried in place with bounded backoff**
+  ([`harness/watch.sh`](harness/watch.sh)), so a transient failure recovers on its
+  own and the cursor carries on. `DELIVERY_ATTEMPTS` and `DELIVERY_BACKOFF` set
+  how long that takes; the defaults spend about 30 seconds on a line.
+- **When the retries are spent the watcher exits** instead of running on with a
+  cursor that can no longer move. systemd restarts it, `watch_service.sh` resumes
+  from the last confirmed byte, and the line is retried in order.
+- **`StartLimitIntervalSec=600` / `StartLimitBurst=6`** in
+  [`systemd/agenteiamail-watch.service`](systemd/agenteiamail-watch.service), so a
+  failure that never clears ends as a failed unit rather than a restart loop.
+  `session_start.py` already reports that as MAIL WATCHER IS DOWN.
+- The 1.2.1 note that a failure meant the rest was "replayed next session" was
+  wrong once the hook stopped arming a watcher. The hook shows what is pending;
+  redelivery is the restart's job.
+
+- **14 assertions in [`scripts/test_watch.sh`](scripts/test_watch.sh)**, now
+  including a transiently failed line recovering without intervention and a
+  sustained failure exiting rather than freezing. Five of them fail against 1.2.1.
+
+### Upgrade actions
+
+**Reinstall the watcher unit, then restart it.** The start limits are new, and a
+`git pull` does not reach an installed unit file:
+
+```bash
+cp systemd/agenteiamail-watch.service ~/.config/systemd/user/   # re-apply your paths
+systemctl --user daemon-reload
+systemctl --user restart agenteiamail-watch.service
+```
+
+---
+
 ## 1.2.1 (2026-08-18)
 
 **Three ways of losing mail without saying so.** All three lived in the cursor

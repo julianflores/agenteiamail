@@ -53,12 +53,29 @@ while [ $# -gt 0 ]; do
     case $1 in --text) text=$2; shift 2 ;; *) shift ;; esac
 done
 printf '%s\n' "$text" >>"$CALLS"
-case $text in *FAILME*) echo "injection refused" >&2; exit 1 ;; esac
+case $text in
+    *FAILME*) echo "injection refused" >&2; exit 1 ;;
+    *FLAKY*)
+        # Refuses the first FLAKY_FAILURES attempts, then works. This is what a
+        # transient outage looks like from the watcher's side.
+        n=$(cat "$FLAKY_COUNT" 2>/dev/null || echo 0)
+        n=$((n + 1))
+        printf '%s' "$n" >"$FLAKY_COUNT"
+        if [ "$n" -le "${FLAKY_FAILURES:-2}" ]; then
+            echo "injection refused (attempt $n)" >&2
+            exit 1
+        fi
+        ;;
+esac
 exit 0
 EOF
     chmod +x "$tmp/openclaw"
     export CALLS
+    export FLAKY_COUNT="$tmp/flaky"
     export OPENCLAW="$tmp/openclaw"
+    # Keep the retry pause short enough that the suite stays usable.
+    export DELIVERY_ATTEMPTS=4
+    export DELIVERY_BACKOFF=1
 }
 
 teardown() {
@@ -111,8 +128,7 @@ teardown
 setup
 start_watch 0
 printf 'one\ntwo FAILME\nthree\n' >>"$LOG"
-wait_for '[ "$(calls)" = 3 ]' || echo "       (timed out waiting for 3 deliveries)"
-sleep 0.5   # let any further cursor write land, so a regression is caught, not raced
+wait_for '! kill -0 "$WATCH_PID" 2>/dev/null' 30
 check "failed delivery: cursor stops at the last line that arrived" "$(bytes 'one
 ')" "$(cursor)"
 check "failed delivery: cursor is not the log's size" "$(bytes 'one
@@ -120,16 +136,40 @@ check "failed delivery: cursor is not the log's size" "$(bytes 'one
 teardown
 
 # ---------------------------------------------------------------------------
-# The cursor stays put for the rest of the run once a line has been missed. A
-# byte offset cannot describe a hole, so the only truthful place to stop is the
-# first line that did not arrive.
+# A transient failure recovers on its own.
+#
+# The line is retried in place until it gets through, so nothing downstream has
+# to notice and no restart is needed. An earlier version froze the cursor at the
+# first failure instead, and because the process stayed alive and healthy,
+# Restart=always never fired and nothing ever unfroze it.
+# ---------------------------------------------------------------------------
+setup
+FLAKY_FAILURES=2 start_watch 0
+printf 'a FLAKY\nb\n' >>"$LOG"
+wait_for '[ "$(cursor)" = "$(wc -c <"$LOG" | tr -d " ")" ]' 20
+check "transient failure: retried without intervention" \
+    "$(wc -c <"$LOG" | tr -d ' ')" "$(cursor)"
+check "transient failure: took more than one attempt" "yes" \
+    "$([ "$(cat "$FLAKY_COUNT" 2>/dev/null || echo 0)" -gt 1 ] && echo yes || echo no)"
+check "transient failure: watcher is still running" "yes" \
+    "$(kill -0 "$WATCH_PID" 2>/dev/null && echo yes || echo no)"
+teardown
+
+# ---------------------------------------------------------------------------
+# A failure that does not clear stops the watcher instead of freezing it.
+#
+# Exiting is what lets systemd restart it and resume from the last confirmed
+# byte. Staying alive with a cursor that can never advance again is the one
+# outcome with no route back.
 # ---------------------------------------------------------------------------
 setup
 start_watch 0
-printf 'a FAILME\nb\nc\n' >>"$LOG"
-wait_for '[ "$(calls)" = 3 ]' || echo "       (timed out waiting for 3 deliveries)"
-sleep 0.5
-check "first line missed: cursor never advances" "0" "$(cursor)"
+printf 'a FAILME\nb\n' >>"$LOG"
+wait_for '! kill -0 "$WATCH_PID" 2>/dev/null' 30
+check "sustained failure: watcher exits rather than freezing" "gone" \
+    "$(kill -0 "$WATCH_PID" 2>/dev/null && echo alive || echo gone)"
+check "sustained failure: cursor left at the last confirmed message" "0" "$(cursor)"
+check "sustained failure: the line was retried, not abandoned" "$DELIVERY_ATTEMPTS" "$(calls)"
 teardown
 
 # ---------------------------------------------------------------------------
@@ -141,8 +181,10 @@ setup
 unset OPENCLAW
 PATH="$tmp/nobin:/usr/bin:/bin" start_watch 0
 printf 'unseen\n' >>"$LOG"
-sleep 1
+wait_for '! kill -0 "$WATCH_PID" 2>/dev/null' 30
 check "no openclaw: cursor does not advance" "0" "$(cursor)"
+check "no openclaw: watcher stops rather than running on" "gone" \
+    "$(kill -0 "$WATCH_PID" 2>/dev/null && echo alive || echo gone)"
 teardown
 
 # ---------------------------------------------------------------------------
