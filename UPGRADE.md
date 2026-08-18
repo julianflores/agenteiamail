@@ -13,7 +13,7 @@ that has to be restarted before the new version is the one in memory.
 ## 1. Find out where you are
 
 ```bash
-cd ~/.openclaw/workspace/agenteiamail
+cd "$(git -C . rev-parse --show-toplevel 2>/dev/null || echo ~/.local/share/agenteiamail)"
 scripts/version.sh
 ```
 

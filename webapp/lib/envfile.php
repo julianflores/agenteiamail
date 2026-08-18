@@ -2,21 +2,30 @@
 declare(strict_types=1);
 
 /**
- * Writing ~/.openclaw/workspace/.env.
+ * Writing the credentials file.
  *
  * This is the same file a power user writes by hand before running the install
  * prompt, and its absence is what tells the agent a mailbox has not been
  * configured yet. Both routes therefore end at one file, and "is this set up?"
  * stays a single question with a single answer.
  *
- * ~/.config/agenteiamail/env (where the listener and scripts/send.sh look by
- * default) is symlinked at it afterwards, which is the arrangement INSTALL.md
- * §3 already recommends for a host whose credentials live elsewhere.
+ * *Which* file is decided by the same rule as everywhere else, and normally not
+ * decided here at all: scripts/setup_web.sh resolves it and passes it in through
+ * AGENTEIAMAIL_ENV, so the form and the tools it configures cannot disagree. The
+ * fallback below repeats that rule for anyone serving this directory directly,
+ * and the rule itself is written down once, in harness/paths.py.
+ *
+ * A new install of either harness gets ~/.config/agenteiamail/env. An install
+ * that already keeps its credentials somewhere else keeps them there: an
+ * existing file, or the symlink older OpenClaw installs left behind, is written
+ * through rather than replaced. Credentials are never copied to a second
+ * location to satisfy a convention.
  */
 
 require_once __DIR__ . '/guard.php';
 
-const ENV_RELATIVE      = '.openclaw/workspace/.env';
+const ENV_RELATIVE      = '.config/agenteiamail/env';
+const ENV_LEGACY_OPENCLAW = '.openclaw/workspace/.env';
 const ENV_LINK_RELATIVE = '.config/agenteiamail/env';
 
 /** The keys this form owns, in the order they are written. */
@@ -32,7 +41,29 @@ const ENV_FIELDS = [
 
 function env_path(): string
 {
-    return rtrim(home_dir(), '/') . '/' . ENV_RELATIVE;
+    $override = getenv('AGENTEIAMAIL_ENV');
+    if (is_string($override) && trim($override) !== '') {
+        return trim($override);
+    }
+
+    $home    = rtrim(home_dir(), '/');
+    $neutral = $home . '/' . ENV_RELATIVE;
+
+    // file_exists() follows a symlink and is false for a dangling one, so the
+    // link is asked about separately: one pointing at a file nobody has created
+    // yet still says where that file belongs, and writing to the link path
+    // instead would silently replace the link.
+    clearstatcache(true, $neutral);
+    if (file_exists($neutral) || is_link($neutral)) {
+        return $neutral;
+    }
+
+    $legacy = $home . '/' . ENV_LEGACY_OPENCLAW;
+    if (is_file($legacy)) {
+        return $legacy;
+    }
+
+    return $neutral;
 }
 
 function env_is_symlink(): bool

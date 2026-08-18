@@ -119,15 +119,16 @@ transcript is a standing liability; transcripts get stored, exported and reviewe
 ## 3. Credentials
 
 **If the setup page already ran, this section is done.** `scripts/setup_web.sh`
-writes `~/.openclaw/workspace/.env` and symlinks `~/.config/agenteiamail/env` at
-it; see `AGENTS.md` step 2. Confirm and move on to §4 rather than creating a
-second file:
+writes the credentials file and tells you where; see `AGENTS.md` step 2. Confirm
+and move on to §4 rather than creating a second file:
 
 ```bash
-ls -l ~/.openclaw/workspace/.env ~/.config/agenteiamail/env
+ls -l "$(. scripts/envpath.sh && agenteiamail_env_file)"
 ```
 
-Expect a `600` file and a symlink pointing at it. §7.6c checks that `send.sh` can
+Expect a `600` file. On a host that already kept credentials elsewhere, this is
+a symlink pointing at them, which is the arrangement being preserved rather than
+a problem. §7.6c checks that `send.sh` can
 actually read them.
 
 Everything below is the manual route, for a host where somebody writes the file
@@ -141,12 +142,17 @@ chmod 600 ~/.config/agenteiamail/env
 
 Keys are listed in [`.env.example`](.env.example).
 
-**If your environment already keeps credentials somewhere**, commonly
-`~/.openclaw/workspace/.env`, do not move, rewrite or copy that file. Point at it:
+**If your environment already keeps credentials somewhere**, do not move,
+rewrite or copy that file. An OpenClaw install made before these paths were
+runtime-neutral is found where it lies and needs nothing done to it. Anywhere
+else, name it:
 
 ```bash
-python3 scripts/idle_listener.py --env ~/.openclaw/workspace/.env
+python3 scripts/idle_listener.py --env /path/to/your/.env
 ```
+
+Or set `AGENTEIAMAIL_ENV`, which every part of this tool honours ahead of its own
+defaults.
 
 **You do not need to add keys.** The listener reads either schema:
 
@@ -175,7 +181,7 @@ once, here, rather than exporting `ENV_FILE` from whatever shell happens to invo
 the script:
 
 ```bash
-ln -s ~/.openclaw/workspace/.env ~/.config/agenteiamail/env
+ln -s /path/to/your/.env ~/.config/agenteiamail/env
 ```
 
 A symlink survives every session, every restart, and every agent that forgets.
@@ -203,7 +209,7 @@ mail server's TLS certificate does not cover, which surfaces as an endless
 reconnect loop rather than an error, because a certificate failure arrives as a
 network error. Split them into `_HOST` and `_PORT` and it will start.
 
-**Parse it, do not source it.** `. ~/.openclaw/workspace/.env` breaks on any value
+**Parse it, do not source it.** `. ~/.config/agenteiamail/env` breaks on any value
 containing shell metacharacters, and passwords routinely have them. Read it as
 `KEY=VALUE` data, which is what `idle_listener.py` and `preflight.py` both do.
 
@@ -400,6 +406,22 @@ Set up rotation too: `harness/rotate_logs.py` driven by a user timer. It uses
 ## 6. Harness wiring
 
 `harness/dispatch.py` and `harness/session_start.py` are in this repo and working.
+
+**Where to put the clone.** `~/.local/share/agenteiamail` if you have no reason
+to prefer somewhere else. Nothing requires it: every path this tool generates is
+resolved from where the scripts actually are, so an existing clone anywhere keeps
+working and needs no move. What is no longer true is the old assumption that it
+sits under `~/.openclaw/workspace`, which was only ever right on one harness.
+
+**Where the credentials go.** `~/.config/agenteiamail/env`, for either harness.
+An install that already keeps them elsewhere keeps them there: an existing file,
+or the symlink older OpenClaw installs left at that path, is used where it lies.
+Credentials are never copied to a second location to satisfy a convention, and
+nothing is ever written into a harness's own `.env`. The rule is in
+[`harness/paths.py`](harness/paths.py), with the shell half in
+[`scripts/envpath.sh`](scripts/envpath.sh), and
+[`scripts/test_paths.sh`](scripts/test_paths.sh) asserts the two agree with the
+setup form's PHP.
 
 **`harness/dispatch.py` is what the systemd unit runs.** It reads the event
 journal the listener writes, hands each record to a runtime adapter, and moves the

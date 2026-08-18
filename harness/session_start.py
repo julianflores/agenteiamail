@@ -21,13 +21,18 @@ import json, os, pathlib, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import event as ev
+from paths import repo_root
 
 STATE_DIR = pathlib.Path(os.environ.get(
     "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
 DISPATCH_ERR = STATE_DIR / "dispatch.err.log"
-REPO = pathlib.Path.home() / ".openclaw/workspace/agenteiamail"
+# Found from this file rather than assumed. The hard-coded OpenClaw path was
+# wrong on every other host, and silently so: this hook swallows its own errors
+# to keep a session from ever being blocked, so a clone anywhere else produced
+# no version line and no complaint about why.
+REPO = repo_root()
 VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
 DISPATCH_SERVICE = "agenteiamail-dispatch.service"

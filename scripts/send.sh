@@ -13,7 +13,7 @@
 #
 # Environment:
 #   ROSTER    path to the allowlist        (default: repo root/roster.txt)
-#   ENV_FILE  path to the credentials file (default: ~/.config/agenteiamail/env)
+#   ENV_FILE  path to the credentials file (default: from envpath.sh)
 #
 # ENV_FILE matters on any host whose credentials live somewhere else — the
 # OpenClaw workspace `.env`, say. The listener is told with `--env` on its unit;
@@ -26,7 +26,9 @@ set -euo pipefail
 # from here rather than from the caller's working directory, and allow an
 # override so a test can point somewhere else.
 ROSTER="${ROSTER:-$(cd "$(dirname "$0")/.." && pwd)/roster.txt}"
-ENV_FILE="${ENV_FILE:-$HOME/.config/agenteiamail/env}"
+# shellcheck source=envpath.sh
+. "$(cd "$(dirname "$0")" && pwd)/envpath.sh"
+ENV_FILE="${ENV_FILE:-$(agenteiamail_env_file)}"
 ACCOUNT="agenteiamail"
 
 check_only=""

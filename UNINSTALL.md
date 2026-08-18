@@ -26,7 +26,7 @@ ls -1 ~/agenteiamail-units-kept/
 memory of where it came from:
 
 ```bash
-git -C ~/.openclaw/workspace/agenteiamail remote get-url origin
+git -C "$REPO" remote get-url origin
 ```
 
 ## 1. Stop and remove the services
@@ -75,7 +75,7 @@ page report a directory that should be gone, found by a real uninstall, not by
 reading.
 
 If your credentials live in a shared file instead, commonly
-`~/.openclaw/workspace/.env`, **do not delete it.** Other things use it. Remove
+`~/.config/agenteiamail/env`, **do not delete it.** Other things use it. Remove
 only the keys this tool added, if you added any.
 
 ## 3. Remove state and logs
@@ -138,7 +138,7 @@ exist then.
 ## 6. Remove the repository
 
 ```bash
-rm -rf ~/.openclaw/workspace/agenteiamail
+rm -rf "$REPO"   # the clone you installed from
 ```
 
 **`roster.txt` lives in there and is not in git**, so this deletes it and no
@@ -146,7 +146,7 @@ rm -rf ~/.openclaw/workspace/agenteiamail
 first:
 
 ```bash
-cp ~/.openclaw/workspace/agenteiamail/roster.txt ~/roster.txt.kept
+cp "$REPO/roster.txt" ~/roster.txt.kept
 ```
 
 Do this **last**. Everything above references paths inside it, and removing it

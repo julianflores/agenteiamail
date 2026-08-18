@@ -28,8 +28,14 @@ until there is one, at step 3.
 **2. Check whether there is a mailbox to install against.**
 
 ```bash
-[ -f ~/.openclaw/workspace/.env ] && echo "credentials present" || echo "NO CREDENTIALS"
+env=$(. scripts/envpath.sh && agenteiamail_env_file)
+[ -f "$env" ] && echo "credentials present at $env" || echo "NO CREDENTIALS ($env)"
 ```
+
+Ask rather than assume where they are. A new install of either harness keeps
+them at `~/.config/agenteiamail/env`; an OpenClaw install made before this
+repository knew about other runtimes has them somewhere else and keeps them
+there.
 
 Present means your human set this up before asking you, so carry on to step 3.
 
@@ -42,8 +48,8 @@ scripts/setup_web.sh          # prints a link with a one-time key
 ```
 
 Send them the link. They fill in the settings, the page signs in to their mail
-server to confirm the account works, and only then writes
-`~/.openclaw/workspace/.env` itself. You never see the password. `setup_web.sh`
+server to confirm the account works, and only then writes that file itself. You
+never see the password. `setup_web.sh`
 stops on its own once the file exists, and then you continue at step 3.
 
 Serving the form needs no credentials and no working mailbox, only PHP. That is

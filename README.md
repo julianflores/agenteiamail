@@ -18,7 +18,7 @@ minutes of checking that it really works.
 ### Step 1: Give it a mailbox
 
 The agent needs an email account of its own and the connection details for it,
-written into `~/.openclaw/workspace/.env`.
+written into `~/.config/agenteiamail/env`.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it**: which account to use,
 where to find the server hostname (the one part that reliably goes wrong), and the
@@ -32,7 +32,7 @@ password should not travel through a chat.
 Paste this to your agent:
 
 ```text
-Your email account is already configured at ~/.openclaw/workspace/.env
+Your email account is already configured at ~/.config/agenteiamail/env
 
 Install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
@@ -44,7 +44,7 @@ Follow AGENTS.md. Ask me anything you need.
 <summary>En español</summary>
 
 ```text
-Tu cuenta de correo ya está configurada en ~/.openclaw/workspace/.env
+Tu cuenta de correo ya está configurada en ~/.config/agenteiamail/env
 
 Instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
@@ -211,12 +211,16 @@ webapp/ + setup_web.sh    a local form that writes the credentials file, for
                           people who do not want a terminal. Loopback only.
 ```
 
-## Runtime paths on this host
+## Runtime paths
 
-- Repo: `~/.openclaw/workspace/agenteiamail`
-- Secret env: `~/.config/agenteiamail/env`: mode `600`, never committed
+- Repo: anywhere. `~/.local/share/agenteiamail` if you have no preference; every
+  generated path is resolved from where the scripts are, so an existing clone
+  needs no move.
+- Secret env: `~/.config/agenteiamail/env`: mode `600`, never committed. An
+  install that already keeps credentials elsewhere keeps them there.
 - Event state: `~/.local/state/agenteiamail/`
-- User service: `~/.config/systemd/user/agenteiamail-idle.service`
+- User services: `~/.config/systemd/user/agenteiamail-idle.service` and
+  `agenteiamail-dispatch.service`
 
 ## The property everything serves
 

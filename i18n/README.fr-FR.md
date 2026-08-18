@@ -24,7 +24,7 @@ vraiment.
 ### Étape 1 : Donnez-lui une boîte aux lettres
 
 L'agent a besoin de son propre compte de messagerie, et des paramètres de
-connexion de ce compte écrits dans `~/.openclaw/workspace/.env`.
+connexion de ce compte écrits dans `~/.config/agenteiamail/env`.
 
 **[MAILBOX_SETUP.fr-FR.md](MAILBOX_SETUP.fr-FR.md) vous guide** : quel compte utiliser, où
 trouver le nom du serveur (la seule partie qui échoue systématiquement), et le
@@ -38,7 +38,7 @@ et un mot de passe ne doit pas transiter par une conversation.
 Collez ceci à votre agent :
 
 ```text
-Votre compte de messagerie est déjà configuré dans ~/.openclaw/workspace/.env
+Votre compte de messagerie est déjà configuré dans ~/.config/agenteiamail/env
 
 Installez ce dépôt pour pouvoir l'utiliser :
 https://github.com/julianflores/agenteiamail
@@ -216,7 +216,7 @@ webapp/ + setup_web.sh    un formulaire local qui écrit le fichier d'identifian
 
 ## Chemins sur cette machine
 
-- Dépôt : `~/.openclaw/workspace/agenteiamail`
+- Dépôt : n'importe où ; `~/.local/share/agenteiamail` à défaut de préférence
 - Identifiants : `~/.config/agenteiamail/env` : en `600`, jamais versionné
 - État et événements : `~/.local/state/agenteiamail/`
 - Service utilisateur : `~/.config/systemd/user/agenteiamail-idle.service`

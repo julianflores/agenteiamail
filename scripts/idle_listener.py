@@ -26,8 +26,9 @@ from roster import DEFAULT_ROSTER, roster_addresses, sender_is_listed
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "harness"))
 import event as ev
+from paths import env_file
 
-DEFAULT_ENV   = "~/.config/agenteiamail/env"
+DEFAULT_ENV   = None   # resolved by harness/paths.py, see main()
 DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
 DEFAULT_JOURNAL = "~/.local/state/agenteiamail/events.jsonl"
 
@@ -507,7 +508,8 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--env", default=DEFAULT_ENV)
+    p.add_argument("--env", default=None,
+                   help="credentials file (default: resolved by harness/paths.py)")
     p.add_argument("--mailbox", default="INBOX")
     p.add_argument("--once", action="store_true", help="exit after the first batch")
     p.add_argument("--state", default=DEFAULT_STATE,
@@ -521,7 +523,7 @@ def main():
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
 
-    env_path = pathlib.Path(args.env).expanduser()
+    env_path = pathlib.Path(args.env).expanduser() if args.env else env_file()
     if not env_path.is_file():
         log(f"no env file at {env_path}")
         return 1

@@ -84,9 +84,9 @@ figure.
 ## Créez le fichier
 
 ```bash
-mkdir -p ~/.openclaw/workspace
-touch ~/.openclaw/workspace/.env
-chmod 600 ~/.openclaw/workspace/.env
+mkdir -p ~/.config/agenteiamail
+touch ~/.config/agenteiamail/env
+chmod 600 ~/.config/agenteiamail/env
 ```
 
 `chmod 600` signifie que seul votre utilisateur peut le lire. Faites-le **avant**
