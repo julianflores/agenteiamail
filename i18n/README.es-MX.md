@@ -185,12 +185,15 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
 ~/.local/state/agenteiamail/
   mail.log                el flujo de eventos
   idle.err.log            diagnóstico, se vigila aparte
-  seen.offset             hasta dónde se confirmó la entrega
+  events.jsonl            la cola: un sobre canónico por línea
+  dispatch.offset         hasta dónde se confirmó la entrega
   │
-  ├─► harness/session_start.py    muestra lo pendiente; nunca lo da por entregado
-  ├─► harness/watch.sh            el único consumidor supervisado; empuja cada
-  │                               línea a la sesión en vivo y es dueño de
-  │                               seen.offset
+  ├─► harness/dispatch.py         el único consumidor supervisado. Lee el diario,
+  │                               entrega cada evento a un adaptador de runtime y
+  │                               solo avanza el cursor cuando el runtime lo acepta
+  │     └─► harness/adapters/     hoy openclaw, luego hermes. Lo único aquí que
+  │                               sabe qué es un harness
+  ├─► harness/session_start.py    muestra lo encolado; nunca lo da por entregado
   └─► harness/rotate_logs.py      rotación con copytruncate, en un timer de usuario
 
 scripts/version.sh        la versión instalada frente a la más reciente publicada,

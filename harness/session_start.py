@@ -17,19 +17,23 @@ Never fails the session: any unexpected error degrades to a quiet no-op, because
 broken hook must not be able to block startup.
 """
 
-import json, pathlib, subprocess, sys
+import json, os, pathlib, subprocess, sys
 
-STATE_DIR = pathlib.Path.home() / ".local/state/agenteiamail"
-LOG = STATE_DIR / "mail.log"
-OFFSET_FILE = STATE_DIR / "seen.offset"
-WATCH_ERR = STATE_DIR / "watch.err.log"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import event as ev
+
+STATE_DIR = pathlib.Path(os.environ.get(
+    "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
+JOURNAL = STATE_DIR / "events.jsonl"
+CURSOR = STATE_DIR / "dispatch.offset"
+DISPATCH_ERR = STATE_DIR / "dispatch.err.log"
 REPO = pathlib.Path.home() / ".openclaw/workspace/agenteiamail"
 VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
-WATCH_SERVICE = "agenteiamail-watch.service"
+DISPATCH_SERVICE = "agenteiamail-dispatch.service"
 
 MAX_REPLAY = 20   # enough to see overnight without flooding the context window
-MAX_WATCH_ERR = 5   # the last few lines say whether it is still failing
+MAX_DISPATCH_ERR = 5   # the last few lines say whether it is still failing
 VERSION_TIMEOUT = 20   # above version.sh's own 10s, so its timeout fires first
 
 
@@ -44,7 +48,7 @@ def unit_down(unit):
         return False
 
 
-def watcher_faults():
+def dispatcher_faults():
     """
     Recent watcher complaints, newest last.
 
@@ -54,12 +58,12 @@ def watcher_faults():
     install where injection fails looks exactly like an install with no new mail.
     """
     try:
-        if not WATCH_ERR.is_file() or WATCH_ERR.stat().st_size == 0:
+        if not DISPATCH_ERR.is_file() or DISPATCH_ERR.stat().st_size == 0:
             return []
-        text = WATCH_ERR.read_text(encoding="utf-8", errors="replace")
+        text = DISPATCH_ERR.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    return [ln for ln in text.splitlines() if ln.strip()][-MAX_WATCH_ERR:]
+    return [ln for ln in text.splitlines() if ln.strip()][-MAX_DISPATCH_ERR:]
 
 
 def version_line():
@@ -87,35 +91,29 @@ def version_line():
 
 
 def read_backlog():
-    """(lines, byte offset now reported through, whether it was capped)."""
-    if not LOG.is_file():
-        return [], 0, False
-    size = LOG.stat().st_size
+    """
+    (rendered lines, whether it was capped) for events not yet delivered.
 
+    Read-only in every sense. The cursor belongs to the dispatcher, which is the
+    only thing that knows whether a runtime actually took an event, and a hook
+    that moved it would be claiming delivery it did not perform. So this shows
+    what is still owed and changes nothing: if the dispatcher is healthy the list
+    is empty, and if it is not, these are the events waiting for it.
+    """
     try:
-        offset = int(OFFSET_FILE.read_text().strip())
-    except (OSError, ValueError):
-        offset = 0
-
-    # logrotate replaces the file; an offset past EOF means it rotated under us.
-    if offset > size:
-        offset = 0
-    if size <= offset:
-        return [], size, False
-
-    with LOG.open("rb") as fh:
-        fh.seek(offset)
-        chunk = fh.read(size - offset)
-
-    lines = [ln for ln in chunk.decode("utf-8", "replace").splitlines() if ln.strip()]
-    return lines[-MAX_REPLAY:], size, len(lines) > MAX_REPLAY
+        cursor = ev.read_cursor(CURSOR)
+        lines = [r.get("notification_text", "") for r, _ in ev.read_from(JOURNAL, cursor)]
+    except OSError:
+        return [], False
+    lines = [ln for ln in lines if ln.strip()]
+    return lines[-MAX_REPLAY:], len(lines) > MAX_REPLAY
 
 
 def main():
-    lines, _, capped = read_backlog()
+    lines, capped = read_backlog()
     down = unit_down(SERVICE)
-    watch_down = unit_down(WATCH_SERVICE)
-    faults = watcher_faults()
+    dispatch_down = unit_down(DISPATCH_SERVICE)
+    faults = dispatcher_faults()
 
     parts = []
     if down:
@@ -125,27 +123,27 @@ def main():
             "restart it before relying on mail notifications."
         )
 
-    if watch_down:
+    if dispatch_down:
         parts.append(
-            f"MAIL WATCHER IS DOWN — {WATCH_SERVICE} is not active. Mail is still "
-            "being detected and logged, but nothing is delivering it into a "
-            f"session. Check `systemctl --user status {WATCH_SERVICE}`."
+            f"MAIL DISPATCHER IS DOWN — {DISPATCH_SERVICE} is not active. Mail is still "
+            "being detected and journalled, but nothing is delivering it into a "
+            f"session. Check `systemctl --user status {DISPATCH_SERVICE}`."
         )
 
     if faults:
         parts.append(
-            "THE WATCHER REPORTED PROBLEMS — the most recent lines of "
-            f"{WATCH_ERR} are below. If the last one is not a recovery, new mail "
+            "THE DISPATCHER REPORTED PROBLEMS — the most recent lines of "
+            f"{DISPATCH_ERR} are below. If the last one is not a recovery, new mail "
             "is being logged but not delivered, and every other check will still "
             "look healthy:\n" + "\n".join(faults)
         )
 
     if lines:
-        header = (f"Mail the watcher has not acknowledged delivering ({len(lines)} message(s)"
+        header = (f"Mail queued but not yet delivered ({len(lines)} message(s)"
                   + (f", trimmed to the most recent {MAX_REPLAY}" if capped else "")
-                  + "). It stays pending until delivery succeeds, so expect the "
-                  "watcher to deliver it again rather than treating this as the "
-                  "only copy:")
+                  + "). It stays in the journal until a runtime accepts it, so "
+                  "expect the dispatcher to deliver it as well rather than "
+                  "treating this as the only copy:")
         parts.append(header + "\n" + "\n".join(lines))
     else:
         parts.append("No unseen mail since the last session acknowledged the log.")
@@ -165,8 +163,8 @@ def main():
         },
         "systemMessage": (
             "Mail listener is DOWN — new mail is not being detected" if down
-            else "Mail watcher is DOWN — mail is logged but not delivered" if watch_down
-            else "Watcher reported errors — mail may not be reaching the session" if faults
+            else "Mail dispatcher is DOWN — mail is journalled but not delivered" if dispatch_down
+            else "Dispatcher reported errors — mail may not be reaching the session" if faults
             else (f"{len(lines)} unseen mail notification(s)" if lines else None)
         ),
     }))

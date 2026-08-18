@@ -18,14 +18,18 @@ Usage:  python3 scripts/idle_listener.py [--env PATH] [--mailbox INBOX] [--once]
 Exit:   0 clean shutdown · 1 configuration or login failure (not retryable)
 """
 
-import argparse, email, email.utils, imaplib, json, os, pathlib, re
+import argparse, datetime, email, email.utils, imaplib, json, os, pathlib, re
 import select, signal, socket, ssl, sys, time
 from email.header import decode_header, make_header
 
 from roster import DEFAULT_ROSTER, roster_addresses, sender_is_listed
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "harness"))
+import event as ev
+
 DEFAULT_ENV   = "~/.config/agenteiamail/env"
 DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
+DEFAULT_JOURNAL = "~/.local/state/agenteiamail/events.jsonl"
 
 # RFC 2177: a client must re-issue IDLE at least every 29 minutes.
 IDLE_REFRESH = 25 * 60
@@ -44,8 +48,29 @@ def _handle_stop(signum, frame):
 
 
 def emit(line):
-    """One line on stdout == one notification."""
+    """One line on stdout, which the unit appends to mail.log for a person."""
     print(line, flush=True)
+
+
+def record(journal_path, envelope):
+    """
+    Put one event in the journal, and the same event on the operator's log.
+
+    Both, always, and from here only. The journal is what a runtime adapter
+    delivers from; mail.log is what a human reads when they want to know what
+    happened. Writing them in two places is how they start describing different
+    mail.
+
+    A journal that cannot be written is reported and then survived. Losing the
+    ability to deliver is bad; losing the listener as well, and with it the
+    record that anything arrived, is worse.
+    """
+    emit(envelope.get("notification_text", ""))
+    try:
+        ev.append(journal_path, envelope)
+    except OSError as exc:
+        log(f"could not write the event journal at {journal_path}: {exc}")
+        log("Mail is being logged but NOT queued for delivery. This needs a person.")
 
 
 def log(line):
@@ -76,14 +101,30 @@ def decode_hdr(value):
 
 
 def describe(sender, subject, date, trusted=False):
+    """The operator's line. `parts` returns the same thing plus the fields the
+    envelope needs, so nothing downstream has to parse this back apart."""
+    return parts(sender, subject, date, trusted)["notification_text"]
+
+
+def parts(sender, subject, date, trusted=False):
+    """
+    One message, rendered and structured at the same time.
+
+    Both come from here so they cannot disagree. Rendering in one place and
+    extracting fields somewhere else is how a log line and a payload end up
+    describing different messages.
+    """
     name, addr = email.utils.parseaddr(sender)
     who = name or addr or "unknown"
 
     # Two clocks matter: when the sender stamped it, and when we noticed. The gap
     # is the latency this design exists to shrink, so report both.
     sent = ""
+    sent_iso = ""
     try:
-        sent = email.utils.parsedate_to_datetime(date).astimezone().strftime("%H:%M:%S")
+        stamped = email.utils.parsedate_to_datetime(date)
+        sent = stamped.astimezone().strftime("%H:%M:%S")
+        sent_iso = stamped.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         pass
     when = time.strftime("%H:%M:%S") + (f", sent {sent}" if sent else "")
@@ -99,7 +140,14 @@ def describe(sender, subject, date, trusted=False):
         body = f"{head} — {title} (via {who})"
     else:
         body = f"{who} — {subject or '(no subject)'}"
-    return f"[mail {when}] {body}"
+    return {
+        "notification_text": f"[mail {when}] {body}",
+        "sender_name": name,
+        "sender_address": addr,
+        "subject": subject or "",
+        "sent_at": sent_iso,
+        "roster_match": bool(trusted),
+    }
 
 
 # Two key schemas are accepted, so a host that already keeps credentials for its
@@ -206,7 +254,7 @@ def newest_uid(conn):
 
 
 def fetch_since(conn, last_uid, allowed):
-    """[(uid, line)] for every message with UID > last_uid.
+    """[(uid, parts)] for every message with UID > last_uid.
 
     Headers only — BODY.PEEK of three fields. The listener never downloads a
     body and never marks anything read; reading is the agent's job, through
@@ -224,10 +272,10 @@ def fetch_since(conn, last_uid, allowed):
         if typ != "OK" or not payload or not isinstance(payload[0], tuple):
             continue
         msg = email.message_from_bytes(payload[0][1])
-        out.append((uid, describe(decode_hdr(msg.get("From")),
-                                  decode_hdr(msg.get("Subject")),
-                                  msg.get("Date", ""),
-                                  sender_is_listed(msg, allowed))))
+        out.append((uid, parts(decode_hdr(msg.get("From")),
+                               decode_hdr(msg.get("Subject")),
+                               msg.get("Date", ""),
+                               sender_is_listed(msg, allowed))))
     return out
 
 
@@ -263,8 +311,9 @@ def idle(conn, timeout):
                 break
 
 
-def run(env_path, mailbox, once, state_path, roster_path):
+def run(env_path, mailbox, once, state_path, roster_path, journal_path):
     env = load_env(env_path)
+    account = lookup(env, "user")
     if not roster_path.is_file():
         # Not fatal. Mail still gets reported; nothing gets tagged, so the agent
         # treats everything as read-only until a human writes the file.
@@ -304,8 +353,9 @@ def run(env_path, mailbox, once, state_path, roster_path):
             pending = fetch_since(conn, last_uid, roster_addresses(roster_path))
             if len(pending) > 1:
                 emit(f"[mail] catching up — {len(pending)} messages arrived while offline")
-            for uid, line in pending:
-                emit(line)
+            for uid, fields in pending:
+                record(journal_path, ev.mail_event(
+                    account=account, mailbox=mailbox, uidvalidity=validity, uid=uid, **fields))
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
@@ -319,8 +369,9 @@ def run(env_path, mailbox, once, state_path, roster_path):
                 found = False
                 # Re-read the roster every batch. Adding someone takes effect on
                 # their next message, with no restart and no lost notification.
-                for uid, line in fetch_since(conn, last_uid, roster_addresses(roster_path)):
-                    emit(line)
+                for uid, fields in fetch_since(conn, last_uid, roster_addresses(roster_path)):
+                    record(journal_path, ev.mail_event(
+                        account=account, mailbox=mailbox, uidvalidity=validity, uid=uid, **fields))
                     last_uid = uid
                     found = True
                     # Persist per message, not per batch: a crash mid-batch must
@@ -354,6 +405,8 @@ def main():
     p.add_argument("--once", action="store_true", help="exit after the first batch")
     p.add_argument("--state", default=DEFAULT_STATE,
                    help="where to persist the last reported UID ('none' to disable)")
+    p.add_argument("--journal", default=DEFAULT_JOURNAL,
+                   help="append-only event journal the dispatcher reads")
     p.add_argument("--roster", default=str(DEFAULT_ROSTER),
                    help="trusted-sender list; their mail is tagged 'roster'")
     args = p.parse_args()
@@ -371,6 +424,7 @@ def main():
         args.once,
         pathlib.Path(args.state).expanduser(),
         pathlib.Path(args.roster).expanduser(),
+        pathlib.Path(args.journal).expanduser(),
     )
 
 

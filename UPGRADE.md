@@ -69,7 +69,7 @@ re-copy them and replace the two placeholders again:
 
 ```bash
 install -Dm644 systemd/agenteiamail-idle.service       ~/.config/systemd/user/
-install -Dm644 systemd/agenteiamail-watch.service      ~/.config/systemd/user/
+install -Dm644 systemd/agenteiamail-dispatch.service   ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.service  ~/.config/systemd/user/
 install -Dm644 systemd/agenteiamail-logrotate.timer    ~/.config/systemd/user/
 #   /path/to/agenteiamail  ->  your clone's absolute path
@@ -95,7 +95,7 @@ code and are still running the old.
 ```bash
 systemctl --user daemon-reload
 systemctl --user restart agenteiamail-idle.service
-systemctl --user restart agenteiamail-watch.service
+systemctl --user restart agenteiamail-dispatch.service
 ```
 
 A restart can take up to 30 seconds; the listener is blocked on the IMAP socket
@@ -111,7 +111,7 @@ rather than assuming:
 - **Credentials live outside the repository**, at `~/.config/agenteiamail/env`
   or the file it links to. Untouched.
 - **Log and state files** under `~/.local/state/agenteiamail/` are untouched,
-  including `seen.offset` and the last-seen UID, which is why an upgrade does
+  including `dispatch.offset`, the event journal and the last-seen UID, which is why an upgrade does
   not replay your mailbox.
 
 ## 8. Verify, with the checks that can actually fail
@@ -122,7 +122,7 @@ scripts/version.sh
 
 # Running, and for more than a moment
 systemctl --user is-active agenteiamail-idle.service
-systemctl --user is-active agenteiamail-watch.service
+systemctl --user is-active agenteiamail-dispatch.service
 
 # The one that proves state survived: "resuming from uid N", not "baseline uid N"
 tail -2 ~/.local/state/agenteiamail/idle.err.log

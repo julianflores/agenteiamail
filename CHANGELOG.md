@@ -16,6 +16,81 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.3.0 (2026-08-18)
+
+**The delivery half no longer knows what a harness is.** Until now, delivering to
+a second harness meant forking the repository: the watcher searched for the
+`openclaw` binary itself, called it directly, and passed it a line written for a
+person to read. This release puts a structured event and a runtime adapter between
+the two halves, which is what makes a second harness an adapter rather than a
+fork. First half of [#35](https://github.com/julianflores/agenteiamail/issues/35)
+(FR1, FR2, FR3), with FR4 to follow.
+
+**There is still no Hermes adapter in this release.** `AGENTEIAMAIL_RUNTIME`
+accepts `hermes`, and this version will tell you plainly that it is not
+implemented rather than pretending otherwise.
+
+- **A canonical event envelope** ([`harness/event.py`](harness/event.py)): one
+  JSON object per message carrying account, mailbox, UIDVALIDITY, UID, sender,
+  subject, `roster_match` and the rendered line. No message body and no
+  credentials, ever. `event_id` is `imap:<mailbox>:<uidvalidity>:<uid>`, stable
+  across restarts and retries so a consumer can recognise a duplicate.
+- **An append-only journal**, `events.jsonl`, written by the listener. It is a
+  queue, not a log: `mail.log` is unchanged and is still what a person reads.
+- **A runtime adapter interface** ([`harness/adapters/`](harness/adapters/)).
+  An adapter reports accepted, retryable, or configuration-fault, and may not
+  touch the cursor, listener state, or print a credential.
+- **[`harness/dispatch.py`](harness/dispatch.py) replaces `watch.sh`**, which is
+  removed along with `watch_service.sh`. It reads the journal by offset and moves
+  the cursor only once an adapter accepts a record.
+- **`AGENTEIAMAIL_RUNTIME`** selects the adapter: `openclaw`, `hermes`, or `auto`.
+  `auto` chooses only when exactly one runtime is present and refuses rather than
+  guessing when none or several are.
+- **The exit-and-restart recovery from 1.2.2 is gone, and is not needed.** It
+  existed because `tail -F` consumed a line by reading it, so surviving a failure
+  meant killing the process. Reading a journal by offset consumes nothing, so a
+  failed record is simply retried in place, indefinitely, while the cursor stays
+  where it is. `StartLimitBurst` on the unit goes with it.
+- **A stuck record holds the queue rather than being skipped**, loudly, on stderr
+  and at the next session start. There is deliberately no dead-letter policy: a
+  byte offset cannot describe a hole.
+- **Journal compaction** in [`harness/rotate_logs.py`](harness/rotate_logs.py),
+  which empties `events.jsonl` only when the cursor proves everything in it was
+  delivered. The journal is never rotated with the logs; the cursor is an offset
+  into that exact file.
+
+- **39 assertions in [`scripts/test_dispatch.py`](scripts/test_dispatch.py)**,
+  covering the envelope, the journal, the cursor rules, runtime selection and the
+  OpenClaw adapter against a faked binary.
+
+### Upgrade actions
+
+**This release renames a unit and changes where delivery state lives.** A `git
+pull` alone leaves the old watcher running.
+
+```bash
+systemctl --user stop    agenteiamail-watch.service
+systemctl --user disable agenteiamail-watch.service
+rm -f ~/.config/systemd/user/agenteiamail-watch.service
+
+install -Dm644 systemd/agenteiamail-dispatch.service ~/.config/systemd/user/
+# then edit it: replace /path/to/agenteiamail with your clone's absolute path
+systemctl --user daemon-reload
+systemctl --user enable --now agenteiamail-dispatch.service
+systemctl --user restart agenteiamail-idle.service
+```
+
+**Restart the listener too**, as shown. It is what writes the journal, and until
+it restarts nothing is being queued for the new dispatcher.
+
+**`seen.offset` is not migrated, and does not need to be.** It indexed
+`mail.log`, which the dispatcher no longer reads. The new cursor,
+`dispatch.offset`, starts at the beginning of a journal that starts empty, so the
+first messages delivered after upgrading are the ones that arrive after it. Mail
+that arrived while you were upgrading is in `mail.log` and in the listener's UID
+state, not lost, but it will not be redelivered. Upgrade when the mailbox is
+quiet if that matters to you.
+
 ## 1.2.3 (2026-08-18)
 
 **A new install could not start on a host with no mailbox, which is the host the

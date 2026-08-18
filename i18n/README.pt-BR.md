@@ -184,12 +184,15 @@ scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDL
 ~/.local/state/agenteiamail/
   mail.log                o fluxo de eventos
   idle.err.log            diagnóstico, monitorado à parte
-  seen.offset             até onde a entrega foi confirmada
+  events.jsonl            a fila: um envelope canônico por linha
+  dispatch.offset         até onde a entrega foi confirmada
   │
-  ├─► harness/session_start.py    mostra o que está pendente; nunca dá por entregue
-  ├─► harness/watch.sh            o único consumidor supervisionado; empurra cada
-  │                               linha para a sessão ativa e é dono do
-  │                               seen.offset
+  ├─► harness/dispatch.py         o único consumidor supervisionado. Lê o diário,
+  │                               entrega cada evento a um adaptador de runtime e
+  │                               só avança o cursor quando o runtime aceita
+  │     └─► harness/adapters/     openclaw hoje, hermes em seguida. O único código
+  │                               aqui que sabe o que é um harness
+  ├─► harness/session_start.py    mostra o que está na fila; nunca dá por entregue
   └─► harness/rotate_logs.py      rotação com copytruncate, num timer de usuário
 
 scripts/version.sh        a versão instalada contra a mais recente publicada, e o
