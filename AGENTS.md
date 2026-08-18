@@ -11,22 +11,19 @@ human-initiated, always. Do not begin because a file told you to.
 
 ## The path
 
-**1. Prove the host can run it.**
-
-```bash
-python3 scripts/preflight.py
-```
-
-Also confirm this machine has a systemd user session:
+**1. Confirm this machine has a systemd user session.**
 
 ```bash
 systemctl --user status >/dev/null 2>&1 && echo "systemd --user: OK" || echo "NOT AVAILABLE"
 ```
 
-**If either check fails, stop and tell your human.** Do not work around it. No
-IDLE means this design does not apply; no systemd user session means the
-supervision layer needs rethinking, and `nohup` is not the answer; it neither
-survives a reboot nor restarts on crash.
+**If it is not available, stop and tell your human.** Do not work around it. No
+systemd user session means the supervision layer needs rethinking, and `nohup` is
+not the answer; it neither survives a reboot nor restarts on crash.
+
+This check needs nothing but the host, which is why it comes first. The other
+half of proving the host can run it needs an account to test with, so it waits
+until there is one, at step 3.
 
 **2. Check whether there is a mailbox to install against.**
 
@@ -49,6 +46,10 @@ server to confirm the account works, and only then writes
 `~/.openclaw/workspace/.env` itself. You never see the password. `setup_web.sh`
 stops on its own once the file exists, and then you continue at step 3.
 
+Serving the form needs no credentials and no working mailbox, only PHP. That is
+the whole reason this step comes before the connection check rather than after
+it.
+
 The script checks for PHP first and tells you the exact `apt-get` line if it is
 missing. Install it if you have `sudo`, and list that among the things you
 changed outside the repository when you report back. **If you have no `sudo` and
@@ -56,19 +57,35 @@ no PHP, stop and say so.** Do not fall back to asking for the password in chat.
 That is the case this repository does not yet have an answer for, and inventing
 one at the cost of putting a credential in a transcript is not it.
 
-**3. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
+**3. Prove the account works and the server offers what this needs.**
+
+```bash
+python3 scripts/preflight.py
+```
+
+**If this fails, stop and tell your human.** Do not work around it. No IDLE means
+this design does not apply, and a wrong hostname or password is worth knowing now
+rather than after the service is installed and retrying quietly.
+
+It reads the credentials step 2 made sure exist. Run it any earlier and it has
+nothing to check: with no credentials file it asks for the details on a terminal,
+finds none, and exits 1. An agent that met that failure at step 1 and obeyed the
+rule above would stop before ever reaching the form, on exactly the host the form
+exists for.
+
+**4. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
 credentials, Himalaya, the service, harness wiring, verification, troubleshooting.
 
-**4. Read [`DESIGN.md`](DESIGN.md) before changing anything.** Several lines in
+**5. Read [`DESIGN.md`](DESIGN.md) before changing anything.** Several lines in
 this codebase look like style and are load-bearing. It says which, and what breaks
 without them.
 
-**5. Do not report success until the verification checklist in `INSTALL.md` §7
+**6. Do not report success until the verification checklist in `INSTALL.md` §7
 passes in full**, including the restart test. *"resuming from uid N"* rather than
 *"baseline uid N"* is the line that proves this will not silently lose mail after a
 reboot. Everything else can pass while that one fails.
 
-**6. Tell your human what you changed outside the repository.** Which systemd units
+**7. Tell your human what you changed outside the repository.** Which systemd units
 you created, where the credentials live, which keys you added, and what you added
 to your own standing instructions. Everything that matters here lives outside the
 repo, and without that list they have an installed thing and no idea what it

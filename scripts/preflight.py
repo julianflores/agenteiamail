@@ -6,6 +6,7 @@ import imaplib
 import os
 import socket
 import ssl
+import sys
 from pathlib import Path
 
 ENV = Path(os.environ.get("AGENTEIAMAIL_ENV", "~/.config/agenteiamail/env")).expanduser()
@@ -61,6 +62,22 @@ def load_env(path: Path) -> dict[str, str]:
 
 def main() -> int:
     env = load_env(ENV)
+
+    # Running before there is anything to check, with no terminal to ask on.
+    # Left to itself this falls through to ask() and exits complaining about a
+    # missing IMAP host, which reads as a broken tool or a misconfigured one.
+    # It is neither: it is this check running before the mailbox exists. An
+    # agent told to stop on failure and not work around it will do exactly that,
+    # on the one host where the setup form it never reached was the answer.
+    if not env and not sys.stdin.isatty():
+        print(f"nothing to check yet: {ENV} does not exist or holds no settings,")
+        print("and there is no terminal to ask on.")
+        print()
+        print("This check needs an account to test, so it runs after the mailbox")
+        print("exists rather than before. If your human has not set one up, serve")
+        print("the form with scripts/setup_web.sh and run this again once it has")
+        print("written the file. AGENTS.md step 2 is the fork this belongs to.")
+        return 1
 
     # Named for a server, holding a port. Say so rather than dialling it.
     for key in LEGACY_AMBIGUOUS:
