@@ -317,6 +317,67 @@ check("fault ids do not change with the process hash seed",
       ev.listener_error(account="a@b.c", message="m", observed_at="t")["event_id"],
       stable.stdout.strip())
 
+# --- the fault transition state ---------------------------------------------
+#
+# The state that suppresses repeat fault records has to mean "durably recorded".
+# Meaning "attempted" instead loses the fault entirely: the failed append is
+# suppressed on every retry, and a recovery record can later appear for an
+# outage nobody was ever told about.
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import idle_listener as listener
+
+d = pathlib.Path(tempfile.mkdtemp())
+blocked = d / "wall"
+blocked.write_text("a file where a directory would need to be")
+unwritable = blocked / "events.jsonl"
+writable = d / "events.jsonl"
+
+state = listener.note_fault(unwritable, "a@b.c", "connection lost (TimeoutError)", None)
+check("a fault that could not be journalled is not marked as recorded", None, state)
+
+state = listener.note_fault(unwritable, "a@b.c", "connection lost (TimeoutError)", state)
+check("it is attempted again rather than suppressed", None, state)
+
+state = listener.note_fault(writable, "a@b.c", "connection lost (TimeoutError)", state)
+check("once the journal is writable the fault is recorded",
+      "connection lost (TimeoutError)", state)
+
+state = listener.note_fault(writable, "a@b.c", "connection lost (TimeoutError)", state)
+faults = [r for r, _ in ev.read_from(writable, 0)
+          if isinstance(r, dict) and r["event_type"] == "listener.error"]
+check("a recorded fault is written exactly once", 1, len(faults))
+check("the fault that landed is the one that was retried",
+      "connection lost (TimeoutError)", faults[0]["message"])
+
+state = listener.note_recovery(writable, "a@b.c", state)
+check("recovery clears the state once it is journalled", None, state)
+kinds = [r["message"] for r, _ in ev.read_from(writable, 0)
+         if isinstance(r, dict) and r["event_type"] == "listener.error"]
+check("the outage reads as one fault and one recovery",
+      ["connection lost (TimeoutError)", listener.RECOVERED], kinds)
+
+check("recovery is not journalled when no fault was ever recorded",
+      None, listener.note_recovery(writable, "a@b.c", None))
+check("and writes nothing", 2, len([r for r, _ in ev.read_from(writable, 0)]))
+
+# A recovery that cannot be written must not clear the state either, or the
+# outage silently ends with nothing saying so.
+stuck = listener.note_fault(writable, "a@b.c", "connection lost (again)", None)
+check("a second distinct fault is recorded", "connection lost (again)", stuck)
+check("a recovery that cannot be journalled keeps the outage open",
+      "connection lost (again)", listener.note_recovery(unwritable, "a@b.c", stuck))
+
+# --- damage points at the right byte ----------------------------------------
+
+j, c = journal_with("uno")
+start_of_damage = j.stat().st_size
+with j.open("ab") as fh:
+    fh.write(b"{ not json at all }\n")
+damaged = [r for r, _ in ev.read_from(j, 0) if isinstance(r, ev.Corrupt)][0]
+check("a repair instruction names the byte the damage starts at",
+      start_of_damage, damaged.offset)
+
 # --- the OpenClaw adapter ---------------------------------------------------
 #
 # The binary is faked, so this proves the command shape and how each exit code is

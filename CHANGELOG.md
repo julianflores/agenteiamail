@@ -80,9 +80,12 @@ implemented rather than pretending otherwise.
 - **Listener faults are events.** `listener.error` envelopes go into the same
   journal as the mail, on transitions only, so an outage writes one record and a
   recovery writes one more. A fault reported only where nobody looks is a fault
-  nobody sees.
+  nobody sees. The state that suppresses repeats means *durably recorded*, not
+  *attempted*: marking a failed append as reported would suppress it on every
+  retry and could later produce a recovery record for an outage nobody was told
+  about.
 
-- **60 assertions in [`scripts/test_dispatch.py`](scripts/test_dispatch.py)**,
+- **72 assertions in [`scripts/test_dispatch.py`](scripts/test_dispatch.py)**,
   covering the envelope, the journal, the cursor rules, runtime selection, the
   OpenClaw adapter against a faked binary, and each of the loss and duplication
   cases above including a concurrent append racing compaction.

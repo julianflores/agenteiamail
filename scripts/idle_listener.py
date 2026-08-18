@@ -83,24 +83,52 @@ def record(journal_path, envelope):
     emit(envelope.get("notification_text", ""))
 
 
-def record_fault(journal_path, account, message, last):
+RECOVERED = "listener recovered; mail is being seen again"
+
+
+def journal_fault(journal_path, account, message):
     """
-    Put a listener fault in the same stream as the mail.
+    Put a listener fault in the same stream as the mail. True only if it landed.
 
     A fault reported only where nobody looks is a fault nobody sees, and silence
     that reads as an empty mailbox is the failure this project exists to prevent.
     So it travels the path that is already being watched.
+    """
+    try:
+        ev.append(journal_path, ev.listener_error(account=account, message=message))
+        return True
+    except (OSError, ValueError) as exc:
+        log(f"could not journal the listener fault: {exc}")
+        return False
 
-    Only transitions are recorded. An outage retries every few seconds for hours,
-    and one record per attempt would bury the mail it is sitting next to.
+
+def note_fault(journal_path, account, message, last):
+    """
+    Record a change in the listener's health, once, and say what is now recorded.
+
+    Only transitions are journalled: an outage retries every few seconds for
+    hours, and one record per attempt would bury the mail sitting beside it.
+
+    **The returned state means durably recorded, not attempted.** Returning the
+    message after a failed append marks the transition as reported when it is
+    not, and it is then suppressed on every retry: the fault never reaches the
+    journal, and a recovery record can later appear for an outage nobody was
+    ever told about. So a failed append leaves the state alone and the next
+    attempt tries again.
     """
     if message == last:
         return last
-    try:
-        ev.append(journal_path, ev.listener_error(account=account, message=message))
-    except (OSError, ValueError) as exc:
-        log(f"could not journal the listener fault: {exc}")
-    return message
+    return message if journal_fault(journal_path, account, message) else last
+
+
+def note_recovery(journal_path, account, last):
+    """
+    Say the outage is over, but only if its start was actually recorded, and only
+    clear the state once the recovery itself is in the journal.
+    """
+    if last is None:
+        return None
+    return None if journal_fault(journal_path, account, RECOVERED) else last
 
 
 def log(line):
@@ -394,10 +422,7 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
-            if fault is not None:
-                fault = record_fault(journal_path, account,
-                                     "listener recovered; mail is being seen again", fault)
-                fault = None
+            fault = note_recovery(journal_path, account, fault)
             backoff = BACKOFF_MIN
 
             while not _stop:
@@ -424,7 +449,7 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
                 break
             # The mailbox is fine; the disk is not. The UID was not advanced, so
             # the same messages come back on the next pass. Wait rather than spin.
-            fault = record_fault(journal_path, account, f"journal unwritable: {exc}", fault)
+            fault = note_fault(journal_path, account, f"journal unwritable: {exc}", fault)
             log(f"journal unwritable; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:
@@ -435,7 +460,7 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
             if _stop:
                 break
             message = f"connection lost ({type(exc).__name__}: {exc})"
-            fault = record_fault(journal_path, account, message, fault)
+            fault = note_fault(journal_path, account, message, fault)
             log(f"{message}; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:

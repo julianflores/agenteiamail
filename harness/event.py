@@ -248,6 +248,10 @@ def read_from(journal, offset):
         data = fh.read()
     pos = offset
     for chunk in data.split(b"\n")[:-1]:
+        # Where this record starts, kept before the cursor moves past it: a
+        # repair instruction has to name the byte the damage begins at, not the
+        # one after it ends.
+        start = pos
         pos += len(chunk) + 1
         text = chunk.strip()
         if not text:
@@ -255,7 +259,7 @@ def read_from(journal, offset):
         try:
             yield json.loads(text.decode("utf-8")), pos
         except (ValueError, UnicodeDecodeError):
-            yield Corrupt(text[:200], pos), pos
+            yield Corrupt(text[:200], start), pos
 
 
 def read_cursor(path):
