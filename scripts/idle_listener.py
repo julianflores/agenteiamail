@@ -102,33 +102,62 @@ def journal_fault(journal_path, account, message):
         return False
 
 
-def note_fault(journal_path, account, message, last):
+class FaultLog:
     """
-    Record a change in the listener's health, once, and say what is now recorded.
+    What the journal has actually been told about the listener's health.
 
-    Only transitions are journalled: an outage retries every few seconds for
-    hours, and one record per attempt would bury the mail sitting beside it.
+    Two pieces of state, and the distinction between them is the whole point:
 
-    **The returned state means durably recorded, not attempted.** Returning the
-    message after a failed append marks the transition as reported when it is
-    not, and it is then suppressed on every retry: the fault never reaches the
-    journal, and a recovery record can later appear for an outage nobody was
-    ever told about. So a failed append leaves the state alone and the next
-    attempt tries again.
+    - `recorded` is the fault the journal really holds. It suppresses repeats,
+      because an outage retries every few seconds for hours and one record per
+      attempt would bury the mail sitting beside it.
+    - `pending` is a transition that has not been written yet, because the
+      attempt to write it failed.
+
+    Keeping only the first loses whole outages. A failed append left nothing
+    owed, and the retry meant to fix it never came: on the pass where the
+    listener recovers, nothing asks about the fault again, so the recovery finds
+    no recorded outage and writes nothing either. The episode goes entirely
+    unreported, which is exactly the silence this design refuses.
+
+    So what is owed is carried until it is written, and recovery settles that
+    debt before declaring itself, which also keeps the two in the order they
+    happened.
     """
-    if message == last:
-        return last
-    return message if journal_fault(journal_path, account, message) else last
 
+    def __init__(self, journal_path, account):
+        self.journal = journal_path
+        self.account = account
+        self.recorded = None
+        self.pending = None
 
-def note_recovery(journal_path, account, last):
-    """
-    Say the outage is over, but only if its start was actually recorded, and only
-    clear the state once the recovery itself is in the journal.
-    """
-    if last is None:
-        return None
-    return None if journal_fault(journal_path, account, RECOVERED) else last
+    def flush(self):
+        """Write what is owed. Safe on every pass; does nothing when nothing is."""
+        if self.pending is None:
+            return
+        if journal_fault(self.journal, self.account, self.pending):
+            self.recorded = self.pending
+            self.pending = None
+
+    def fault(self, message):
+        """Something is wrong, and this is what it is."""
+        if message != self.recorded:
+            self.pending = message
+        self.flush()
+
+    def recovered(self):
+        """
+        Working again. Writes the outage first if it never made it in.
+
+        Nothing is written when nothing went wrong, and nothing is cleared until
+        the recovery itself is durable: a recovery that could not be written must
+        leave the outage open rather than quietly ending it.
+        """
+        self.flush()
+        if self.recorded is None:
+            return
+        if journal_fault(self.journal, self.account, RECOVERED):
+            self.recorded = None
 
 
 def log(line):
@@ -377,9 +406,8 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
         # treats everything as read-only until a human writes the file.
         log(f"no roster at {roster_path}; no sender will be tagged as trusted")
     backoff = BACKOFF_MIN
-    # The last fault put in the journal. Transitions only: an outage retries for
-    # hours, and one record per attempt would bury the mail sitting next to it.
-    fault = None
+    # What the journal has been told about the listener's own health.
+    faults = FaultLog(journal_path, account)
     state = load_state(state_path)
     last_uid = state.get("last_uid") if state.get("mailbox") == mailbox else None
 
@@ -422,7 +450,8 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
                 last_uid = uid
                 state = save_state(state_path, mailbox, validity, last_uid)
 
-            fault = note_recovery(journal_path, account, fault)
+            # Settles anything owed from an earlier outage before saying it is over.
+            faults.recovered()
             backoff = BACKOFF_MIN
 
             while not _stop:
@@ -449,7 +478,7 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
                 break
             # The mailbox is fine; the disk is not. The UID was not advanced, so
             # the same messages come back on the next pass. Wait rather than spin.
-            fault = note_fault(journal_path, account, f"journal unwritable: {exc}", fault)
+            faults.fault(f"journal unwritable: {exc}")
             log(f"journal unwritable; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:
@@ -460,7 +489,7 @@ def run(env_path, mailbox, once, state_path, roster_path, journal_path):
             if _stop:
                 break
             message = f"connection lost ({type(exc).__name__}: {exc})"
-            fault = note_fault(journal_path, account, message, fault)
+            faults.fault(message)
             log(f"{message}; retrying in {backoff}s")
             slept = 0
             while slept < backoff and not _stop:

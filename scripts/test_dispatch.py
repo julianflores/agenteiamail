@@ -319,54 +319,76 @@ check("fault ids do not change with the process hash seed",
 
 # --- the fault transition state ---------------------------------------------
 #
-# The state that suppresses repeat fault records has to mean "durably recorded".
-# Meaning "attempted" instead loses the fault entirely: the failed append is
-# suppressed on every retry, and a recovery record can later appear for an
-# outage nobody was ever told about.
+# The sequence that matters is the one run() actually performs: a fault fails to
+# journal, and the very next pass succeeds. Nothing asks about the fault again on
+# that pass, so unless what is owed is carried, the outage and its recovery both
+# vanish and the episode reads as though nothing happened.
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import idle_listener as listener
 
-d = pathlib.Path(tempfile.mkdtemp())
-blocked = d / "wall"
-blocked.write_text("a file where a directory would need to be")
-unwritable = blocked / "events.jsonl"
-writable = d / "events.jsonl"
 
-state = listener.note_fault(unwritable, "a@b.c", "connection lost (TimeoutError)", None)
-check("a fault that could not be journalled is not marked as recorded", None, state)
+def fault_log():
+    d = pathlib.Path(tempfile.mkdtemp())
+    wall = d / "wall"
+    wall.write_text("a file where a directory would need to be")
+    fl = listener.FaultLog(wall / "events.jsonl", "a@b.c")
+    return fl, d / "events.jsonl"
 
-state = listener.note_fault(unwritable, "a@b.c", "connection lost (TimeoutError)", state)
-check("it is attempted again rather than suppressed", None, state)
 
-state = listener.note_fault(writable, "a@b.c", "connection lost (TimeoutError)", state)
-check("once the journal is writable the fault is recorded",
-      "connection lost (TimeoutError)", state)
+def faults_in(journal):
+    return [r["message"] for r, _ in ev.read_from(journal, 0)
+            if isinstance(r, dict) and r.get("event_type") == "listener.error"]
 
-state = listener.note_fault(writable, "a@b.c", "connection lost (TimeoutError)", state)
-faults = [r for r, _ in ev.read_from(writable, 0)
-          if isinstance(r, dict) and r["event_type"] == "listener.error"]
-check("a recorded fault is written exactly once", 1, len(faults))
-check("the fault that landed is the one that was retried",
-      "connection lost (TimeoutError)", faults[0]["message"])
 
-state = listener.note_recovery(writable, "a@b.c", state)
-check("recovery clears the state once it is journalled", None, state)
-kinds = [r["message"] for r, _ in ev.read_from(writable, 0)
-         if isinstance(r, dict) and r["event_type"] == "listener.error"]
-check("the outage reads as one fault and one recovery",
-      ["connection lost (TimeoutError)", listener.RECOVERED], kinds)
+# The exact production sequence: one failed append, then recovery.
+fl, good = fault_log()
+fl.fault("connection lost (TimeoutError)")
+check("a fault that could not be journalled is not marked as recorded", None, fl.recorded)
+check("but it is remembered as owed", "connection lost (TimeoutError)", fl.pending)
 
-check("recovery is not journalled when no fault was ever recorded",
-      None, listener.note_recovery(writable, "a@b.c", None))
-check("and writes nothing", 2, len([r for r, _ in ev.read_from(writable, 0)]))
+fl.journal = good          # writability returns
+fl.recovered()             # the next pass succeeds, exactly as run() does
+check("the outage is journalled on the recovering pass, without a second failure",
+      ["connection lost (TimeoutError)", listener.RECOVERED], faults_in(good))
+check("and nothing is left owed", (None, None), (fl.recorded, fl.pending))
 
-# A recovery that cannot be written must not clear the state either, or the
-# outage silently ends with nothing saying so.
-stuck = listener.note_fault(writable, "a@b.c", "connection lost (again)", None)
-check("a second distinct fault is recorded", "connection lost (again)", stuck)
+# A sustained outage writes one record, not one per retry.
+fl, good = fault_log()
+fl.journal = good
+for _ in range(5):
+    fl.fault("connection lost (TimeoutError)")
+check("a sustained outage is recorded once", 1, len(faults_in(good)))
+fl.recovered()
+check("and reads as one fault then one recovery",
+      ["connection lost (TimeoutError)", listener.RECOVERED], faults_in(good))
+
+# A different fault is a new transition.
+fl, good = fault_log()
+fl.journal = good
+fl.fault("connection lost (TimeoutError)")
+fl.fault("journal unwritable: no space left on device")
+check("a different fault is recorded as its own transition", 2, len(faults_in(good)))
+
+# Nothing went wrong, so nothing is said.
+fl, good = fault_log()
+fl.journal = good
+fl.recovered()
+check("recovery writes nothing when nothing went wrong", [], faults_in(good))
+
+# A recovery that cannot be written leaves the outage open rather than ending it.
+fl, good = fault_log()
+fl.journal = good
+fl.fault("connection lost (TimeoutError)")
+broken = fl.journal
+fl.journal = pathlib.Path(str(good.parent / "wall")) / "events.jsonl"
+fl.recovered()
 check("a recovery that cannot be journalled keeps the outage open",
-      "connection lost (again)", listener.note_recovery(unwritable, "a@b.c", stuck))
+      "connection lost (TimeoutError)", fl.recorded)
+fl.journal = broken
+fl.recovered()
+check("and is written once it can be", listener.RECOVERED, faults_in(good)[-1])
+check("without duplicating the fault", 2, len(faults_in(good)))
 
 # --- damage points at the right byte ----------------------------------------
 
