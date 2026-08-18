@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""
+Whether this install can currently detect mail and deliver it.
+
+Not "is anything wrong right now", which a quiet mailbox answers the same way as
+a dead listener. Every check here asks about a mechanism rather than about
+traffic, because the failure this project exists to prevent is precisely the one
+where everything looks calm and nothing is being seen.
+
+Exits nonzero when mail cannot be detected or cannot be delivered. A backlog
+waiting on a runtime that is down is a failure; a backlog moving through a
+runtime that is up is not.
+
+    scripts/healthcheck.py            what a person reads
+    scripts/healthcheck.py --json     the same thing for a script
+"""
+
+import argparse
+import calendar
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "harness"))
+
+import event as ev            # noqa: E402
+import dispatch as dsp        # noqa: E402
+from adapters import ACCEPTED, CONFIG   # noqa: E402
+from paths import env_file, repo_root   # noqa: E402
+
+STATE_DIR = Path(os.environ.get(
+    "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
+LISTENER_STATE = STATE_DIR / "idle.json"
+JOURNAL = STATE_DIR / "events.jsonl"
+CURSOR = STATE_DIR / "dispatch.offset"
+DISPATCH_ERR = STATE_DIR / "dispatch.err.log"
+DELIVERY = STATE_DIR / "delivery.json"
+IDLE_ERR = STATE_DIR / "idle.err.log"
+
+LISTENER_UNIT = "agenteiamail-idle.service"
+DISPATCH_UNIT = "agenteiamail-dispatch.service"
+
+# Long enough that a slow delivery is not a fault, short enough that a queue
+# nobody is draining is noticed within a working session.
+STALE_QUEUE = float(os.environ.get("HEALTH_STALE_QUEUE", 15 * 60))
+
+
+def unit_state(unit):
+    """active / inactive / failed / unknown, without guessing when we cannot ask."""
+    try:
+        run = subprocess.run(["systemctl", "--user", "is-active", unit],
+                             capture_output=True, text=True, timeout=5)
+        return (run.stdout or "").strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def tail(path, lines=1):
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return [ln for ln in text.splitlines() if ln.strip()][-lines:]
+
+
+def listener_facts():
+    out = {"unit": unit_state(LISTENER_UNIT), "mailbox": None,
+           "last_uid": None, "uidvalidity": None, "last_error": None}
+    try:
+        state = json.loads(LISTENER_STATE.read_text())
+        out["mailbox"] = state.get("mailbox")
+        out["last_uid"] = state.get("last_uid")
+        out["uidvalidity"] = state.get("uidvalidity")
+    except (OSError, ValueError):
+        pass
+    last = tail(IDLE_ERR)
+    out["last_error"] = last[0] if last else None
+    return out
+
+
+def queue_facts():
+    """
+    What is waiting, and how long the oldest of it has waited.
+
+    Depth alone says nothing: a burst of mail arriving in the last second looks
+    identical to a queue nothing has touched since yesterday. The age is what
+    separates them, and it is read from the record rather than the file's mtime,
+    which compaction and rotation both disturb.
+    """
+    out = {"pending": 0, "oldest_age_seconds": None, "damaged_at": None,
+           "cursor": ev.read_cursor(CURSOR), "journal_bytes": 0}
+    try:
+        out["journal_bytes"] = JOURNAL.stat().st_size
+    except OSError:
+        return out
+
+    oldest = None
+    for record, _ in ev.read_from(JOURNAL, out["cursor"]):
+        if isinstance(record, ev.Corrupt):
+            out["damaged_at"] = record.offset
+            break
+        out["pending"] += 1
+        if oldest is None:
+            oldest = record.get("observed_at")
+
+    if oldest:
+        try:
+            # timegm, not mktime: the stamp is UTC and mktime would read it as
+            # local, which puts the age out by the offset and turns a stale queue
+            # into a fresh one on any host east of Greenwich.
+            seen = calendar.timegm(time.strptime(oldest, "%Y-%m-%dT%H:%M:%SZ"))
+            out["oldest_age_seconds"] = max(0, int(time.time() - seen))
+        except (ValueError, OverflowError):
+            pass
+    return out
+
+
+def delivery_facts():
+    """
+    What the runtime last said, as the dispatcher recorded it.
+
+    Read rather than inferred, and never reconstructed from a reachability
+    check: a gateway answering now is not evidence that something accepted an
+    hour ago was ever acted on. Where a runtime only acknowledges receipt, that
+    distinction is the difference between "we handed it over" and "it was done",
+    and only the first is ever known here.
+    """
+    out = {"last_accepted": None, "last_error": None}
+    try:
+        stored = json.loads(DELIVERY.read_text())
+    except (OSError, ValueError):
+        return out
+    for key in out:
+        entry = stored.get(key)
+        if isinstance(entry, dict):
+            out[key] = {k: entry.get(k) for k in ("event_id", "at", "runtime", "detail")}
+    return out
+
+
+def runtime_facts():
+    """
+    Which runtime is selected, and whether it could take an event right now.
+
+    `check()` proves the adapter can reach its runtime. It does not prove an
+    event would arrive anywhere a person is looking: for a webhook runtime a
+    healthy gateway says nothing about whether the route, its secret, or its
+    delivery target are right. Said here rather than implied, because "health:
+    ok" is exactly the phrase somebody stops reading after.
+    """
+    out = {"selected": None, "available": dsp.available(), "reachable": None,
+           "detail": None, "proves_route_readiness": False}
+    try:
+        out["selected"] = dsp.select_runtime(os.environ.get("AGENTEIAMAIL_RUNTIME", "auto"))
+    except SystemExit as exc:
+        out["detail"] = str(exc)
+        return out
+    try:
+        adapter = dsp.load_adapter(out["selected"])
+    except SystemExit as exc:
+        out["detail"] = str(exc)
+        return out
+
+    result = adapter.check()
+    out["reachable"] = result.status == ACCEPTED
+    out["detail"] = result.detail or None
+    return out
+
+
+def config_facts():
+    out = {"env": None, "env_mode": None, "env_present": False,
+           "repo": str(repo_root()), "version": None}
+    path = env_file()
+    out["env"] = str(path)
+    try:
+        st = path.stat()
+        out["env_present"] = True
+        out["env_mode"] = oct(st.st_mode & 0o777)
+    except OSError:
+        pass
+    try:
+        run = subprocess.run([str(repo_root() / "scripts/version.sh"), "--line"],
+                             capture_output=True, text=True, timeout=20)
+        out["version"] = (run.stdout or "").strip() or None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
+
+
+def assess(facts):
+    """
+    The failures, in the order they stop mail.
+
+    Detection first: nothing downstream matters if the mailbox is not being
+    watched. Then delivery. A queue is only a fault when nothing is draining it.
+    """
+    problems = []
+    warnings = []
+
+    listener, queue, runtime, config = (facts["listener"], facts["queue"],
+                                        facts["runtime"], facts["config"])
+
+    if listener["unit"] != "active":
+        problems.append(f"the listener is {listener['unit']}: no new mail is being detected at all")
+    if listener["last_uid"] is None:
+        warnings.append("the listener has no recorded position yet, so it has not "
+                        "completed a first pass over the mailbox")
+
+    if facts["dispatcher_unit"] != "active":
+        problems.append(f"the dispatcher is {facts['dispatcher_unit']}: mail is being "
+                        "journalled but nothing is delivering it")
+
+    if runtime["selected"] is None:
+        problems.append("no runtime is selected: " + (runtime["detail"] or "unknown reason"))
+    elif runtime["reachable"] is False:
+        problems.append(f"the {runtime['selected']} runtime cannot be reached: "
+                        + (runtime["detail"] or "no detail"))
+
+    if queue["damaged_at"] is not None:
+        problems.append(f"the event journal has a damaged record at byte {queue['damaged_at']}; "
+                        "delivery has stopped there and everything behind it is waiting")
+
+    if queue["pending"] and queue["oldest_age_seconds"] is not None \
+            and queue["oldest_age_seconds"] > STALE_QUEUE:
+        problems.append(f"{queue['pending']} event(s) queued, the oldest for "
+                        f"{queue['oldest_age_seconds'] // 60} minutes: it is not moving")
+
+    if not config["env_present"]:
+        problems.append(f"no credentials at {config['env']}")
+    elif config["env_mode"] not in ("0o600", "0o400"):
+        warnings.append(f"credentials at {config['env']} are mode {config['env_mode']}, "
+                        "which is more readable than they should be")
+
+    return problems, warnings
+
+
+def render(facts, problems, warnings):
+    listener, queue, runtime, config = (facts["listener"], facts["queue"],
+                                        facts["runtime"], facts["config"])
+    out = []
+    out.append(f"runtime      {runtime['selected'] or 'NONE SELECTED'}"
+               + (f"  (available: {', '.join(runtime['available'])})" if runtime["available"] else ""))
+    if runtime["selected"]:
+        reach = "reachable" if runtime["reachable"] else "NOT REACHABLE"
+        out.append(f"             {reach}" + (f": {runtime['detail']}" if runtime["detail"] else ""))
+        out.append("             this proves the runtime answers, not that a delivered "
+                   "event reaches anyone")
+    out.append(f"listener     {listener['unit']}"
+               + (f", {listener['mailbox']} at uid {listener['last_uid']}"
+                  if listener["last_uid"] is not None else ", no position recorded yet"))
+    if listener["last_error"]:
+        out.append(f"             last diagnostic: {listener['last_error']}")
+    out.append(f"dispatcher   {facts['dispatcher_unit']}")
+    delivery = facts["delivery"]
+    accepted = delivery["last_accepted"]
+    if accepted:
+        out.append(f"             last accepted {accepted['event_id']} "
+                   f"by {accepted['runtime']} at {accepted['at']}")
+        if accepted["detail"]:
+            out.append(f"             runtime said: {accepted['detail']}")
+    else:
+        out.append("             nothing has been accepted by a runtime yet")
+    if delivery["last_error"]:
+        err = delivery["last_error"]
+        out.append(f"             last refusal {err['event_id']} at {err['at']}: {err['detail']}")
+    age = queue["oldest_age_seconds"]
+    out.append(f"queue        {queue['pending']} waiting"
+               + (f", oldest {age // 60}m{age % 60:02d}s" if age is not None else "")
+               + f"  (cursor {queue['cursor']} of {queue['journal_bytes']} bytes)")
+    if queue["damaged_at"] is not None:
+        out.append(f"             DAMAGED RECORD at byte {queue['damaged_at']}")
+    out.append(f"credentials  {config['env']}"
+               + (f"  mode {config['env_mode']}" if config["env_present"] else "  MISSING"))
+    out.append(f"repo         {config['repo']}")
+    if config["version"]:
+        out.append(f"version      {config['version']}")
+
+    if not facts["delivery"]["last_accepted"] and not facts["delivery"]["last_error"]:
+        recent = tail(DISPATCH_ERR)
+        if recent:
+            out.append(f"             dispatcher log: {recent[0]}")
+
+    if problems:
+        out.append("")
+        out.append("NOT HEALTHY:")
+        out.extend(f"  - {p}" for p in problems)
+    if warnings:
+        out.append("")
+        out.append("worth knowing:")
+        out.extend(f"  - {w}" for w in warnings)
+    if not problems:
+        out.append("")
+        out.append("Mail can be detected and delivered. An empty queue here means the "
+                   "path is clear,")
+        out.append("not that the mailbox is quiet; those are different facts and only "
+                   "the first is checked.")
+    return "\n".join(out)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args(argv)
+
+    facts = {
+        "listener": listener_facts(),
+        "dispatcher_unit": unit_state(DISPATCH_UNIT),
+        "queue": queue_facts(),
+        "runtime": runtime_facts(),
+        "delivery": delivery_facts(),
+        "config": config_facts(),
+    }
+    problems, warnings = assess(facts)
+
+    if args.json:
+        print(json.dumps({"facts": facts, "problems": problems,
+                          "warnings": warnings, "healthy": not problems},
+                         indent=2, sort_keys=True))
+    else:
+        print(render(facts, problems, warnings))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

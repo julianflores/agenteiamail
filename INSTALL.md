@@ -407,6 +407,21 @@ Set up rotation too: `harness/rotate_logs.py` driven by a user timer. It uses
 
 `harness/dispatch.py` and `harness/session_start.py` are in this repo and working.
 
+**One command answers whether this install works**, once §7 has been through
+once by hand:
+
+```bash
+scripts/healthcheck.py          # nonzero when mail cannot be detected or delivered
+scripts/healthcheck.py --json   # the same facts, for a script
+```
+
+It reports the selected runtime and whether it can be reached, both services,
+the listener's position, the queue depth and the age of the oldest thing in it,
+where the credentials are and what mode they carry, and the installed version.
+It says explicitly that reaching a runtime is not proof a delivered event lands
+in front of anybody, because "health: ok" is the phrase people stop reading
+after.
+
 **Where to put the clone.** `~/.local/share/agenteiamail` if you have no reason
 to prefer somewhere else. Nothing requires it: every path this tool generates is
 resolved from where the scripts actually are, so an existing clone anywhere keeps

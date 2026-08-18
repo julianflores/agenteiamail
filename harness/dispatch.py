@@ -25,6 +25,7 @@ import fcntl
 import importlib
 import os
 import sys
+import json
 import time
 from pathlib import Path
 
@@ -38,6 +39,11 @@ STATE_DIR = Path(os.environ.get(
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
 LOCK = STATE_DIR / "dispatch.lock"
+# What the runtime last said, kept where a health check can read it. The adapter
+# knows the HTTP result; this file is the runtime-neutral durable observation of
+# it, which is the dispatcher's to own because it is the thing that decided the
+# cursor could move.
+STATUS = STATE_DIR / "delivery.json"
 # Compact once the journal is worth compacting, and only from here: the
 # dispatcher is the only process that knows what it has delivered.
 JOURNAL_MAX = int(os.environ.get("DISPATCH_JOURNAL_MAX", 4 * 1024 * 1024))
@@ -65,6 +71,85 @@ def log(message):
     visible. session_start.py reads it at the start of the next session.
     """
     print(message, file=sys.stderr, flush=True)
+
+
+# What has already been written to each status file, so an answer that has not
+# changed is not written again. Keyed by the resolved path, because one process
+# may write more than one, and holding every field that is persisted, because
+# anything left out of the key is a change this cannot see.
+#
+# The remembered answer is paired with the state of the file it went into. A
+# cached answer says what was written, never that it is still there: delete the
+# file under a running dispatcher and, without this, the same continuing result
+# is suppressed for the life of the process and the record never comes back.
+_WRITTEN = {}
+
+
+def _generation(path):
+    """
+    Enough of a file's identity to notice it was replaced or removed.
+
+    None when it is not there, which is what makes absence a mismatch rather
+    than an unknown.
+    """
+    try:
+        st = path.stat()
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return None
+
+
+def note_delivery(status_path, kind, event_id, runtime, detail):
+    """
+    Record what the runtime said about one event, for a health check to render.
+
+    Deliberately narrow. It holds an event id, a time, a runtime name and the
+    adapter's own words: no sender, no subject, no payload, no credentials. A
+    status file is read by whoever can read the state directory, and there is no
+    reason for mail content to be in it.
+
+    Written only when the answer changes. A runtime that is down produces one
+    result per retry, and rewriting the same sentence every two seconds would
+    turn a diagnostic into a disk load. What counts as "the same answer" is every
+    field that gets persisted, at the path it gets persisted to: a key missing a
+    field cannot see that field change, and the write it suppresses is the one
+    that would have corrected the record.
+
+    The key is set after the write, never before. Recording an intention as an
+    accomplishment is how a failed write suppresses its own retry.
+    """
+    path = Path(status_path)
+    resolved = str(path.expanduser())
+    answer = (kind, event_id, runtime, detail or "")
+    remembered = _WRITTEN.get(resolved)
+    if remembered is not None and remembered == (answer, _generation(path)):
+        return
+
+    entry = {
+        "event_id": event_id,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "runtime": runtime,
+        "detail": detail or "",
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current = json.loads(path.read_text())
+        except (OSError, ValueError):
+            current = {}
+        current[kind] = entry
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(current, indent=2, sort_keys=True))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        # Losing the status file loses a diagnostic, not an event. Delivery is
+        # not held up for it, and the answer stays unrecorded so the next result
+        # tries again.
+        log(f"could not write the delivery status at {path}: {exc}")
+        return
+
+    _WRITTEN[resolved] = (answer, _generation(path))
 
 
 def claim(lock_path):
@@ -162,7 +247,7 @@ def select_runtime(requested):
     )
 
 
-def deliver_with_retries(adapter, record, stop):
+def deliver_with_retries(adapter, record, stop, status_path=None):
     """
     Keep trying one record until it is accepted or we are asked to stop.
 
@@ -179,7 +264,14 @@ def deliver_with_retries(adapter, record, stop):
         if result.status == ACCEPTED:
             if complaining:
                 log(f"delivery recovered: {record.get('event_id')} accepted by {adapter.NAME}")
+            if status_path:
+                note_delivery(status_path, "last_accepted", record.get("event_id"),
+                              adapter.NAME, result.detail)
             return True
+
+        if status_path:
+            note_delivery(status_path, "last_error", record.get("event_id"),
+                          adapter.NAME, f"{result.status}: {result.detail}")
 
         if result.status == CONFIG:
             # Said every time rather than once. A configuration fault does not
@@ -208,7 +300,7 @@ def _sleep(seconds, stop):
         time.sleep(min(0.25, max(0.0, end - time.monotonic())))
 
 
-def run_once(adapter, journal, cursor_path, stop=lambda: False):
+def run_once(adapter, journal, cursor_path, stop=lambda: False, status_path=None):
     """
     Drain everything currently in the journal. Returns how many were accepted.
 
@@ -234,7 +326,7 @@ def run_once(adapter, journal, cursor_path, stop=lambda: False):
                 f"line and the dispatcher will carry on from it.")
             break
 
-        if not deliver_with_retries(adapter, record, stop):
+        if not deliver_with_retries(adapter, record, stop, status_path):
             break
         ev.write_cursor(cursor_path, end)
         delivered += 1
@@ -261,6 +353,8 @@ def main(argv=None):
     parser.add_argument("--runtime", default=os.environ.get("AGENTEIAMAIL_RUNTIME", "auto"))
     parser.add_argument("--journal", default=str(JOURNAL))
     parser.add_argument("--cursor", default=str(CURSOR))
+    parser.add_argument("--status", default=str(STATUS),
+                        help="where to record what the runtime last said")
     parser.add_argument("--once", action="store_true",
                         help="drain what is there and exit, rather than following")
     args = parser.parse_args(argv)
@@ -293,11 +387,11 @@ def main(argv=None):
     signal.signal(signal.SIGINT, handle)
 
     if args.once:
-        run_once(adapter, args.journal, args.cursor, stop)
+        run_once(adapter, args.journal, args.cursor, stop, args.status)
         return 0
 
     while not stop():
-        run_once(adapter, args.journal, args.cursor, stop)
+        run_once(adapter, args.journal, args.cursor, stop, args.status)
         maybe_compact(args.journal, args.cursor)
         _sleep(POLL, stop)
     return 0

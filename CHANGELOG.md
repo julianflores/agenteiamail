@@ -16,6 +16,53 @@ is here is the part that matters while upgrading.
 
 ---
 
+## 1.5.0 (2026-08-18)
+
+**One command that answers whether this install can do its job.** Until now the
+only way to know was to read four files and two unit states and infer it, which
+means in practice nobody knew: the failure this project exists to prevent is
+exactly the one where every individual thing looks fine. FR8 of
+[#35](https://github.com/julianflores/agenteiamail/issues/35).
+
+- **[`scripts/healthcheck.py`](scripts/healthcheck.py)** reports the selected
+  runtime and whether it can be reached, both service states, the listener's
+  mailbox and position, the queue depth with the age of the oldest thing in it,
+  a damaged record if there is one, the credentials path and its mode, and the
+  installed version. `--json` for a script.
+- **It exits nonzero when mail cannot be detected or delivered**, so it can be
+  the thing an install is judged by rather than a page to read.
+- **It asks about mechanisms, never about traffic.** An empty inbox is what a
+  healthy install and a dead listener both look like. Every check here is
+  phrased so that the second one fails.
+- **It refuses to let reachability read as delivery.** Reaching a runtime proves
+  the runtime answers; for a webhook runtime it says nothing about whether the
+  route, its secret or its delivery target are right. Printed in place, because
+  "health: ok" is the phrase people stop reading after.
+- **A queue is only a fault when it is not moving.** Depth alone cannot tell a
+  burst that arrived a second ago from a backlog nothing has touched since
+  yesterday; the age of the oldest record is what separates them, and it is read
+  from the record rather than the file's timestamp, which compaction disturbs.
+- **What the runtime last said is recorded by the dispatcher**, in
+  `delivery.json`: the last accepted event id, when, which runtime, and the
+  adapter's own words verbatim. A health check cannot ask an adapter what
+  happened an hour ago, and must never reconstruct it from a reachability check,
+  because a gateway answering now says nothing about whether something accepted
+  earlier was ever acted on. Where a runtime only acknowledges receipt, that
+  distinction is the difference between "handed over" and "done", and only the
+  first is ever known here.
+- **That record holds an identifier and a sentence, never the mail.** No sender,
+  no subject, no payload, no credentials, asserted rather than intended, at mode
+  `600`.
+- **It never prints a credential**, asserted rather than intended.
+- `AGENTS.md` gains it as step 6, and as a standing rule: say "no new mail" only
+  when something checked.
+
+- **28 assertions in
+  [`scripts/test_healthcheck.py`](scripts/test_healthcheck.py)**, each one about
+  whether a failure that looks like nothing is reported as a failure.
+
+---
+
 ## 1.4.0 (2026-08-18)
 
 **Nothing assumes a harness any more.** The delivery half stopped knowing about

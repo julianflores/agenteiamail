@@ -317,6 +317,120 @@ check("fault ids do not change with the process hash seed",
       ev.listener_error(account="a@b.c", message="m", observed_at="t")["event_id"],
       stable.stdout.strip())
 
+# --- what the runtime last said ---------------------------------------------
+#
+# A health check cannot ask an adapter what happened an hour ago, and must never
+# reconstruct it from a reachability check: a gateway answering now says nothing
+# about whether something accepted earlier was ever acted on. So the dispatcher
+# records it, because it is the thing that decided the cursor could move.
+
+j, c = journal_with("uno", "dos")
+status = j.parent / "delivery.json"
+fake = Fake(default=accepted("HTTP 202 status=accepted; agent completion externally unconfirmed"))
+dispatch.run_once(fake, j, c, status_path=status)
+recorded = json.loads(status.read_text())
+check("an accepted delivery is recorded", "imap:INBOX:42:2",
+      recorded["last_accepted"]["event_id"])
+check("the adapter's own words are kept verbatim",
+      "HTTP 202 status=accepted; agent completion externally unconfirmed",
+      recorded["last_accepted"]["detail"])
+check("the runtime that took it is named", "fake", recorded["last_accepted"]["runtime"])
+check("nothing was refused", None, recorded.get("last_error"))
+
+# The status file is readable by anyone who can read the state directory, so it
+# holds an identifier and a sentence, never the mail.
+raw = status.read_text()
+for leak in ("Dulce", "dmercado@example.com", "uno", "dos", "notification_text"):
+    check(f"the status file does not carry {leak!r}", False, leak in raw)
+check("the status file is not world readable", "0o600",
+      oct(status.stat().st_mode & 0o777))
+
+j, c = journal_with("uno")
+status = j.parent / "delivery.json"
+fake = Fake(script=[retry("gateway timed out"), accepted("HTTP 200 status=delivered")])
+dispatch.RETRY_MIN = dispatch.RETRY_MAX = 0.01
+dispatch._WRITTEN.clear()
+dispatch.run_once(fake, j, c, status_path=status)
+recorded = json.loads(status.read_text())
+check("a refusal is recorded as well", True, "gateway timed out" in recorded["last_error"]["detail"])
+check("and the eventual acceptance replaces nothing but itself",
+      "HTTP 200 status=delivered", recorded["last_accepted"]["detail"])
+check("a refusal records which status it was", True,
+      recorded["last_error"]["detail"].startswith("retry:"))
+
+# A runtime that is down answers once per retry; the file must not be rewritten
+# every two seconds for the same sentence.
+j, c = journal_with("uno")
+status = j.parent / "delivery.json"
+dispatch._WRITTEN.clear()
+fake = Fake(default=retry("still down"))
+dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 5, status_path=status)
+first = status.stat().st_mtime_ns
+dispatch.run_once(fake, j, c, stop=lambda: len(fake.seen) >= 10, status_path=status)
+check("an unchanged answer is not rewritten", first, status.stat().st_mtime_ns)
+
+# Suppression must not blind the record to a change. Anything left out of the
+# key is a change it cannot see, and the write it skips is the one that would
+# have corrected the file.
+j, c = journal_with("uno")
+one = j.parent / "one.json"
+two = j.parent / "two.json"
+dispatch._WRITTEN.clear()
+same = ("last_accepted", "imap:INBOX:42:1", "runtime-a", "HTTP 200 status=delivered")
+dispatch.note_delivery(one, *same)
+dispatch.note_delivery(two, *same)
+check("the same answer at a different path is still written", True, two.is_file())
+check("and both files carry it", "runtime-a",
+      json.loads(two.read_text())["last_accepted"]["runtime"])
+
+dispatch.note_delivery(one, "last_accepted", "imap:INBOX:42:1", "runtime-b",
+                       "HTTP 200 status=delivered")
+check("a changed runtime with otherwise identical values is written",
+      "runtime-b", json.loads(one.read_text())["last_accepted"]["runtime"])
+
+dispatch.note_delivery(one, "last_error", "imap:INBOX:42:1", "runtime-b",
+                       "HTTP 200 status=delivered")
+check("the same detail under a different kind is written", True,
+      "last_error" in json.loads(one.read_text()))
+
+# A remembered answer says what was written, never that it is still there.
+dispatch._WRITTEN.clear()
+gone = j.parent / "gone.json"
+dispatch.note_delivery(gone, *same)
+gone.unlink()
+dispatch.note_delivery(gone, *same)
+check("a deleted status file is recreated by the next identical result", True, gone.is_file())
+check("and carries the same answer", "runtime-a",
+      json.loads(gone.read_text())["last_accepted"]["runtime"])
+
+# Replaced rather than removed: a different file at the same path is not the
+# record this process wrote.
+replaced = j.parent / "replaced.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(replaced, *same)
+replaced.write_text("{}")
+dispatch.note_delivery(replaced, *same)
+check("a status file replaced underneath is rewritten", "runtime-a",
+      json.loads(replaced.read_text())["last_accepted"]["runtime"])
+
+# An untouched file is still not rewritten, which is the point of the cache.
+steady = j.parent / "steady.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(steady, *same)
+first_write = steady.stat().st_mtime_ns
+dispatch.note_delivery(steady, *same)
+check("an untouched file with an unchanged answer is left alone",
+      first_write, steady.stat().st_mtime_ns)
+
+# A write that failed has not happened, and must not suppress the next attempt.
+wall = j.parent / "wall"
+wall.write_text("a file where a directory would need to be")
+blocked = wall / "delivery.json"
+dispatch._WRITTEN.clear()
+dispatch.note_delivery(blocked, *same)
+check("a failed write is not remembered as done", None,
+      dispatch._WRITTEN.get(str(blocked)))
+
 # --- the fault transition state ---------------------------------------------
 #
 # The sequence that matters is the one run() actually performs: a fault fails to
