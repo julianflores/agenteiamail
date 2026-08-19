@@ -79,8 +79,11 @@ finds none, and exits 1. An agent that met that failure at step 1 and obeyed the
 rule above would stop before ever reaching the form, on exactly the host the form
 exists for.
 
-**4. Follow [`INSTALL.md`](INSTALL.md).** It is the deployment sequence:
-credentials, Himalaya, the service, harness wiring, verification, troubleshooting.
+**4. Use `scripts/install.sh`, the supported installation path, and follow
+[`INSTALL.md`](INSTALL.md).** Run the installer with the selected runtime and
+`--dry-run` first, review its plan, then rerun the same command without
+`--dry-run`. `INSTALL.md` gives the exact OpenClaw and Hermes commands and covers
+credentials, Himalaya, service wiring, verification, and troubleshooting.
 For a Hermes runtime, also follow [`HERMES.md`](HERMES.md). Do not silently add
 webhook routes, tools, or skills to a Hermes profile: show the operator the
 static route example, explain the direct-notification and roster-agent trust
