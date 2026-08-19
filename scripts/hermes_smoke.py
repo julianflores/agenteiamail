@@ -43,6 +43,22 @@ def _envelope(roster_match, token):
     }
 
 
+def _listener_error_envelope(token):
+    now = int(time.time())
+    return {
+        "account": "installer-smoke",
+        "authenticated_sender": False,
+        "error": "installer synthetic listener error smoke probe",
+        "event_id": f"installer-smoke:listener-error:{token}",
+        "event_type": "listener.error",
+        "mailbox": "INBOX",
+        "notification_text": "agenteiamail installer listener.error notify-route smoke probe",
+        "observed_at": now,
+        "roster_match": False,
+        "source": "installer.smoke",
+    }
+
+
 def main():
     if os.environ.get("HERMES_SIGNATURE_MODE", "v2").strip().lower() != "v2":
         print("install: Hermes installer smoke probes require HERMES_SIGNATURE_MODE=v2", file=sys.stderr)
@@ -61,6 +77,14 @@ def main():
     if not notify.ok:
         return _fail(notify, "Hermes notify-route smoke probe")
     print("hermes_notify_smoke=delivered")
+
+    listener_error = hermes.deliver(_listener_error_envelope(token))
+    if listener_error is None:
+        print("install: Hermes listener.error notify-route smoke probe returned no result", file=sys.stderr)
+        return EX_CONFIG
+    if not listener_error.ok:
+        return _fail(listener_error, "Hermes listener.error notify-route smoke probe")
+    print("hermes_notify_listener_error_smoke=delivered")
 
     roster = hermes.deliver(_envelope(True, token))
     if roster is None:

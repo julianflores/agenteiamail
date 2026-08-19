@@ -222,7 +222,36 @@ printf 'Hermes webhook support\\n'
         self.assertIn("hermes_webhook_probe=accepted", completed.stdout)
         self.assertIn("hermes_health_probe=accepted", completed.stdout)
         self.assertIn("hermes_notify_smoke=delivered", completed.stdout)
+        self.assertIn("hermes_notify_listener_error_smoke=delivered", completed.stdout)
         self.assertIn("hermes_roster_smoke=accepted completion=unconfirmed", completed.stdout)
+        self.assertIn("verification_report_begin", completed.stdout)
+        self.assertIn("verification_runtime=hermes", completed.stdout)
+        for unit in (
+            "agenteiamail-idle.service",
+            "agenteiamail-dispatch.service",
+            "agenteiamail-logrotate.service",
+            "agenteiamail-logrotate.timer",
+        ):
+            self.assertIn(
+                f"verification_unit={self.home}/.config/systemd/user/{unit}",
+                completed.stdout,
+            )
+        self.assertIn(
+            f"verification_secret=notify path={self.notify_secret} mode=0600 validated=true",
+            completed.stdout,
+        )
+        self.assertIn(
+            f"verification_secret=roster path={self.roster_secret} mode=0600 validated=true",
+            completed.stdout,
+        )
+        self.assertIn("verification_smoke=health result=accepted scope=reachability-only", completed.stdout)
+        self.assertIn("verification_smoke=notify-email.received result=delivered", completed.stdout)
+        self.assertIn("verification_smoke=notify-listener.error result=delivered", completed.stdout)
+        self.assertIn(
+            "verification_smoke=roster-email.received result=accepted completion=unconfirmed",
+            completed.stdout,
+        )
+        self.assertIn("verification_report_end result=passed", completed.stdout)
 
         runtime_env = self.home / ".config" / "agenteiamail" / "runtime.env"
         text = runtime_env.read_text(encoding="utf-8")
@@ -238,7 +267,7 @@ printf 'Hermes webhook support\\n'
         self.assertIn('HERMES_SIGNATURE_MODE="v2"', text)
 
         requests = _HermesFixture.requests
-        self.assertEqual(["GET", "POST", "POST"], [item[0] for item in requests])
+        self.assertEqual(["GET", "POST", "POST", "POST"], [item[0] for item in requests])
         self.assertEqual("/health", requests[0][1])
         for method, path, headers, body in requests[1:]:
             self.assertEqual("POST", method)
@@ -258,6 +287,7 @@ printf 'Hermes webhook support\\n'
             self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
             envelope = json.loads(body)
             self.assertEqual("installer.smoke", envelope["source"])
+            self.assertIn(envelope["event_type"], ("email.received", "listener.error"))
             self.assertFalse(envelope["authenticated_sender"])
 
         runtime_calls = self.runtime_log.read_text(encoding="utf-8").splitlines()
@@ -308,7 +338,7 @@ printf 'Hermes webhook support\\n'
         self.assertEqual(10, converged.returncode, converged.stdout + converged.stderr)
         self.assertNotIn("hermes_notify_secret=", converged.stdout)
         self.assertNotIn("hermes_roster_secret=", converged.stdout)
-        self.assertEqual(["GET", "POST", "POST"], [item[0] for item in _HermesFixture.requests])
+        self.assertEqual(["GET", "POST", "POST", "POST"], [item[0] for item in _HermesFixture.requests])
 
 
 if __name__ == "__main__":

@@ -949,6 +949,40 @@ probe_openclaw_service_environment() {
     printf 'openclaw_service_probe=accepted executable=%s\n' "$discovered_runtime_cli"
 }
 
+print_final_verification_report() {
+    local unit label secret_path secret_mode
+    printf 'verification_report_begin\n'
+    printf 'verification_runtime=%s\n' "$runtime"
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+        agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+        printf 'verification_unit=%s/%s validated=true\n' "$unit_dir" "$unit"
+    done
+    if [[ "$runtime" == hermes ]]; then
+        for label in notify roster; do
+            if [[ "$label" == notify ]]; then
+                secret_path=$notify_secret_file
+            else
+                secret_path=$roster_secret_file
+            fi
+            [[ -f "$secret_path" && ! -L "$secret_path" && -O "$secret_path" ]] || \
+                die_config "final verification rejected unsafe $label secret path: $secret_path"
+            secret_mode=$(stat -Lc '%a' -- "$secret_path" 2>/dev/null || true)
+            [[ "$secret_mode" == 600 ]] || \
+                die_config "final verification requires mode 0600 for $label secret: $secret_path"
+            printf 'verification_secret=%s path=%s mode=0600 validated=true\n' \
+                "$label" "$secret_path"
+        done
+        printf 'verification_smoke=health result=accepted scope=reachability-only\n'
+        printf 'verification_smoke=notify-email.received result=delivered\n'
+        printf 'verification_smoke=notify-listener.error result=delivered\n'
+        printf 'verification_smoke=roster-email.received result=accepted completion=unconfirmed\n'
+    else
+        printf 'verification_secret=not-applicable runtime=openclaw\n'
+        printf 'verification_smoke=openclaw-service-environment result=accepted\n'
+    fi
+    printf 'verification_report_end result=passed\n'
+}
+
 converge_required_services() {
     local unit
     "$discovered_systemctl" --user daemon-reload || \
@@ -1174,6 +1208,7 @@ else
     probe_hermes_routes
 fi
 converge_required_services
+print_final_verification_report
 if ((changes_made)); then
     printf 'install: %s artifacts and required user services converged.\n' "$runtime"
     exit "$EX_CHANGED"
