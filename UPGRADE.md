@@ -115,6 +115,9 @@ code and are still running the old.
 
 ```bash
 systemctl --user daemon-reload
+systemctl --user enable agenteiamail-idle.service
+systemctl --user enable agenteiamail-dispatch.service
+systemctl --user enable agenteiamail-logrotate.timer
 systemctl --user restart agenteiamail-idle.service
 systemctl --user restart agenteiamail-dispatch.service
 ```
