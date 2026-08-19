@@ -222,6 +222,25 @@ check_status 'partial convergence resumes to completion' 10 --runtime openclaw
 check_status 'resumed convergence is idempotent' 0 --runtime openclaw
 rm -rf "$sandbox/.config"
 
+# A stop after artifact creation but before manifest recording must self-heal:
+# byte-identical generated content is adopted, while differing content remains
+# unproven and fail-closed.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER_WRITE=1 check_status \
+    'post-create pre-record interruption exposes crash window' 99 --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+crash_window_artifact="$sandbox/.config/systemd/user/agenteiamail-idle.service"
+[[ -f "$crash_window_artifact" && "$(grep -c '^artifact[[:space:]]' "$manifest")" == 0 ]] || {
+    printf 'FAIL crash-window fixture did not leave one created, unrecorded artifact\n'
+    fail=$((fail + 1))
+}
+check_status 'matching crash-window artifact is adopted on resume' 10 --runtime openclaw
+[[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
+    printf 'FAIL resumed convergence did not record the adopted artifact set\n'
+    fail=$((fail + 1))
+}
+check_status 'adopted crash-window convergence is idempotent' 0 --runtime openclaw
+rm -rf "$sandbox/.config"
+
 # Uninstall consumes only durable ownership records from a partial run. A file
 # at a later planned destination, plus credentials/state, must survive.
 AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
@@ -245,6 +264,28 @@ check_status 'partial-run uninstall removes exactly recorded artifacts' 10 \
 }
 check_status 'second partial-run uninstall is idempotent' 0 \
     --runtime openclaw --uninstall
+rm -rf "$sandbox/.config" "$sandbox/.local"
+
+# Modified owned artifacts are preserved, and the refusal names a safe recovery
+# path that transfers ownership back to the operator without deleting edits.
+check_status 'modified-artifact recovery fixture converges' 10 --runtime openclaw
+modified="$sandbox/.config/agenteiamail/runtime.env"
+printf 'AGENTEIAMAIL_RUNTIME=openclaw\n# operator edit\n' >"$modified"
+check_status 'modified owned artifact is preserved with actionable recovery' 78 \
+    --runtime openclaw --uninstall
+[[ "$LAST_OUTPUT" == *"owned artifact changed outside the installer: $modified"* &&
+   "$LAST_OUTPUT" == *'move it to an operator-owned backup path, then rerun --uninstall'* ]] || {
+    printf 'FAIL modified-artifact refusal omitted the path or safe uninstall recovery\n'
+    fail=$((fail + 1))
+}
+modified_backup="$fixture_root/operator-runtime.env"
+mv -- "$modified" "$modified_backup"
+check_status 'uninstall forgets a preserved modified artifact after move-aside' 10 \
+    --runtime openclaw --uninstall
+[[ -f "$modified_backup" && ! -e "$sandbox/.config/agenteiamail/install.manifest" ]] || {
+    printf 'FAIL move-aside recovery did not preserve the edit and clear ownership\n'
+    fail=$((fail + 1))
+}
 rm -rf "$sandbox/.config" "$sandbox/.local"
 
 # The ownership reader fails closed on metadata and syntax before trusting any

@@ -218,7 +218,10 @@ def cmd_remove_artifact(args: argparse.Namespace) -> None:
         finally:
             os.close(file_fd)
         if current.hexdigest() != args.expected_digest:
-            raise Refusal(f"owned artifact changed outside the installer: {destination}")
+            raise Refusal(
+                f"owned artifact changed outside the installer: {destination}; "
+                "move it to an operator-owned backup path, then rerun --uninstall"
+            )
         latest = os.stat(destination.name, dir_fd=dir_fd, follow_symlinks=False)
         if (opened.st_dev, opened.st_ino) != (latest.st_dev, latest.st_ino):
             raise Refusal(f"owned artifact changed during removal: {destination}")
@@ -241,18 +244,26 @@ def cmd_write_artifact(args: argparse.Namespace) -> None:
         if metadata is not None:
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
                 raise Refusal(f"managed artifact is not a user-owned regular file: {destination}")
-            if not args.expected_digest:
-                raise Refusal(f"unowned artifact appeared during convergence: {destination}")
             fd = os.open(destination.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=dir_fd)
             try:
                 current = hashlib.sha256()
                 while chunk := os.read(fd, 8192):
                     current.update(chunk)
+                opened = os.fstat(fd)
             finally:
                 os.close(fd)
-            if current.hexdigest() != args.expected_digest:
-                raise Refusal(f"owned artifact changed outside the installer: {destination}")
-            if current.hexdigest() == desired_digest and stat.S_IMODE(metadata.st_mode) == args.mode:
+            current_digest = current.hexdigest()
+            latest = os.stat(destination.name, dir_fd=dir_fd, follow_symlinks=False)
+            if (opened.st_dev, opened.st_ino) != (latest.st_dev, latest.st_ino):
+                raise Refusal(f"managed artifact changed during convergence: {destination}")
+            if args.expected_digest:
+                if current_digest != args.expected_digest:
+                    raise Refusal(f"owned artifact changed outside the installer: {destination}")
+            elif current_digest != desired_digest:
+                raise Refusal(f"unowned artifact appeared during convergence: {destination}")
+            # With no expected digest, an exact content match is the recoverable
+            # create-before-record crash state. It may now be recorded safely.
+            if current_digest == desired_digest and stat.S_IMODE(latest.st_mode) == args.mode:
                 print(desired_digest)
                 return
             _atomic_replace(dir_fd, destination.name, data, args.mode)
