@@ -1,0 +1,763 @@
+#!/usr/bin/env bash
+# Regression boundary for the first FR7 installer skeleton: it must be runnable,
+# reject ambiguous input, and keep dry-run free of host and runtime side effects.
+
+set -uo pipefail
+umask 077
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+INSTALL="$ROOT/scripts/install.sh"
+pass=0
+fail=0
+
+check_status() {
+    local description=$1 expected=$2
+    shift 2
+    local output status service_path
+    # Every invocation gets a fresh hostile-runtime marker. This keeps a real
+    # non-dry probe from contaminating the later dry-run inertness assertion.
+    rm -f "$sandbox/runtime-side-effect"
+    service_path=${FAKE_SERVICE_PATH:-$fixture_bin:/usr/bin:/bin}
+    output=$(env -u AGENTEIAMAIL_ENV \
+        HOME="$sandbox" USER='victim; id' \
+        XDG_CONFIG_HOME="$sandbox/ignored-config" \
+        XDG_STATE_HOME="$sandbox/ignored-state" \
+        HERMES_NOTIFY_URL=http://127.0.0.1:9/webhooks/agenteiamail-notify \
+        HERMES_ROSTER_URL=http://127.0.0.1:9/webhooks/agenteiamail-roster \
+        HERMES_HEALTH_URL=http://127.0.0.1:9/health \
+        FAKE_SERVICE_PATH="$service_path" \
+        PATH="$fixture_bin:/usr/bin:/bin" \
+        "$INSTALL" "$@" 2>&1)
+    status=$?
+    if [[ "$status" == "$expected" ]]; then
+        printf 'ok   %s
+' "$description"
+        pass=$((pass + 1))
+    else
+        printf 'FAIL %s (expected status %s, got %s)
+%s
+'             "$description" "$expected" "$status" "$output"
+        fail=$((fail + 1))
+    fi
+    LAST_OUTPUT=$output
+}
+
+sandbox=$(mktemp -d)
+fixture_root=$(mktemp -d)
+fixture_bin="$fixture_root/bin"
+mkdir -p "$fixture_bin"
+trap 'rm -rf "$sandbox" "$fixture_root"' EXIT
+before=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path("'$sandbox'").rglob("*")))')
+
+cat >"$fixture_bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "${FAKE_SYSTEMD:-yes}" == yes ]] || exit 1
+case "$*" in
+    '--user show-environment')
+        if [[ "${FAKE_SERVICE_PATH:-}" == '__NONE__' ]]; then
+            printf 'LANG=C.UTF-8\n'
+        else
+            printf 'PATH=%s\n' "${FAKE_SERVICE_PATH:-/usr/bin:/bin}"
+        fi
+        ;;
+    '--user daemon-reload')
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    '--user is-enabled --quiet '*)
+        unit=${*: -1}
+        [[ -e "$FAKE_SYSTEMD_STATE/$unit.enabled" ]]
+        ;;
+    '--user is-active --quiet '*)
+        unit=${*: -1}
+        [[ -e "$FAKE_SYSTEMD_STATE/$unit.active" ]]
+        ;;
+    '--user enable --now '*)
+        unit=${*: -1}
+        : >"$FAKE_SYSTEMD_STATE/$unit.enabled"
+        if [[ "${FAKE_START_INACTIVE_UNIT:-}" != "$unit" ]]; then
+            : >"$FAKE_SYSTEMD_STATE/$unit.active"
+        fi
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    '--user disable --now '*)
+        unit=${*: -1}
+        rm -f "$FAKE_SYSTEMD_STATE/$unit.enabled" "$FAKE_SYSTEMD_STATE/$unit.active"
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    '--user restart '*)
+        unit=${*: -1}
+        : >"$FAKE_SYSTEMD_STATE/$unit.active"
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    *) exit 2 ;;
+esac
+EOF
+cat >"$fixture_bin/systemd-analyze" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+[[ "${FAKE_VERIFY:-yes}" == yes ]]
+EOF
+cat >"$fixture_bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+[[ "${FAKE_RUNTIME_RUN:-yes}" == yes ]] || exit 23
+runtime=${*: -2:1}
+"$runtime" "${@: -1}"
+EOF
+cat >"$fixture_bin/loginctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${FAKE_LINGER:-yes}" == yes ]]; then
+    printf 'yes\n'
+else
+    printf 'no\n'
+fi
+EOF
+cat >"$fixture_bin/id" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == '-un' ]] || exit 2
+printf 'test-user\n'
+EOF
+cat >"$fixture_bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+: >"$HOME/runtime-side-effect"
+[[ "$1" == '--version' ]] || exit 2
+printf 'openclaw test\n'
+EOF
+cat >"$fixture_bin/hermes" <<'EOF'
+#!/usr/bin/env bash
+: >"$HOME/runtime-side-effect"
+if [[ "$1" == 'webhook' && "$2" == '--help' ]]; then
+    printf 'webhook test help\n'
+    exit 0
+fi
+[[ "$1" == '--version' ]] || exit 2
+printf 'hermes test\n'
+EOF
+chmod 755 "$fixture_bin/systemctl" "$fixture_bin/loginctl" "$fixture_bin/id" \
+    "$fixture_bin/systemd-analyze" "$fixture_bin/systemd-run" \
+    "$fixture_bin/openclaw" "$fixture_bin/hermes"
+export FAKE_SYSTEMD_LOG="$fixture_root/systemd.log"
+export FAKE_SYSTEMD_STATE="$fixture_root/systemd-state"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+notify_secret="$fixture_root/notify.secret"
+roster_secret="$fixture_root/roster.secret"
+printf 'notify-test-secret\n' >"$notify_secret"
+printf 'roster-test-secret\n' >"$roster_secret"
+chmod 600 "$notify_secret" "$roster_secret"
+
+check_status 'help is runnable' 0 --help
+[[ "$LAST_OUTPUT" == *'--runtime openclaw'* ]] || {
+    printf 'FAIL help documents OpenClaw\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'--upgrade'* && "$LAST_OUTPUT" == *'--uninstall'* ]] || {
+    printf 'FAIL help documents upgrade and uninstall modes\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'Exit status 10 is success'* ]] || {
+    printf 'FAIL help documents successful status 10\n'; fail=$((fail + 1));
+}
+if grep -Fq 'Exit status `10` is success' "$ROOT/INSTALL.md" &&
+   grep -Fq -- '--upgrade' "$ROOT/INSTALL.md" &&
+   grep -Fq -- '--uninstall' "$ROOT/INSTALL.md" &&
+   grep -Fq -- '`--deliver` and `--chat-id` are guidance labels only' "$ROOT/INSTALL.md"; then
+    printf 'ok   INSTALL.md documents installer modes and successful status 10\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL INSTALL.md omits installer modes or successful status 10\n'
+    fail=$((fail + 1))
+fi
+
+check_status 'Hermes delivery CLI shape parses' 78 \
+    --runtime hermes --deliver telegram --chat-id 12345
+[[ "$LAST_OUTPUT" == *'hermes_route_guidance=guided-only'* &&
+   "$LAST_OUTPUT" == *'delivery_target=telegram'* &&
+   "$LAST_OUTPUT" == *'chat_id=12345'* &&
+   "$LAST_OUTPUT" == *'edits_hermes_config=false'* ]] || {
+    printf 'FAIL guided delivery shape did not disclose its non-mutating boundary\n'
+    fail=$((fail + 1))
+}
+# Interactive Hermes parsing now creates one-time route secrets before stopping
+# for operator route configuration. Keep the alternative profile shape isolated
+# so it tests its own first-run boundary rather than reusing the prior fixture.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+check_status 'Hermes profile CLI shape parses' 78 \
+    --runtime hermes --profile default
+[[ "$LAST_OUTPUT" == *'hermes_route_guidance=existing-profile'* &&
+   "$LAST_OUTPUT" == *'profile=default'* &&
+   "$LAST_OUTPUT" == *'edits_hermes_config=false'* ]] || {
+    printf 'FAIL profile shape did not disclose its operator-managed boundary\n'
+    fail=$((fail + 1))
+}
+check_status 'runtime is mandatory' 64
+check_status 'unknown runtime is rejected' 64 --runtime something-else
+check_status 'duplicate value option is rejected' 64 \
+    --runtime openclaw --runtime hermes
+[[ "$LAST_OUTPUT" == *'duplicate option: --runtime'* ]] || {
+    printf 'FAIL duplicate value option does not name itself\n'; fail=$((fail + 1));
+}
+check_status 'duplicate flag is rejected' 64 \
+    --runtime openclaw --dry-run --dry-run
+check_status 'Hermes options cannot leak into OpenClaw flow' 64 \
+    --runtime openclaw --profile default
+check_status 'non-interactive cannot leak into OpenClaw flow' 64 \
+    --runtime openclaw --non-interactive
+check_status 'delivery target requires a chat ID' 64 \
+    --runtime hermes --deliver telegram
+check_status 'profile and delivery configuration are alternatives' 64 \
+    --runtime hermes --profile default --deliver telegram --chat-id 12345
+# Parser-shape checks above may leave a valid first-stage Hermes manifest and
+# generated secrets. Upgrade convergence needs a fresh OpenClaw fixture rather
+# than an intentionally incompatible manifest from another runtime.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+check_status 'upgrade mode converges the same owned filesystem boundary' 10 --runtime openclaw --upgrade
+rm -rf "$sandbox/.config"
+check_status 'uninstall without ownership is idempotent' 0 --runtime openclaw --uninstall
+check_status 'upgrade and uninstall are mutually exclusive' 64 \
+    --runtime hermes --upgrade --uninstall
+[[ "$LAST_OUTPUT" == *'mutually exclusive'* ]] || {
+    printf 'FAIL mode exclusion reports the contract\n'; fail=$((fail + 1));
+}
+check_status 'non-interactive Hermes install requires route secrets' 64 \
+    --runtime hermes --non-interactive --profile default
+[[ "$LAST_OUTPUT" == *'requires --notify-secret-file and --roster-secret-file'* ]] || {
+    printf 'FAIL non-interactive secret error is actionable\n'; fail=$((fail + 1));
+}
+check_status 'non-interactive Hermes secret-file shape parses' 78 \
+    --runtime hermes --non-interactive --profile default \
+    --notify-secret-file /tmp/notify --roster-secret-file /tmp/roster
+
+# Runtime migration is explicit upgrade work. A first-stage Hermes install owns
+# its generated secrets even before route configuration; switching to OpenClaw
+# must preserve those secrets and shared mail state while converging the common
+# unit/config boundary under the new runtime.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+check_status 'Hermes migration fixture creates owned route secrets' 78 \
+    --runtime hermes --profile default
+generated_notify="$sandbox/.config/agenteiamail/hermes/notify.secret"
+generated_roster="$sandbox/.config/agenteiamail/hermes/roster.secret"
+notify_before=$(sha256sum "$generated_notify")
+roster_before=$(sha256sum "$generated_roster")
+check_status 'runtime migration requires explicit upgrade mode' 78 \
+    --runtime openclaw
+check_status 'Hermes to OpenClaw upgrade preserves owned secrets and state' 10 \
+    --runtime openclaw --upgrade
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+if grep -Fxq $'runtime\topenclaw' "$manifest" &&
+   [[ "$(<"$runtime_env")" == 'AGENTEIAMAIL_RUNTIME=openclaw' &&
+      "$(sha256sum "$generated_notify")" == "$notify_before" &&
+      "$(sha256sum "$generated_roster")" == "$roster_before" ]]; then
+    printf 'ok   runtime migration preserves generated secrets and selects OpenClaw\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL runtime migration changed generated secrets or missed the runtime boundary\n'
+    fail=$((fail + 1))
+fi
+check_status 'migrated OpenClaw upgrade is idempotent' 0 \
+    --runtime openclaw --upgrade
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+
+
+# A fresh filesystem-only OpenClaw convergence creates each managed artifact,
+# then atomically records ownership, verifies the installed units, proves the
+# runtime through the user manager, and converges only required service state.
+check_status 'fresh OpenClaw convergence creates managed artifacts' 10 \
+    --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+[[ -f "$manifest" && ! -L "$manifest" && "$(stat -c %a "$manifest")" == 600 ]] || {
+    printf 'FAIL ownership manifest is not a mode-0600 regular file\n'
+    fail=$((fail + 1))
+}
+[[ "$(stat -c %a "$runtime_env")" == 600 ]] || {
+    printf 'FAIL generated runtime configuration is not mode 0600\n'
+    fail=$((fail + 1))
+}
+[[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
+    printf 'FAIL manifest does not record exactly five created artifacts\n'
+    fail=$((fail + 1))
+}
+[[ "$(<"$runtime_env")" == 'AGENTEIAMAIL_RUNTIME=openclaw' ]] || {
+    printf 'FAIL generated runtime configuration selects OpenClaw\n'
+    fail=$((fail + 1))
+}
+for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+    agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+    installed="$sandbox/.config/systemd/user/$unit"
+    [[ -f "$installed" && ! -L "$installed" ]] || {
+        printf 'FAIL convergence omitted unit %s\n' "$unit"
+        fail=$((fail + 1))
+        continue
+    }
+    [[ "$(<"$installed")" != *'/path/to/agenteiamail'* ]] || {
+        printf 'FAIL unit %s retains unresolved repository placeholder\n' "$unit"
+        fail=$((fail + 1))
+    }
+done
+installed_dispatch="$sandbox/.config/systemd/user/agenteiamail-dispatch.service"
+dispatch_unit="$(<"$installed_dispatch")"
+[[ "$dispatch_unit" == *'EnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+    printf 'FAIL dispatcher unit does not optionally load the installer-generated runtime configuration\n'
+    fail=$((fail + 1))
+}
+[[ "$dispatch_unit" == *'Environment=AGENTEIAMAIL_RUNTIME=auto'* ]] || {
+    printf 'FAIL dispatcher unit does not retain the manual-install runtime default\n'
+    fail=$((fail + 1))
+}
+[[ "$dispatch_unit" == *$'Environment=AGENTEIAMAIL_RUNTIME=auto\nEnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+    printf 'FAIL dispatcher runtime configuration does not override the inline default\n'
+    fail=$((fail + 1))
+}
+[[ -e "$sandbox/runtime-side-effect" ]] || {
+    printf 'FAIL OpenClaw was not executed in the systemd service environment\n'
+    fail=$((fail + 1))
+}
+rm -f "$sandbox/runtime-side-effect"
+[[ "$(<"$FAKE_SYSTEMD_LOG")" == *"verify $sandbox/.config/systemd/user/agenteiamail-idle.service"* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user --pipe --quiet --wait '*"$fixture_bin/openclaw --version"* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-idle.service'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-dispatch.service'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-logrotate.timer'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" != *'enable --now agenteiamail-logrotate.service'* ]] || {
+    printf 'FAIL service verification, runtime probe, or activation command shape is wrong\n'
+    fail=$((fail + 1))
+}
+: >"$FAKE_SYSTEMD_LOG"
+check_status 'second OpenClaw convergence is idempotent' 0 --runtime openclaw
+[[ "$(<"$FAKE_SYSTEMD_LOG")" != *'enable --now'* ]] || {
+    printf 'FAIL converged service state was enabled again\n'; fail=$((fail + 1));
+}
+check_status 'owned converged artifacts are accepted by dry-run' 0 \
+    --runtime openclaw --dry-run
+rm -rf "$sandbox/.config"
+
+# A successful `enable --now` subprocess is not enough: the required unit must
+# actually converge to both enabled and active before installation reports green.
+rm -rf "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+FAKE_START_INACTIVE_UNIT=agenteiamail-dispatch.service check_status \
+    'activation refuses a required unit that does not become active' 78 \
+    --runtime openclaw
+[[ "$LAST_OUTPUT" == *'required user unit did not become enabled and active: agenteiamail-dispatch.service'* ]] || {
+    printf 'FAIL activation postcondition refusal is not actionable\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+
+# Deliberately terminate after artifact N. The durable manifest must authorize
+# exactly successful artifacts 1..N, not later planned paths.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
+    'interrupted convergence exposes a partial-run status' 99 --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+manifest_count=$(grep -c '^artifact[[:space:]]' "$manifest")
+created_count=0
+for path in "$sandbox/.config/systemd/user"/agenteiamail-*.service \
+    "$sandbox/.config/systemd/user"/agenteiamail-*.timer \
+    "$sandbox/.config/agenteiamail/runtime.env"; do
+    [[ -e "$path" ]] && created_count=$((created_count + 1))
+done
+[[ "$manifest_count" == 2 && "$created_count" == 2 ]] || {
+    printf 'FAIL partial run records %s artifacts but created %s (expected 2/2)\n' \
+        "$manifest_count" "$created_count"
+    fail=$((fail + 1))
+}
+while IFS=$'\t' read -r marker kind path digest extra; do
+    [[ "$marker" != artifact ]] && continue
+    [[ -f "$path" && -z "$extra" && -n "$digest" ]] || {
+        printf 'FAIL manifest authorizes an absent or malformed artifact: %s\n' "$path"
+        fail=$((fail + 1))
+    }
+done <"$manifest"
+check_status 'partial convergence resumes to completion' 10 --runtime openclaw
+check_status 'resumed convergence is idempotent' 0 --runtime openclaw
+rm -rf "$sandbox/.config"
+
+# A stop after artifact creation but before manifest recording must self-heal:
+# byte-identical generated content is adopted, while differing content remains
+# unproven and fail-closed.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER_WRITE=1 check_status \
+    'post-create pre-record interruption exposes crash window' 99 --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+crash_window_artifact="$sandbox/.config/systemd/user/agenteiamail-idle.service"
+[[ -f "$crash_window_artifact" && "$(grep -c '^artifact[[:space:]]' "$manifest")" == 0 ]] || {
+    printf 'FAIL crash-window fixture did not leave one created, unrecorded artifact\n'
+    fail=$((fail + 1))
+}
+check_status 'matching crash-window artifact is adopted on resume' 10 --runtime openclaw
+[[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
+    printf 'FAIL resumed convergence did not record the adopted artifact set\n'
+    fail=$((fail + 1))
+}
+check_status 'adopted crash-window convergence is idempotent' 0 --runtime openclaw
+rm -rf "$sandbox/.config"
+
+# Uninstall consumes only durable ownership records from a partial run. A file
+# at a later planned destination, plus credentials/state, must survive.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
+    'second partial run prepares uninstall authorization fixture' 99 \
+    --runtime openclaw
+unowned_later="$sandbox/.config/systemd/user/agenteiamail-logrotate.service"
+printf 'operator-managed later artifact\n' >"$unowned_later"
+printf 'mail-password=preserve\n' >"$sandbox/.config/agenteiamail/env"
+mkdir -p "$sandbox/.local/state/agenteiamail"
+printf 'uid-state\n' >"$sandbox/.local/state/agenteiamail/uid.json"
+check_status 'partial-run uninstall removes exactly recorded artifacts' 10 \
+    --runtime openclaw --uninstall
+[[ ! -e "$sandbox/.config/systemd/user/agenteiamail-idle.service" &&
+   ! -e "$sandbox/.config/systemd/user/agenteiamail-dispatch.service" &&
+   -f "$unowned_later" &&
+   -f "$sandbox/.config/agenteiamail/env" &&
+   -f "$sandbox/.local/state/agenteiamail/uid.json" &&
+   ! -e "$sandbox/.config/agenteiamail/install.manifest" ]] || {
+    printf 'FAIL partial uninstall removed an unowned artifact or preserved owned state\n'
+    fail=$((fail + 1))
+}
+check_status 'second partial-run uninstall is idempotent' 0 \
+    --runtime openclaw --uninstall
+rm -rf "$sandbox/.config" "$sandbox/.local"
+
+# Modified owned artifacts are preserved, and the refusal names a safe recovery
+# path that transfers ownership back to the operator without deleting edits.
+check_status 'modified-artifact recovery fixture converges' 10 --runtime openclaw
+modified="$sandbox/.config/agenteiamail/runtime.env"
+printf 'AGENTEIAMAIL_RUNTIME=openclaw\n# operator edit\n' >"$modified"
+check_status 'modified owned artifact is preserved with actionable recovery' 78 \
+    --runtime openclaw --uninstall
+[[ "$LAST_OUTPUT" == *"owned artifact changed outside the installer: $modified"* &&
+   "$LAST_OUTPUT" == *'move it to an operator-owned backup path, then rerun --uninstall'* ]] || {
+    printf 'FAIL modified-artifact refusal omitted the path or safe uninstall recovery\n'
+    fail=$((fail + 1))
+}
+[[ -f "$sandbox/.config/systemd/user/agenteiamail-idle.service" &&
+   -f "$sandbox/.config/systemd/user/agenteiamail-dispatch.service" &&
+   -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.active" &&
+   -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.active" ]] || {
+    printf 'FAIL uninstall mutated units or service state before validating all owned artifacts\n'
+    fail=$((fail + 1))
+}
+modified_backup="$fixture_root/operator-runtime.env"
+mv -- "$modified" "$modified_backup"
+check_status 'uninstall forgets a preserved modified artifact after move-aside' 10 \
+    --runtime openclaw --uninstall
+[[ -f "$modified_backup" &&
+   ! -e "$sandbox/.config/agenteiamail/install.manifest" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.active" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.active" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-logrotate.timer.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-logrotate.timer.active" ]] || {
+    printf 'FAIL move-aside recovery did not preserve the edit, stop services, and clear ownership\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config" "$sandbox/.local"
+
+# The ownership reader fails closed on metadata and syntax before trusting any
+# path. An attacker-controlled/symlinked record is never followed.
+mkdir -p "$sandbox/.config/agenteiamail"
+printf 'version\t1\nruntime\topenclaw\n' >"$sandbox/.config/agenteiamail/install.manifest"
+chmod 0644 "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'insecure ownership manifest metadata fails closed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
+    printf 'FAIL insecure manifest refusal is not actionable\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+manifest_target="$fixture_root/attacker.manifest"
+printf 'version\t1\nruntime\topenclaw\n' >"$manifest_target"
+chmod 0600 "$manifest_target"
+ln -s "$manifest_target" "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'symlinked ownership manifest is never followed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
+    printf 'FAIL symlinked manifest refusal is not explicit\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+printf 'version\t1\nruntime\topenclaw\nartifact\tfile\t%s\t%s\n' \
+    "$fixture_root/outside-artifact" \
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+    >"$sandbox/.config/agenteiamail/install.manifest"
+chmod 0600 "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'manifest cannot authorize paths outside the managed allowlist' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'unauthorized artifact record'* ]] || {
+    printf 'FAIL unauthorized manifest path refusal is not explicit\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+check_status 'dry-run reports planned OpenClaw changes' 10 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'runtime_cli='*"$fixture_bin/openclaw"* ]] || {
+    printf 'FAIL dry-run reports resolved service-environment runtime CLI\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'runtime_probe=deferred (dry-run never executes runtime code)'* ]] || {
+    printf 'FAIL dry-run does not explain its inert runtime probe policy\n'; fail=$((fail + 1));
+}
+[[ ! -e "$sandbox/runtime-side-effect" ]] || {
+    printf 'FAIL dry-run executed runtime code and mutated HOME\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'systemd_user=available'* ]] || {
+    printf 'FAIL dry-run reports systemd user availability\n'; fail=$((fail + 1));
+}
+for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+    agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+    expected="inventory planned-managed-file=$sandbox/.config/systemd/user/$unit"
+    [[ "$LAST_OUTPUT" == *"$expected"* ]] || {
+        printf 'FAIL inventory omits managed unit %s\n' "$unit"
+        fail=$((fail + 1))
+    }
+done
+[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/runtime.env"* ]] || {
+    printf 'FAIL inventory omits planned runtime configuration\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory planned-ownership-manifest=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
+    printf 'FAIL inventory omits planned ownership manifest\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory container-directory=$sandbox/.config/systemd/user policy=never-own-directory"* ]] || {
+    printf 'FAIL inventory claims the shared systemd directory\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$sandbox/.config/agenteiamail/env role=mailbox-credentials"* ]] || {
+    printf 'FAIL inventory does not preserve mailbox credentials\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory preserve-tree=$sandbox/.local/state/agenteiamail"* ]] || {
+    printf 'FAIL inventory does not preserve event and UID state\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$ROOT/roster.txt role=recipient-roster"* ]] || {
+    printf 'FAIL inventory does not preserve the roster\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'plan contains create, modify, or remove actions'* ]] || {
+    printf 'FAIL dry-run does not explain successful drift status 10\n'; fail=$((fail + 1));
+}
+
+# Pre-existing artifacts without a secure ownership manifest are conflicts, not
+# installer-owned files. Dry-run must preserve them and fail closed.
+mkdir -p "$sandbox/.config/systemd/user"
+printf 'operator-managed\n' >"$sandbox/.config/systemd/user/agenteiamail-idle.service"
+check_status 'dry-run preserves an unowned pre-existing unit and fails closed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-file=$sandbox/.config/systemd/user/agenteiamail-idle.service reason=unproven-ownership"* ]] || {
+    printf 'FAIL unowned unit was not classified as a preserve conflict\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+# A blocked managed artifact is a configuration refusal, never a change plan.
+mkdir -p "$sandbox/.config/systemd/user"
+chmod 0770 "$sandbox/.config/systemd/user"
+check_status 'blocked unit container is a configuration refusal, not plan status 10' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory blocked-managed-file=$sandbox/.config/systemd/user/agenteiamail-idle.service reason=unsafe-container"* ]] || {
+    printf 'FAIL unsafe unit container did not block managed artifacts\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" != *'plan contains create, modify, or remove actions'* ]] || {
+    printf 'FAIL blocked unit container was misreported as executable plan drift\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" == *'inventory result=blocked configuration-refusal=true'* ]] || {
+    printf 'FAIL blocked artifacts did not propagate explicit refusal state\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" == *"install: unsafe managed container $sandbox/.config/systemd/user reason=group-or-world-writable; run: chmod go-w -- $sandbox/.config/systemd/user"* ]] || {
+    printf 'FAIL refusal did not name the unsafe container, reason, and chmod remediation\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" != *'unproven pre-existing artifacts are preserved'* ]] || {
+    printf 'FAIL unsafe-container refusal used the unrelated ownership-manifest explanation\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+outside_systemd="$fixture_root/outside-systemd"
+outside_config="$fixture_root/outside-config"
+mkdir -p "$outside_systemd" "$outside_config" "$sandbox/.config/systemd"
+ln -s "$outside_systemd" "$sandbox/.config/systemd/user"
+ln -s "$outside_config" "$sandbox/.config/agenteiamail"
+check_status 'symlinked managed containers fail closed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/systemd/user reason=symlink"* ]] || {
+    printf 'FAIL symlinked systemd container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail reason=symlink"* ]] || {
+    printf 'FAIL symlinked configuration container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ -z "$(find "$outside_systemd" "$outside_config" -mindepth 1 -print -quit)" ]] || {
+    printf 'FAIL dry-run wrote through a symlinked container\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+# The OpenClaw workspace path is a read-only legacy-migration probe. A symlink
+# must be preserved and must never appear in the managed inventory.
+mkdir -p "$sandbox/.openclaw/workspace"
+legacy_target="$fixture_root/legacy-env"
+printf 'legacy=true\n' >"$legacy_target"
+ln -s "$legacy_target" "$sandbox/.openclaw/workspace/.env"
+check_status 'legacy credential symlink is detected as preserve-only' 10 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$sandbox/.openclaw/workspace/.env role=mailbox-credentials"* ]] || {
+    printf 'FAIL legacy credential symlink was not preserved\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" != *"inventory managed-file=$sandbox/.openclaw/workspace/.env"* ]] || {
+    printf 'FAIL legacy credential probe became an owned write target\n'; fail=$((fail + 1));
+}
+rm -rf "$sandbox/.openclaw"
+
+check_status 'Hermes dry-run validates secrets and reports planned changes' 10 \
+    --runtime hermes --profile default --non-interactive --dry-run \
+    --notify-secret-file "$notify_secret" --roster-secret-file "$roster_secret"
+[[ "$LAST_OUTPUT" == *"inventory external-secret=$notify_secret role=notify validate-only=true"* ]] || {
+    printf 'FAIL inventory claims ownership of external notify secret\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory external-secret=$roster_secret role=roster validate-only=true"* ]] || {
+    printf 'FAIL inventory claims ownership of external roster secret\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" != *'notify-test-secret'* && "$LAST_OUTPUT" != *'roster-test-secret'* ]] || {
+    printf 'FAIL dry-run disclosed route secret material\n'; fail=$((fail + 1));
+}
+
+chmod 644 "$notify_secret"
+check_status 'Hermes dry-run rejects insecure supplied secret metadata' 78 \
+    --runtime hermes --profile default --non-interactive --dry-run \
+    --notify-secret-file "$notify_secret" --roster-secret-file "$roster_secret"
+[[ "$LAST_OUTPUT" == *'non-symlink regular file'* && "$LAST_OUTPUT" == *'mode 0600'* ]] || {
+    printf 'FAIL insecure-secret error omits the required metadata contract\n'
+    fail=$((fail + 1))
+}
+chmod 600 "$notify_secret"
+
+printf 'same-secret\n' >"$notify_secret"
+printf 'same-secret\r\n' >"$roster_secret"
+check_status 'Hermes dry-run rejects equal route secrets after line-ending trim' 78 \
+    --runtime hermes --profile default --non-interactive --dry-run \
+    --notify-secret-file "$notify_secret" --roster-secret-file "$roster_secret"
+[[ "$LAST_OUTPUT" == *'route secrets must differ'* ]] || {
+    printf 'FAIL equal-secret error is not actionable\n'; fail=$((fail + 1));
+}
+printf 'notify-test-secret\n' >"$notify_secret"
+printf 'roster-test-secret\n' >"$roster_secret"
+
+mkdir -p "$sandbox/.config/agenteiamail/hermes"
+printf 'operator-secret\n' >"$sandbox/.config/agenteiamail/hermes/notify.secret"
+chmod 600 "$sandbox/.config/agenteiamail/hermes/notify.secret"
+check_status 'existing default-path Hermes secret is never claimed without provenance' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-secret=$sandbox/.config/agenteiamail/hermes/notify.secret reason=unproven-ownership"* ]] || {
+    printf 'FAIL existing default secret was claimed as installer-managed\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+ln -s "$outside_config" "$sandbox/.config/agenteiamail/hermes"
+check_status 'symlinked nested Hermes secret container fails closed' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=symlink"* ]] || {
+    printf 'FAIL symlinked nested Hermes container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ -z "$(find "$outside_config" -mindepth 1 -print -quit)" ]] || {
+    printf 'FAIL dry-run wrote through the nested Hermes symlink\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+mkdir -p "$sandbox/.config/agenteiamail/hermes"
+chmod 0770 "$sandbox/.config/agenteiamail/hermes"
+check_status 'writable nested Hermes secret container fails closed' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=group-or-world-writable"* ]] || {
+    printf 'FAIL writable nested Hermes container was not rejected\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
+check_status 'uninstall discovery does not require a removed runtime CLI' 0 \
+    --runtime openclaw --uninstall --dry-run
+[[ "$LAST_OUTPUT" == *'runtime_cli=not-required-for-uninstall'* ]] || {
+    printf 'FAIL uninstall runtime discovery policy is unclear\n'; fail=$((fail + 1));
+}
+mv "$fixture_bin/openclaw.off" "$fixture_bin/openclaw"
+
+FAKE_SERVICE_PATH=/usr/bin:/bin check_status \
+    'runtime must exist in the systemd user service PATH' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'openclaw executable not found in the systemd user PATH'* ]] || {
+    printf 'FAIL missing service-environment runtime error is actionable\n'
+    fail=$((fail + 1))
+}
+FAKE_SERVICE_PATH=__NONE__ check_status \
+    'missing systemd PATH fails closed instead of inventing one' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'systemd user environment does not report PATH'* ]] || {
+    printf 'FAIL missing manager PATH did not fail closed\n'
+    fail=$((fail + 1))
+}
+
+FAKE_SYSTEMD=no check_status 'unavailable systemd user session fails discovery' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'systemctl --user is unavailable'* ]] || {
+    printf 'FAIL systemd failure is actionable\n'; fail=$((fail + 1));
+}
+FAKE_LINGER=no check_status 'disabled lingering fails with exact operator command' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'sudo loginctl enable-linger test-user'* ]] || {
+    printf 'FAIL linger failure prints the required command for id -un\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" != *'victim; id'* ]] || {
+    printf 'FAIL linger remediation interpolated inherited USER unsafely\n'
+    fail=$((fail + 1))
+}
+FAKE_LINGER=no check_status 'uninstall continues when lingering is disabled' 0 \
+    --runtime openclaw --uninstall --dry-run
+[[ "$LAST_OUTPUT" == *'linger=disabled (informational; uninstall continues)'* ]] || {
+    printf 'FAIL uninstall does not report disabled lingering informationally\n'
+    fail=$((fail + 1))
+}
+FAKE_SYSTEMD=no check_status 'uninstall continues without the systemd user bus' 0 \
+    --runtime openclaw --uninstall --dry-run
+[[ "$LAST_OUTPUT" == *'systemd_user=unavailable (filesystem inventory continues)'* ]] || {
+    printf 'FAIL degraded uninstall does not report unavailable service operations\n'
+    fail=$((fail + 1))
+}
+
+mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
+FAKE_SYSTEMD=no FAKE_LINGER=no check_status \
+    'dry-run aggregates all prerequisite failures' 78 --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'systemctl --user is unavailable'* &&
+   "$LAST_OUTPUT" == *'user lingering is disabled'* &&
+   "$LAST_OUTPUT" == *'openclaw executable cannot be verified'* &&
+   "$LAST_OUTPUT" == *'prerequisite failures (3)'* ]] || {
+    printf 'FAIL dry-run did not report all prerequisite failures together\n'
+    fail=$((fail + 1))
+}
+mv "$fixture_bin/openclaw.off" "$fixture_bin/openclaw"
+
+after=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path("'$sandbox'").rglob("*")))')
+if [[ "$before" == "$after" ]]; then
+    printf 'ok   skeleton leaves HOME untouched
+'
+    pass=$((pass + 1))
+else
+    printf 'FAIL skeleton changed HOME
+'
+    fail=$((fail + 1))
+fi
+
+printf '
+%d passed, %d failed
+' "$pass" "$fail"
+[[ "$fail" -eq 0 ]]

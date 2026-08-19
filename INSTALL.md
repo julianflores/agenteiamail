@@ -1,10 +1,88 @@
 # Installing agenteiamail on a new host
 
-**Audience:** an AI agent under the OpenClaw harness on Ubuntu 24.04, with sudo,
-deploying this repository for the first time.
+**Audience:** an AI agent or operator deploying this repository on Ubuntu 24.04
+for either OpenClaw or Hermes Agent, with access to a systemd user session.
 
-You are not building anything. The code exists. This is: prove the host can run
-it, get the credentials, wire it up, and verify it actually works.
+`scripts/install.sh` is the runtime-neutral, idempotent path for the owned
+systemd-user boundary. The established manual procedure below remains useful for
+mailbox credentials, `roster.txt`, and end-to-end delivery verification, which the
+installer deliberately does not create or infer.
+
+### FR7 installer boundary and exit statuses
+
+```bash
+scripts/install.sh --runtime openclaw --dry-run
+scripts/install.sh --runtime hermes --profile PROFILE --dry-run
+scripts/install.sh --runtime hermes --deliver telegram --chat-id CHAT_ID --dry-run
+scripts/install.sh --runtime openclaw --upgrade --dry-run
+scripts/install.sh --runtime hermes --uninstall --dry-run
+```
+
+Install is the default mode. `--upgrade` and `--uninstall` are mutually exclusive
+modes that share prerequisite discovery and a mode-0600 ownership manifest.
+Install and upgrade atomically converge four unit files and `runtime.env`, verify
+the units and runtime-specific route/runtime probes, then enable the idle listener,
+dispatcher, and rotation timer. A changed owned runtime boundary is restarted;
+an unchanged rerun makes no service change. Runtime migration is allowed only with
+`--upgrade`; generated Hermes secrets remain accounted for across migration.
+
+Uninstall first validates every owned artifact. If the user manager is reachable,
+it then disables and stops the three owned enabled units before removing only
+manifest-recorded files. Credentials, roster, repository, mail state, journal,
+cursor, and logs are preserved. On a degraded host without a user manager,
+filesystem cleanup continues with an explicit warning that deactivation is
+unconfirmed.
+
+`--dry-run` resolves the systemd-user service `PATH` and reports planned versus
+preserved artifacts without executing OpenClaw or Hermes and without modifying
+files, secrets, services, or state. The application currently uses fixed paths
+under `$HOME`; ambient `XDG_CONFIG_HOME` and `XDG_STATE_HOME` overrides are
+reported and ignored so the inventory cannot disagree with runtime code.
+
+**Exit status `10` is success:** for dry-run it means the plan contains create,
+modify, or remove work; for a mutating run it means convergence made changes.
+Exit `0` is also success and means no action is needed. Shell wrappers,
+CI jobs, and configuration-management tools must accept both values; for example,
+do not put the installer directly on the left side of `&&` without handling `10`.
+Exit `64` is a usage error. Exit `78` is a configuration, prerequisite,
+unavailable-phase, or unproven-ownership conflict.
+
+The ownership inventory is deliberately conservative. An absent target is only
+`planned-managed`; discovery does not confer ownership. Any pre-existing unit,
+generated-config path, manifest, or default-path secret without secure manifest
+provenance is preserved and fails closed. Every managed container chain is checked for symlinks,
+non-directories, unexpected ownership, and group/world writability before child
+artifacts are classified; mutation must revalidate immediately before writing.
+Shared directories are containers and are never claimed as owned. Mailbox
+credentials, `roster.txt`, the repository, UID state, event journal, cursor, and
+logs are always preserved. Operator-provisioned Hermes secret files are
+validation-only external artifacts.
+
+For OpenClaw, discovery accepts only a `PATH` actually reported by the systemd
+user manager. A missing `PATH=` entry is a configuration failure; the installer
+does not invent a fallback or add `$HOME/.local/bin`.
+
+### Hermes profile and guided-delivery boundary
+
+`--deliver` and `--chat-id` are guidance labels only. They are echoed in a
+shell-quoted route-guidance record so the operator can apply the intended target,
+but the installer does **not** edit Hermes configuration, create a profile, choose
+a route URL, or grant tools/skills. `--profile` likewise labels an existing,
+operator-managed profile; it does not select or mutate that profile. The operator
+must still configure both authenticated routes from [`HERMES.md`](HERMES.md) and
+supply all three full URLs through `HERMES_NOTIFY_URL`, `HERMES_ROSTER_URL`, and
+`HERMES_HEALTH_URL`. Those URL values, not the labels, determine what is probed.
+
+In interactive mode without external secret paths, the first run generates two
+different mode-0600 route secrets, records their ownership, prints them once, and
+exits `78` before writing units or activating services. Configure each value on
+only its matching route, then rerun. `--non-interactive` never generates or prints
+secret material and therefore requires both `--notify-secret-file` and
+`--roster-secret-file`; those files remain external validation-only artifacts.
+
+You are not building application code during a manual installation. The code
+exists. The job is to prove the host can run it, get the credentials, wire it up,
+and verify it actually works.
 
 **Read [`DESIGN.md`](DESIGN.md) before changing any of it.** Several lines here look
 like style and are not.

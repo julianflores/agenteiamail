@@ -31,6 +31,30 @@ def enabled_units(document):
     ))
 
 
+def required_environment_files():
+    required = set()
+    for unit in (ROOT / "systemd").iterdir():
+        if not unit.is_file():
+            continue
+        for value in re.findall(r"^EnvironmentFile=(\S+)", unit.read_text(), re.MULTILINE):
+            if not value.startswith("-"):
+                required.add(value)
+    return required
+
+
+def manually_created_files(document):
+    text = (ROOT / document).read_text()
+    created = set()
+    for line in text.splitlines():
+        command = line.strip()
+        if command.startswith("install "):
+            created.add(command.split()[-1])
+        match = re.search(r">{1,2}\s*(\S+)\s*$", command)
+        if match:
+            created.add(match.group(1))
+    return created
+
+
 shipped = {path.name for path in (ROOT / "systemd").iterdir() if path.is_file()}
 installed = installed_units("INSTALL.md")
 enableable = {
@@ -41,6 +65,13 @@ enableable = {
 check("INSTALL.md installs every shipped unit", shipped, installed)
 check("INSTALL.md enables every installed enableable unit", enableable, enabled_units("INSTALL.md"))
 check("UPGRADE.md enables every installed enableable unit", enableable, enabled_units("UPGRADE.md"))
+required_env_files = required_environment_files()
+manual_files = manually_created_files("INSTALL.md")
+check(
+    "required EnvironmentFile paths are created by the manual procedure",
+    set(),
+    required_env_files - manual_files,
+)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -8,6 +8,27 @@ that three things this tool depends on are deliberately outside the repository,
 so `git pull` cannot reach them, and the pieces it does reach are running code
 that has to be restarted before the new version is the one in memory.
 
+For an install already owned by the FR7 manifest, use the idempotent installer
+after reviewing the changelog and pulling the repository:
+
+```bash
+scripts/install.sh --runtime openclaw --upgrade --dry-run
+scripts/install.sh --runtime openclaw --upgrade
+# Or migrate explicitly; runtime changes are refused without --upgrade:
+scripts/install.sh --runtime hermes --profile PROFILE --upgrade
+```
+
+The mutating run revalidates manifest provenance, converges changed owned files,
+verifies runtime-specific probes, reloads systemd, and restarts required units when
+the owned runtime boundary changed. It preserves credentials, roster, journal,
+cursor, logs, and generated Hermes secrets across a runtime migration. Exit `10`
+means successful changes; `0` means already converged. For Hermes, configure the
+operator-managed routes and full URL environment described in `INSTALL.md` and
+`HERMES.md` first; `--profile` and `--deliver`/`--chat-id` do not edit Hermes.
+
+The manual sequence below remains the recovery path for legacy installs without
+an ownership manifest.
+
 ---
 
 ## 1. Find out where you are

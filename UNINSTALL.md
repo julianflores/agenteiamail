@@ -8,6 +8,27 @@ on, or because you changed your mind.
 server. If you also want the agent to lose access, revoke its app-password at the
 provider, which is the only step that cannot be undone from this machine.
 
+For an install owned by the FR7 manifest, prefer the provenance-aware uninstall:
+
+```bash
+scripts/install.sh --runtime openclaw --uninstall --dry-run
+scripts/install.sh --runtime openclaw --uninstall
+```
+
+Use the runtime recorded by the current install. The mutating command validates
+all owned files before its first mutation, disables and stops reachable owned
+units, and removes only manifest-recorded artifacts. It deliberately preserves
+mailbox credentials, `roster.txt`, the repository, event journal, cursor, logs,
+and other state. If the systemd user manager is unavailable, filesystem cleanup
+continues but reports that service deactivation is unconfirmed. Exit `10` means
+successful changes; `0` means there was no ownership manifest and nothing was
+removed. A changed owned artifact is preserved and causes a fail-closed refusal
+with move-aside recovery instructions.
+
+The manual destructive procedure below is for legacy installs without an
+ownership manifest, or for an operator who intentionally wants to remove the
+preserved credentials/state/repository too.
+
 ---
 
 ## 0. First, if you intend to reinstall
