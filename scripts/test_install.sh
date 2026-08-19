@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Regression boundary for the first FR7 installer skeleton: it must be runnable,
-# reject ambiguous input, and remain completely inert until implementation lands.
+# reject ambiguous input, and keep dry-run free of host and runtime side effects.
 
 set -uo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL="$ROOT/scripts/install.sh"
@@ -12,8 +13,14 @@ fail=0
 check_status() {
     local description=$1 expected=$2
     shift 2
-    local output status
-    output=$(HOME="$sandbox" PATH="$fixture_bin:/usr/bin:/bin" \
+    local output status service_path
+    service_path=${FAKE_SERVICE_PATH:-$fixture_bin:/usr/bin:/bin}
+    output=$(env -u AGENTEIAMAIL_ENV \
+        HOME="$sandbox" USER='victim; id' \
+        XDG_CONFIG_HOME="$sandbox/ignored-config" \
+        XDG_STATE_HOME="$sandbox/ignored-state" \
+        FAKE_SERVICE_PATH="$service_path" \
+        PATH="$fixture_bin:/usr/bin:/bin" \
         "$INSTALL" "$@" 2>&1)
     status=$?
     if [[ "$status" == "$expected" ]]; then
@@ -40,7 +47,11 @@ cat >"$fixture_bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 [[ "${FAKE_SYSTEMD:-yes}" == yes ]] || exit 1
 [[ "$*" == '--user show-environment' ]] || exit 0
-printf 'PATH=/usr/bin:/bin\n'
+if [[ "${FAKE_SERVICE_PATH:-}" == '__NONE__' ]]; then
+    printf 'LANG=C.UTF-8\n'
+else
+    printf 'PATH=%s\n' "${FAKE_SERVICE_PATH:-/usr/bin:/bin}"
+fi
 EOF
 cat >"$fixture_bin/loginctl" <<'EOF'
 #!/usr/bin/env bash
@@ -50,13 +61,20 @@ else
     printf 'no\n'
 fi
 EOF
+cat >"$fixture_bin/id" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == '-un' ]] || exit 2
+printf 'test-user\n'
+EOF
 cat >"$fixture_bin/openclaw" <<'EOF'
 #!/usr/bin/env bash
+: >"$HOME/runtime-side-effect"
 [[ "$1" == '--version' ]] || exit 2
 printf 'openclaw test\n'
 EOF
 cat >"$fixture_bin/hermes" <<'EOF'
 #!/usr/bin/env bash
+: >"$HOME/runtime-side-effect"
 if [[ "$1" == 'webhook' && "$2" == '--help' ]]; then
     printf 'webhook test help\n'
     exit 0
@@ -64,7 +82,7 @@ fi
 [[ "$1" == '--version' ]] || exit 2
 printf 'hermes test\n'
 EOF
-chmod 755 "$fixture_bin/systemctl" "$fixture_bin/loginctl" \
+chmod 755 "$fixture_bin/systemctl" "$fixture_bin/loginctl" "$fixture_bin/id" \
     "$fixture_bin/openclaw" "$fixture_bin/hermes"
 notify_secret="$fixture_root/notify.secret"
 roster_secret="$fixture_root/roster.secret"
@@ -103,8 +121,17 @@ check_status 'Hermes profile CLI shape parses' 78 \
     --runtime hermes --profile default
 check_status 'runtime is mandatory' 64
 check_status 'unknown runtime is rejected' 64 --runtime something-else
+check_status 'duplicate value option is rejected' 64 \
+    --runtime openclaw --runtime hermes
+[[ "$LAST_OUTPUT" == *'duplicate option: --runtime'* ]] || {
+    printf 'FAIL duplicate value option does not name itself\n'; fail=$((fail + 1));
+}
+check_status 'duplicate flag is rejected' 64 \
+    --runtime openclaw --dry-run --dry-run
 check_status 'Hermes options cannot leak into OpenClaw flow' 64 \
     --runtime openclaw --profile default
+check_status 'non-interactive cannot leak into OpenClaw flow' 64 \
+    --runtime openclaw --non-interactive
 check_status 'delivery target requires a chat ID' 64 \
     --runtime hermes --deliver telegram
 check_status 'profile and delivery configuration are alternatives' 64 \
@@ -127,24 +154,33 @@ check_status 'non-interactive Hermes secret-file shape parses' 78 \
 check_status 'dry-run reports planned OpenClaw changes' 10 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'runtime_cli='*"$fixture_bin/openclaw"* ]] || {
-    printf 'FAIL dry-run reports resolved runtime CLI\n'; fail=$((fail + 1));
+    printf 'FAIL dry-run reports resolved service-environment runtime CLI\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *'runtime_probe=deferred (dry-run never executes runtime code)'* ]] || {
+    printf 'FAIL dry-run does not explain its inert runtime probe policy\n'; fail=$((fail + 1));
+}
+[[ ! -e "$sandbox/runtime-side-effect" ]] || {
+    printf 'FAIL dry-run executed runtime code and mutated HOME\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *'systemd_user=available'* ]] || {
     printf 'FAIL dry-run reports systemd user availability\n'; fail=$((fail + 1));
 }
 for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
     agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
-    expected="inventory managed-file=$sandbox/.config/systemd/user/$unit"
+    expected="inventory planned-managed-file=$sandbox/.config/systemd/user/$unit"
     [[ "$LAST_OUTPUT" == *"$expected"* ]] || {
         printf 'FAIL inventory omits managed unit %s\n' "$unit"
         fail=$((fail + 1))
     }
 done
-[[ "$LAST_OUTPUT" == *"inventory managed-file=$sandbox/.config/agenteiamail/runtime.env"* ]] || {
-    printf 'FAIL inventory omits generated runtime configuration\n'; fail=$((fail + 1));
+[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/runtime.env"* ]] || {
+    printf 'FAIL inventory omits planned runtime configuration\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory managed-file=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
-    printf 'FAIL inventory omits its ownership manifest\n'; fail=$((fail + 1));
+[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
+    printf 'FAIL inventory omits planned ownership manifest\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" == *"inventory container-directory=$sandbox/.config/systemd/user policy=never-own-directory"* ]] || {
+    printf 'FAIL inventory claims the shared systemd directory\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *"inventory preserve-file=$sandbox/.config/agenteiamail/env role=mailbox-credentials"* ]] || {
     printf 'FAIL inventory does not preserve mailbox credentials\n'; fail=$((fail + 1));
@@ -159,19 +195,36 @@ done
     printf 'FAIL dry-run does not explain successful drift status 10\n'; fail=$((fail + 1));
 }
 
-# A plan with matching managed unit sources and all generated-path placeholders
-# present is converged at this inventory-only boundary.
-mkdir -p "$sandbox/.config/systemd/user" "$sandbox/.config/agenteiamail"
-for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
-    agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
-    cp "$ROOT/systemd/$unit" "$sandbox/.config/systemd/user/$unit"
-done
-: >"$sandbox/.config/agenteiamail/runtime.env"
-: >"$sandbox/.config/agenteiamail/install.manifest"
-check_status 'dry-run exits 0 when the current plan is converged' 0 \
+# Pre-existing artifacts without a secure ownership manifest are conflicts, not
+# installer-owned files. Dry-run must preserve them and fail closed.
+mkdir -p "$sandbox/.config/systemd/user"
+printf 'operator-managed\n' >"$sandbox/.config/systemd/user/agenteiamail-idle.service"
+check_status 'dry-run preserves an unowned pre-existing unit and fails closed' 78 \
     --runtime openclaw --dry-run
-[[ "$LAST_OUTPUT" == *'system is converged; no changes needed'* ]] || {
-    printf 'FAIL converged dry-run does not explain status 0\n'; fail=$((fail + 1));
+[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-file=$sandbox/.config/systemd/user/agenteiamail-idle.service reason=unproven-ownership"* ]] || {
+    printf 'FAIL unowned unit was not classified as a preserve conflict\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+outside_systemd="$fixture_root/outside-systemd"
+outside_config="$fixture_root/outside-config"
+mkdir -p "$outside_systemd" "$outside_config" "$sandbox/.config/systemd"
+ln -s "$outside_systemd" "$sandbox/.config/systemd/user"
+ln -s "$outside_config" "$sandbox/.config/agenteiamail"
+check_status 'symlinked managed containers fail closed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/systemd/user reason=symlink"* ]] || {
+    printf 'FAIL symlinked systemd container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail reason=symlink"* ]] || {
+    printf 'FAIL symlinked configuration container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ -z "$(find "$outside_systemd" "$outside_config" -mindepth 1 -print -quit)" ]] || {
+    printf 'FAIL dry-run wrote through a symlinked container\n'
+    fail=$((fail + 1))
 }
 rm -rf "$sandbox/.config"
 
@@ -225,6 +278,40 @@ check_status 'Hermes dry-run rejects equal route secrets after line-ending trim'
 printf 'notify-test-secret\n' >"$notify_secret"
 printf 'roster-test-secret\n' >"$roster_secret"
 
+mkdir -p "$sandbox/.config/agenteiamail/hermes"
+printf 'operator-secret\n' >"$sandbox/.config/agenteiamail/hermes/notify.secret"
+chmod 600 "$sandbox/.config/agenteiamail/hermes/notify.secret"
+check_status 'existing default-path Hermes secret is never claimed without provenance' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-secret=$sandbox/.config/agenteiamail/hermes/notify.secret reason=unproven-ownership"* ]] || {
+    printf 'FAIL existing default secret was claimed as installer-managed\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+ln -s "$outside_config" "$sandbox/.config/agenteiamail/hermes"
+check_status 'symlinked nested Hermes secret container fails closed' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=symlink"* ]] || {
+    printf 'FAIL symlinked nested Hermes container was not rejected\n'
+    fail=$((fail + 1))
+}
+[[ -z "$(find "$outside_config" -mindepth 1 -print -quit)" ]] || {
+    printf 'FAIL dry-run wrote through the nested Hermes symlink\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+mkdir -p "$sandbox/.config/agenteiamail/hermes"
+chmod 0770 "$sandbox/.config/agenteiamail/hermes"
+check_status 'writable nested Hermes secret container fails closed' 78 \
+    --runtime hermes --profile default --dry-run
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=group-or-world-writable"* ]] || {
+    printf 'FAIL writable nested Hermes container was not rejected\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
 mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
 check_status 'uninstall discovery does not require a removed runtime CLI' 0 \
     --runtime openclaw --uninstall --dry-run
@@ -233,13 +320,20 @@ check_status 'uninstall discovery does not require a removed runtime CLI' 0 \
 }
 mv "$fixture_bin/openclaw.off" "$fixture_bin/openclaw"
 
-mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
-check_status 'missing selected runtime CLI fails discovery' 78 \
+FAKE_SERVICE_PATH=/usr/bin:/bin check_status \
+    'runtime must exist in the systemd user service PATH' 78 \
     --runtime openclaw --dry-run
-[[ "$LAST_OUTPUT" == *'openclaw executable not found'* ]] || {
-    printf 'FAIL missing runtime error is actionable\n'; fail=$((fail + 1));
+[[ "$LAST_OUTPUT" == *'openclaw executable not found in the systemd user PATH'* ]] || {
+    printf 'FAIL missing service-environment runtime error is actionable\n'
+    fail=$((fail + 1))
 }
-mv "$fixture_bin/openclaw.off" "$fixture_bin/openclaw"
+FAKE_SERVICE_PATH=__NONE__ check_status \
+    'missing systemd PATH fails closed instead of inventing one' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'systemd user environment does not report PATH'* ]] || {
+    printf 'FAIL missing manager PATH did not fail closed\n'
+    fail=$((fail + 1))
+}
 
 FAKE_SYSTEMD=no check_status 'unavailable systemd user session fails discovery' 78 \
     --runtime openclaw --dry-run
@@ -248,13 +342,23 @@ FAKE_SYSTEMD=no check_status 'unavailable systemd user session fails discovery' 
 }
 FAKE_LINGER=no check_status 'disabled lingering fails with exact operator command' 78 \
     --runtime openclaw --dry-run
-[[ "$LAST_OUTPUT" == *'sudo loginctl enable-linger '* ]] || {
-    printf 'FAIL linger failure prints the required command\n'; fail=$((fail + 1));
+[[ "$LAST_OUTPUT" == *'sudo loginctl enable-linger test-user'* ]] || {
+    printf 'FAIL linger failure prints the required command for id -un\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" != *'victim; id'* ]] || {
+    printf 'FAIL linger remediation interpolated inherited USER unsafely\n'
+    fail=$((fail + 1))
 }
 FAKE_LINGER=no check_status 'uninstall continues when lingering is disabled' 0 \
     --runtime openclaw --uninstall --dry-run
 [[ "$LAST_OUTPUT" == *'linger=disabled (informational; uninstall continues)'* ]] || {
     printf 'FAIL uninstall does not report disabled lingering informationally\n'
+    fail=$((fail + 1))
+}
+FAKE_SYSTEMD=no check_status 'uninstall continues without the systemd user bus' 0 \
+    --runtime openclaw --uninstall --dry-run
+[[ "$LAST_OUTPUT" == *'systemd_user=unavailable (filesystem inventory continues)'* ]] || {
+    printf 'FAIL degraded uninstall does not report unavailable service operations\n'
     fail=$((fail + 1))
 }
 
@@ -263,7 +367,7 @@ FAKE_SYSTEMD=no FAKE_LINGER=no check_status \
     'dry-run aggregates all prerequisite failures' 78 --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'systemctl --user is unavailable'* &&
    "$LAST_OUTPUT" == *'user lingering is disabled'* &&
-   "$LAST_OUTPUT" == *'openclaw executable not found'* &&
+   "$LAST_OUTPUT" == *'openclaw executable cannot be verified'* &&
    "$LAST_OUTPUT" == *'prerequisite failures (3)'* ]] || {
     printf 'FAIL dry-run did not report all prerequisite failures together\n'
     fail=$((fail + 1))

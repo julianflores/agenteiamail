@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Idempotent agenteiamail installer — FR7 implementation skeleton.
 #
-# The public CLI contract is established here before host mutation phases land.
-# Until prerequisite discovery and the managed-artifact inventory are complete,
-# every valid non-help invocation remains deliberately inert.
+# The public CLI contract, inert discovery, and fail-closed ownership inventory
+# land before any host mutation phase. Every valid non-help, non-dry invocation
+# remains deliberately inert.
 
 set -euo pipefail
 
@@ -36,7 +36,7 @@ Options:
   --non-interactive          Never create or print route secrets
   --notify-secret-file PATH  Pre-provisioned Hermes notification-route secret
   --roster-secret-file PATH  Pre-provisioned Hermes roster-route secret
-  --dry-run                  Discover prerequisites and print the plan without changes
+  --dry-run                  Discover and plan without executing runtimes or changing host
   -h, --help                 Show this help
 
 Exit status:
@@ -65,6 +65,23 @@ die_config() {
 
 resolve_command() {
     command -v "$1" 2>/dev/null || return 1
+}
+
+resolve_in_path() {
+    local name=$1 search_path=$2
+    PATH="$search_path" command -v "$name" 2>/dev/null || return 1
+}
+
+systemd_service_path() {
+    local systemctl_bin=$1 environment line
+    environment=$("$systemctl_bin" --user show-environment 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        if [[ "$line" == PATH=* ]]; then
+            printf '%s' "${line#PATH=}"
+            return 0
+        fi
+    done <<<"$environment"
+    return 2
 }
 
 validate_hermes_secret_files() {
@@ -104,8 +121,10 @@ prereq_error() {
 }
 
 discover_prerequisites() {
-    local python="" systemctl_bin="" loginctl_bin="" linger="unknown" user_name
-    local runtime_cli="" logrotate_bin=""
+    local python="" systemctl_bin="" loginctl_bin="" linger="unknown" user_name=""
+    local runtime_cli="" logrotate_bin="" service_path=""
+    local systemd_state="unavailable" quoted_user path_status
+    local service_path_error_reported=0
     prerequisite_errors=()
 
     if [[ -z "${HOME:-}" || "$HOME" != /* ]]; then
@@ -117,13 +136,32 @@ discover_prerequisites() {
 
     systemctl_bin=$(resolve_command systemctl || true)
     if [[ -z "$systemctl_bin" ]]; then
-        prereq_error 'systemctl executable not found; a systemd user session is required'
-    elif ! "$systemctl_bin" --user show-environment >/dev/null 2>&1; then
-        prereq_error 'systemctl --user is unavailable; use a host with a systemd user session'
+        if [[ "$mode" == uninstall ]]; then
+            systemd_state="unavailable (filesystem inventory continues)"
+        else
+            prereq_error 'systemctl executable not found; a systemd user session is required'
+        fi
+    elif service_path=$(systemd_service_path "$systemctl_bin"); then
+        systemd_state="available"
+    else
+        path_status=$?
+        if ((path_status == 2)); then
+            systemd_state="available (PATH not reported)"
+            if [[ "$mode" != uninstall && "$runtime" == openclaw ]]; then
+                prereq_error 'systemd user environment does not report PATH; cannot verify OpenClaw'
+                service_path_error_reported=1
+            fi
+        elif [[ "$mode" == uninstall ]]; then
+            systemd_state="unavailable (filesystem inventory continues)"
+        else
+            prereq_error 'systemctl --user is unavailable; use a host with a systemd user session'
+        fi
     fi
 
-    user_name=${USER:-}
-    [[ -n "$user_name" ]] || user_name=$(id -un)
+    user_name=$(id -un 2>/dev/null || true)
+    if [[ -z "$user_name" || ! "$user_name" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        prereq_error 'cannot derive a safe service account name from id -un'
+    fi
     loginctl_bin=$(resolve_command loginctl || true)
     if [[ -z "$loginctl_bin" ]]; then
         if [[ "$mode" == uninstall ]]; then
@@ -131,13 +169,14 @@ discover_prerequisites() {
         else
             prereq_error 'loginctl executable not found; cannot verify user lingering'
         fi
-    else
+    elif [[ -n "$user_name" ]]; then
         linger=$("$loginctl_bin" show-user "$user_name" -p Linger --value 2>/dev/null || true)
         if [[ "$linger" != yes ]]; then
             if [[ "$mode" == uninstall ]]; then
                 linger="disabled (informational; uninstall continues)"
             else
-                prereq_error "user lingering is disabled; run: sudo loginctl enable-linger $user_name"
+                printf -v quoted_user '%q' "$user_name"
+                prereq_error "user lingering is disabled; run: sudo loginctl enable-linger $quoted_user"
             fi
         else
             linger="enabled"
@@ -147,20 +186,27 @@ discover_prerequisites() {
     if [[ "$mode" == uninstall ]]; then
         runtime_cli="not-required-for-uninstall"
     else
-        runtime_cli=$(resolve_command "$runtime" || true)
-        if [[ -z "$runtime_cli" ]]; then
-            prereq_error "$runtime executable not found in the service-safe PATH"
-        elif [[ "$runtime" == openclaw ]]; then
-            "$runtime_cli" --version >/dev/null 2>&1 || \
-                prereq_error 'openclaw executable exists but cannot run --version'
-        else
-            "$runtime_cli" webhook --help >/dev/null 2>&1 || \
-                prereq_error 'hermes executable does not expose webhook support'
-            if [[ -n "$notify_secret_file" && -n "$python" ]]; then
-                local secret_error=""
-                if ! secret_error=$(validate_hermes_secret_files "$python"); then
-                    prereq_error "$secret_error"
+        if [[ "$runtime" == openclaw ]]; then
+            if [[ -z "$service_path" ]]; then
+                if ((service_path_error_reported == 0)); then
+                    prereq_error 'openclaw executable cannot be verified because the systemd user PATH is unavailable'
                 fi
+            else
+                runtime_cli=$(resolve_in_path "$runtime" "$service_path" || true)
+                if [[ -z "$runtime_cli" ]]; then
+                    prereq_error 'openclaw executable not found in the systemd user PATH'
+                fi
+            fi
+        else
+            runtime_cli=$(resolve_command hermes || true)
+            if [[ -z "$runtime_cli" ]]; then
+                prereq_error 'hermes executable not found in the installer PATH'
+            fi
+        fi
+        if [[ "$runtime" == hermes && -n "$notify_secret_file" && -n "$python" ]]; then
+            local secret_error=""
+            if ! secret_error=$(validate_hermes_secret_files "$python"); then
+                prereq_error "$secret_error"
             fi
         fi
     fi
@@ -170,12 +216,17 @@ discover_prerequisites() {
     printf 'repo_root=%s\n' "$ROOT"
     [[ -n "$python" ]] && printf 'python=%s\n' "$python"
     [[ -n "$runtime_cli" ]] && printf 'runtime_cli=%s\n' "$runtime_cli"
-    [[ -n "$systemctl_bin" ]] && printf 'systemd_user=checked\n'
+    printf 'service_path=%s\n' "${service_path:-not-reported}"
+    printf 'runtime_probe=deferred (dry-run never executes runtime code)\n'
+    printf 'systemd_user=%s\n' "$systemd_state"
     printf 'linger=%s\n' "$linger"
     if [[ -n "$logrotate_bin" ]]; then
         printf 'logrotate=%s\n' "$logrotate_bin"
     else
         printf 'logrotate=absent (managed Python rotation will be used)\n'
+    fi
+    if [[ -n "${XDG_CONFIG_HOME:-}${XDG_STATE_HOME:-}" ]]; then
+        printf 'xdg_overrides=ignored (application paths are fixed under HOME)\n'
     fi
 
     if ((${#prerequisite_errors[@]})); then
@@ -186,7 +237,6 @@ discover_prerequisites() {
         done
         return 1
     fi
-    printf 'systemd_user=available\n'
 }
 
 resolve_credentials_path() {
@@ -195,7 +245,7 @@ resolve_credentials_path() {
         printf '%s' "$AGENTEIAMAIL_ENV"
         return
     fi
-    neutral="${XDG_CONFIG_HOME:-$HOME/.config}/agenteiamail/env"
+    neutral="$HOME/.config/agenteiamail/env"
     if [[ -e "$neutral" || -L "$neutral" ]]; then
         printf '%s' "$neutral"
         return
@@ -210,27 +260,105 @@ resolve_credentials_path() {
     printf '%s' "$neutral"
 }
 
+validate_container_chain() {
+    local target=$1 current relative component owner mode mode_value
+    local -a components=()
+
+    [[ "$target" == "$HOME"/* ]] || {
+        printf 'inventory conflict-container=%s reason=outside-home\n' "$target"
+        inventory_conflicts=1
+        return 1
+    }
+
+    current=$HOME
+    relative=${target#"$HOME"/}
+    IFS='/' read -r -a components <<<"$relative"
+    for component in "" "${components[@]}"; do
+        if [[ -n "$component" ]]; then
+            current="$current/$component"
+        fi
+        if [[ -L "$current" ]]; then
+            printf 'inventory conflict-container=%s reason=symlink\n' "$current"
+            inventory_conflicts=1
+            return 1
+        fi
+        if [[ -e "$current" ]]; then
+            if [[ ! -d "$current" ]]; then
+                printf 'inventory conflict-container=%s reason=not-directory\n' "$current"
+                inventory_conflicts=1
+                return 1
+            fi
+            owner=$(stat -Lc '%u' -- "$current" 2>/dev/null || true)
+            mode=$(stat -Lc '%a' -- "$current" 2>/dev/null || true)
+            if [[ "$owner" != "$EUID" || -z "$mode" ]]; then
+                printf 'inventory conflict-container=%s reason=unsafe-owner-or-metadata\n' \
+                    "$current"
+                inventory_conflicts=1
+                return 1
+            fi
+            mode_value=$((8#$mode))
+            if ((mode_value & 18)); then
+                printf 'inventory conflict-container=%s reason=group-or-world-writable\n' \
+                    "$current"
+                inventory_conflicts=1
+                return 1
+            fi
+        else
+            printf 'inventory planned-container=%s policy=create-securely-and-revalidate\n' \
+                "$target"
+            return 0
+        fi
+    done
+    printf 'inventory existing-container=%s policy=revalidate-before-write\n' "$target"
+}
+
+classify_planned_artifact() {
+    local kind=$1 destination=$2 source=$3
+    if [[ -e "$destination" || -L "$destination" ]]; then
+        printf 'inventory conflict-preserve-%s=%s reason=unproven-ownership\n' \
+            "$kind" "$destination"
+        inventory_conflicts=1
+    else
+        printf 'inventory planned-managed-%s=%s source=%s\n' \
+            "$kind" "$destination" "$source"
+    fi
+}
+
 print_managed_inventory() {
-    local config_home state_home config_dir state_dir unit_dir credentials unit
-    config_home=${XDG_CONFIG_HOME:-$HOME/.config}
-    state_home=${XDG_STATE_HOME:-$HOME/.local/state}
-    config_dir="$config_home/agenteiamail"
-    state_dir="$state_home/agenteiamail"
-    unit_dir="$config_home/systemd/user"
+    local config_dir state_dir unit_dir hermes_dir credentials unit
+    local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
+    config_dir="$HOME/.config/agenteiamail"
+    state_dir="$HOME/.local/state/agenteiamail"
+    unit_dir="$HOME/.config/systemd/user"
+    hermes_dir="$config_dir/hermes"
     credentials=$(resolve_credentials_path)
+    inventory_conflicts=0
 
     printf 'inventory root=%s mode=%s runtime=%s\n' "$ROOT" "$mode" "$runtime"
+    validate_container_chain "$unit_dir" || unit_container_safe=0
+    validate_container_chain "$config_dir" || config_container_safe=0
+
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
         agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
-        printf 'inventory managed-file=%s/%s source=%s/systemd/%s\n' \
-            "$unit_dir" "$unit" "$ROOT" "$unit"
+        if ((unit_container_safe)); then
+            classify_planned_artifact file "$unit_dir/$unit" "$ROOT/systemd/$unit"
+        else
+            printf 'inventory blocked-managed-file=%s/%s reason=unsafe-container\n' \
+                "$unit_dir" "$unit"
+        fi
     done
-    printf 'inventory managed-file=%s/runtime.env source=generated-runtime-config\n' \
-        "$config_dir"
-    printf 'inventory managed-file=%s/install.manifest source=generated-ownership-record\n' \
-        "$config_dir"
-    printf 'inventory managed-directory=%s policy=remove-if-empty\n' "$unit_dir"
-    printf 'inventory managed-directory=%s policy=remove-if-empty\n' "$config_dir"
+    if ((config_container_safe)); then
+        classify_planned_artifact file "$config_dir/runtime.env" generated-runtime-config
+        classify_planned_artifact file "$config_dir/install.manifest" \
+            generated-ownership-record
+    else
+        printf 'inventory blocked-managed-file=%s/runtime.env reason=unsafe-container\n' \
+            "$config_dir"
+        printf 'inventory blocked-managed-file=%s/install.manifest reason=unsafe-container\n' \
+            "$config_dir"
+    fi
+    printf 'inventory container-directory=%s policy=never-own-directory\n' "$unit_dir"
+    printf 'inventory container-directory=%s policy=never-own-directory\n' "$config_dir"
 
     printf 'inventory preserve-file=%s role=mailbox-credentials\n' "$credentials"
     printf 'inventory preserve-file=%s/roster.txt role=recipient-roster\n' "$ROOT"
@@ -244,44 +372,37 @@ print_managed_inventory() {
             printf 'inventory external-secret=%s role=roster validate-only=true\n' \
                 "$roster_secret_file"
         else
-            printf 'inventory conditional-managed-secret=%s/hermes/notify.secret role=notify\n' \
-                "$config_dir"
-            printf 'inventory conditional-managed-secret=%s/hermes/roster.secret role=roster\n' \
-                "$config_dir"
+            if ((config_container_safe)); then
+                validate_container_chain "$hermes_dir" || hermes_container_safe=0
+            else
+                hermes_container_safe=0
+            fi
+            printf 'inventory container-directory=%s policy=never-own-directory\n' \
+                "$hermes_dir"
+            if ((hermes_container_safe)); then
+                classify_planned_artifact secret "$hermes_dir/notify.secret" \
+                    generated-once-interactively
+                classify_planned_artifact secret "$hermes_dir/roster.secret" \
+                    generated-once-interactively
+            else
+                printf 'inventory blocked-managed-secret=%s/notify.secret reason=unsafe-container\n' \
+                    "$hermes_dir"
+                printf 'inventory blocked-managed-secret=%s/roster.secret reason=unsafe-container\n' \
+                    "$hermes_dir"
+            fi
         fi
     fi
 }
 
 plan_has_changes() {
-    local config_home config_dir unit_dir unit source destination
-    config_home=${XDG_CONFIG_HOME:-$HOME/.config}
-    config_dir="$config_home/agenteiamail"
-    unit_dir="$config_home/systemd/user"
-
+    local manifest="$HOME/.config/agenteiamail/install.manifest"
     if [[ "$mode" == uninstall ]]; then
-        [[ -e "$config_dir/install.manifest" || -L "$config_dir/install.manifest" ]]
+        [[ -e "$manifest" || -L "$manifest" ]]
         return
     fi
-
-    for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
-        agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
-        source="$ROOT/systemd/$unit"
-        destination="$unit_dir/$unit"
-        if [[ ! -e "$destination" && ! -L "$destination" ]] || \
-           ! cmp -s "$source" "$destination"; then
-            return 0
-        fi
-    done
-    for destination in "$config_dir/runtime.env" "$config_dir/install.manifest"; do
-        [[ -e "$destination" || -L "$destination" ]] || return 0
-    done
-    if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
-        for destination in "$config_dir/hermes/notify.secret" \
-            "$config_dir/hermes/roster.secret"; do
-            [[ -e "$destination" || -L "$destination" ]] || return 0
-        done
-    fi
-    return 1
+    # With no ownership manifest reader in this structural boundary, every
+    # conflict has already failed closed and every remaining candidate is absent.
+    return 0
 }
 
 runtime=""
@@ -295,10 +416,18 @@ upgrade=0
 uninstall=0
 non_interactive=0
 dry_run=0
+declare -A seen_options=()
+
+mark_option_once() {
+    local option=$1
+    [[ -z "${seen_options[$option]+present}" ]] || die_usage "duplicate option: $option"
+    seen_options[$option]=1
+}
 
 while (($#)); do
     case "$1" in
         --runtime|--deliver|--chat-id|--profile|--notify-secret-file|--roster-secret-file)
+            mark_option_once "$1"
             (($# >= 2)) || die_usage "$1 requires a value"
             value=$2
             [[ -n "$value" && "$value" != --* ]] || die_usage "$1 requires a value"
@@ -313,18 +442,22 @@ while (($#)); do
             shift 2
             ;;
         --upgrade)
+            mark_option_once "$1"
             upgrade=1
             shift
             ;;
         --uninstall)
+            mark_option_once "$1"
             uninstall=1
             shift
             ;;
         --non-interactive)
+            mark_option_once "$1"
             non_interactive=1
             shift
             ;;
         --dry-run)
+            mark_option_once "$1"
             dry_run=1
             shift
             ;;
@@ -352,10 +485,12 @@ elif ((uninstall)); then
     mode="uninstall"
 fi
 
-if [[ "$runtime" != hermes ]] &&
-   [[ -n "$deliver" || -n "$chat_id" || -n "$profile" ||
-      -n "$notify_secret_file" || -n "$roster_secret_file" ]]; then
-    die_usage 'delivery, profile, and route-secret options are Hermes-only'
+if [[ "$runtime" != hermes ]]; then
+    if [[ -n "$deliver" || -n "$chat_id" || -n "$profile" ||
+          -n "$notify_secret_file" || -n "$roster_secret_file" ]] ||
+       ((non_interactive)); then
+        die_usage 'delivery, profile, non-interactive, and route-secret options are Hermes-only'
+    fi
 fi
 if [[ -n "$deliver" && -z "$chat_id" ]]; then
     die_usage '--deliver requires --chat-id'
@@ -383,6 +518,10 @@ if ((dry_run)); then
         exit "$EX_CONFIG"
     fi
     print_managed_inventory
+    if ((inventory_conflicts)); then
+        printf 'install: unproven pre-existing artifacts are preserved; ownership manifest support is required before mutation\n' >&2
+        exit "$EX_CONFIG"
+    fi
     if plan_has_changes; then
         printf 'dry-run: plan contains create, modify, or remove actions; no changes made.\n'
         exit "$EX_CHANGED"

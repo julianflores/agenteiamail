@@ -20,20 +20,35 @@ scripts/install.sh --runtime hermes --uninstall --dry-run
 
 Install is the default mode. `--upgrade` and `--uninstall` are mutually exclusive
 modes that share prerequisite discovery and the same ownership inventory.
-`--dry-run` resolves paths and reports managed versus preserved artifacts without
-modifying files, secrets, services, or state.
+`--dry-run` resolves the systemd-user service `PATH` and reports planned versus
+preserved artifacts without executing OpenClaw or Hermes and without modifying
+files, secrets, services, or state. The application currently uses fixed paths
+under `$HOME`; ambient `XDG_CONFIG_HOME` and `XDG_STATE_HOME` overrides are
+reported and ignored so the inventory cannot disagree with runtime code.
 
-**Exit status `10` is success:** it means the requested mode converged and made
-changes. Exit `0` is also success and means the host was already converged. Shell
-wrappers, CI jobs, and configuration-management tools must accept both values;
-for example, do not put the installer directly on the left side of `&&` without
-handling `10`. Exit `64` is a usage error, and exit `78` is a configuration,
-prerequisite, or unavailable-phase error.
+**Exit status `10` is success:** for dry-run it means the plan contains create,
+modify, or remove work; for a future mutating run it means convergence made
+changes. Exit `0` is also success and means no action is needed. Shell wrappers,
+CI jobs, and configuration-management tools must accept both values; for example,
+do not put the installer directly on the left side of `&&` without handling `10`.
+Exit `64` is a usage error. Exit `78` is a configuration, prerequisite,
+unavailable-phase, or unproven-ownership conflict.
 
-The ownership boundary is fail-safe: generated units, runtime configuration, and
-the installer manifest are managed; mailbox credentials, `roster.txt`, the
-repository, UID state, event journal, cursor, and logs are always preserved.
-Operator-provisioned Hermes secret files are validation-only external artifacts.
+The current ownership inventory is deliberately conservative. An absent target
+is only `planned-managed`; discovery does not confer ownership. Any pre-existing
+unit, generated-config path, manifest, or default-path secret is classified as a
+preserved conflict and fails closed until a secure manifest reader can prove
+installer provenance. Every managed container chain is checked for symlinks,
+non-directories, unexpected ownership, and group/world writability before child
+artifacts are classified; mutation must revalidate immediately before writing.
+Shared directories are containers and are never claimed as owned. Mailbox
+credentials, `roster.txt`, the repository, UID state, event journal, cursor, and
+logs are always preserved. Operator-provisioned Hermes secret files are
+validation-only external artifacts.
+
+For OpenClaw, discovery accepts only a `PATH` actually reported by the systemd
+user manager. A missing `PATH=` entry is a configuration failure; the installer
+does not invent a fallback or add `$HOME/.local/bin`.
 
 You are not building application code during a manual installation. The code
 exists. The job is to prove the host can run it, get the credentials, wire it up,
