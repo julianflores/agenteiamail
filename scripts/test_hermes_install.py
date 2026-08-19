@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -15,6 +16,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INSTALL = ROOT / "scripts" / "install.sh"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from harness.event import listener_error, mail_event
 
 
 class _HermesFixture(BaseHTTPRequestHandler):
@@ -286,9 +291,32 @@ printf 'Hermes webhook support\\n'
             self.assertNotIn("X-Webhook-Signature", headers)
             self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
             envelope = json.loads(body)
-            self.assertEqual("installer.smoke", envelope["source"])
             self.assertIn(envelope["event_type"], ("email.received", "listener.error"))
-            self.assertFalse(envelope["authenticated_sender"])
+            if envelope["event_type"] == "listener.error":
+                production = listener_error(account="probe@example.invalid", message="probe")
+                self.assertEqual(set(production), set(envelope))
+                self.assertIsInstance(envelope["observed_at"], str)
+                self.assertIn("message", envelope)
+                self.assertNotIn("roster_match", envelope)
+                self.assertNotIn("authenticated_sender", envelope)
+            else:
+                production = mail_event(
+                    account="probe@example.invalid",
+                    mailbox="INBOX",
+                    uidvalidity=1,
+                    uid=1,
+                    sender_name="Installer Smoke",
+                    sender_address="installer-smoke@invalid.example",
+                    subject="probe",
+                    sent_at="",
+                    roster_match=False,
+                    notification_text="probe",
+                )
+                self.assertEqual(set(production), set(envelope))
+                self.assertIsInstance(envelope["sender"], dict)
+                self.assertIsInstance(envelope["observed_at"], str)
+                self.assertFalse(envelope["authenticated_sender"])
+            self.assertEqual("agenteiamail", envelope["source"])
 
         runtime_calls = self.runtime_log.read_text(encoding="utf-8").splitlines()
         self.assertEqual(["webhook --help"], runtime_calls)

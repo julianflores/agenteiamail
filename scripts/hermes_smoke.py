@@ -3,7 +3,6 @@
 
 import os
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -13,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from harness.adapters import RETRY  # noqa: E402
 from harness.adapters import hermes  # noqa: E402
+from harness.event import listener_error, mail_event  # noqa: E402
 
 EX_CONFIG = 78
 EX_TEMPFAIL = 75
@@ -24,39 +24,26 @@ def _fail(result, label):
 
 
 def _envelope(roster_match, token):
-    now = int(time.time())
     route = "roster" if roster_match else "notify"
-    return {
-        "account": "installer-smoke",
-        "authenticated_sender": False,
-        "event_id": f"installer-smoke:{route}:{token}",
-        "event_type": "email.received",
-        "mailbox": "INBOX",
-        "notification_text": f"agenteiamail installer {route} route smoke probe",
-        "received_at": now,
-        "roster_match": roster_match,
-        "sender": "installer-smoke@invalid.example",
-        "source": "installer.smoke",
-        "subject": f"agenteiamail installer {route} smoke probe",
-        "uid": 1 if roster_match else 0,
-        "uidvalidity": 1,
-    }
+    return mail_event(
+        account="installer-smoke@invalid.example",
+        mailbox="INBOX",
+        uidvalidity="installer-smoke",
+        uid=int(token[:15], 16) + (1 if roster_match else 0),
+        sender_name="Agenteiamail Installer Smoke",
+        sender_address="installer-smoke@invalid.example",
+        subject=f"agenteiamail installer {route} smoke probe",
+        sent_at="",
+        roster_match=roster_match,
+        notification_text=f"agenteiamail installer {route} route smoke probe",
+    )
 
 
 def _listener_error_envelope(token):
-    now = int(time.time())
-    return {
-        "account": "installer-smoke",
-        "authenticated_sender": False,
-        "error": "installer synthetic listener error smoke probe",
-        "event_id": f"installer-smoke:listener-error:{token}",
-        "event_type": "listener.error",
-        "mailbox": "INBOX",
-        "notification_text": "agenteiamail installer listener.error notify-route smoke probe",
-        "observed_at": now,
-        "roster_match": False,
-        "source": "installer.smoke",
-    }
+    return listener_error(
+        account="installer-smoke@invalid.example",
+        message=f"installer synthetic listener error smoke probe {token}",
+    )
 
 
 def main():
