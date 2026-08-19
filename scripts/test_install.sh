@@ -181,6 +181,11 @@ check_status 'delivery target requires a chat ID' 64 \
     --runtime hermes --deliver telegram
 check_status 'profile and delivery configuration are alternatives' 64 \
     --runtime hermes --profile default --deliver telegram --chat-id 12345
+# Parser-shape checks above may leave a valid first-stage Hermes manifest and
+# generated secrets. Upgrade convergence needs a fresh OpenClaw fixture rather
+# than an intentionally incompatible manifest from another runtime.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'upgrade mode converges the same owned filesystem boundary' 10 --runtime openclaw --upgrade
 rm -rf "$sandbox/.config"
 check_status 'uninstall without ownership is idempotent' 0 --runtime openclaw --uninstall
