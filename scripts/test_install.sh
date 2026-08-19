@@ -259,6 +259,34 @@ check_status 'insecure ownership manifest metadata fails closed' 78 \
     fail=$((fail + 1))
 }
 rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+manifest_target="$fixture_root/attacker.manifest"
+printf 'version\t1\nruntime\topenclaw\n' >"$manifest_target"
+chmod 0600 "$manifest_target"
+ln -s "$manifest_target" "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'symlinked ownership manifest is never followed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
+    printf 'FAIL symlinked manifest refusal is not explicit\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
+mkdir -p "$sandbox/.config/agenteiamail"
+printf 'version\t1\nruntime\topenclaw\nartifact\tfile\t%s\t%s\n' \
+    "$fixture_root/outside-artifact" \
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+    >"$sandbox/.config/agenteiamail/install.manifest"
+chmod 0600 "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'manifest cannot authorize paths outside the managed allowlist' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'unauthorized artifact record'* ]] || {
+    printf 'FAIL unauthorized manifest path refusal is not explicit\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
 check_status 'dry-run reports planned OpenClaw changes' 10 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'runtime_cli='*"$fixture_bin/openclaw"* ]] || {

@@ -26,10 +26,19 @@ def _die(message: str) -> None:
 
 
 def _open_dir(path: Path) -> int:
+    """Open an absolute directory without following any path-component symlink."""
+    if not path.is_absolute():
+        raise Refusal(f"managed directory must be absolute: {path}")
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open("/", flags)
     try:
-        return os.open(path, flags)
+        for component in path.parts[1:]:
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
     except OSError as exc:
+        os.close(fd)
         raise Refusal(f"cannot securely open managed directory {path}: {exc.strerror}") from exc
 
 
@@ -252,7 +261,7 @@ def cmd_write_artifact(args: argparse.Namespace) -> None:
             temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, args.mode, dir_fd=dir_fd)
             try:
                 os.fchmod(temp_fd, args.mode)
-                os.write(temp_fd, data)
+                _write_all(temp_fd, data)
                 os.fsync(temp_fd)
             finally:
                 os.close(temp_fd)

@@ -218,7 +218,11 @@ discover_prerequisites() {
     [[ -n "$python" ]] && printf 'python=%s\n' "$python"
     [[ -n "$runtime_cli" ]] && printf 'runtime_cli=%s\n' "$runtime_cli"
     printf 'service_path=%s\n' "${service_path:-not-reported}"
-    printf 'runtime_probe=deferred (dry-run never executes runtime code)\n'
+    if ((dry_run)); then
+        printf 'runtime_probe=deferred (dry-run never executes runtime code)\n'
+    else
+        printf 'runtime_probe=deferred (filesystem-only convergence never executes runtime code)\n'
+    fi
     printf 'systemd_user=%s\n' "$systemd_state"
     printf 'linger=%s\n' "$linger"
     if [[ -n "$logrotate_bin" ]]; then
