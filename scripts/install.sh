@@ -327,12 +327,17 @@ classify_planned_artifact() {
 print_managed_inventory() {
     local config_dir state_dir unit_dir hermes_dir credentials unit
     local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
+    # These paths deliberately follow the runtime and systemd contracts rather
+    # than XDG overrides: the Hermes adapter defaults state via expanduser(),
+    # while the shipped units read %h paths. Honoring XDG_CONFIG_HOME here would
+    # place secrets where the unit never reads them and surface later as a 401.
     config_dir="$HOME/.config/agenteiamail"
     state_dir="$HOME/.local/state/agenteiamail"
     unit_dir="$HOME/.config/systemd/user"
     hermes_dir="$config_dir/hermes"
     credentials=$(resolve_credentials_path)
     inventory_conflicts=0
+    inventory_blocked=0
 
     printf 'inventory root=%s mode=%s runtime=%s\n' "$ROOT" "$mode" "$runtime"
     validate_container_chain "$unit_dir" || unit_container_safe=0
@@ -343,6 +348,7 @@ print_managed_inventory() {
         if ((unit_container_safe)); then
             classify_planned_artifact file "$unit_dir/$unit" "$ROOT/systemd/$unit"
         else
+            inventory_blocked=1
             printf 'inventory blocked-managed-file=%s/%s reason=unsafe-container\n' \
                 "$unit_dir" "$unit"
         fi
@@ -352,6 +358,7 @@ print_managed_inventory() {
         classify_planned_artifact file "$config_dir/install.manifest" \
             generated-ownership-record
     else
+        inventory_blocked=1
         printf 'inventory blocked-managed-file=%s/runtime.env reason=unsafe-container\n' \
             "$config_dir"
         printf 'inventory blocked-managed-file=%s/install.manifest reason=unsafe-container\n' \
@@ -385,12 +392,16 @@ print_managed_inventory() {
                 classify_planned_artifact secret "$hermes_dir/roster.secret" \
                     generated-once-interactively
             else
+                inventory_blocked=1
                 printf 'inventory blocked-managed-secret=%s/notify.secret reason=unsafe-container\n' \
                     "$hermes_dir"
                 printf 'inventory blocked-managed-secret=%s/roster.secret reason=unsafe-container\n' \
                     "$hermes_dir"
             fi
         fi
+    fi
+    if ((inventory_blocked)); then
+        printf 'inventory result=blocked configuration-refusal=true\n'
     fi
 }
 
@@ -518,7 +529,7 @@ if ((dry_run)); then
         exit "$EX_CONFIG"
     fi
     print_managed_inventory
-    if ((inventory_conflicts)); then
+    if ((inventory_conflicts || inventory_blocked)); then
         printf 'install: unproven pre-existing artifacts are preserved; ownership manifest support is required before mutation\n' >&2
         exit "$EX_CONFIG"
     fi

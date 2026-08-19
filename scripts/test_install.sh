@@ -207,6 +207,25 @@ check_status 'dry-run preserves an unowned pre-existing unit and fails closed' 7
 }
 rm -rf "$sandbox/.config"
 
+# A blocked managed artifact is a configuration refusal, never a change plan.
+mkdir -p "$sandbox/.config/systemd/user"
+chmod 0770 "$sandbox/.config/systemd/user"
+check_status 'blocked unit container is a configuration refusal, not plan status 10' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory blocked-managed-file=$sandbox/.config/systemd/user/agenteiamail-idle.service reason=unsafe-container"* ]] || {
+    printf 'FAIL unsafe unit container did not block managed artifacts\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" != *'plan contains create, modify, or remove actions'* ]] || {
+    printf 'FAIL blocked unit container was misreported as executable plan drift\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" == *'inventory result=blocked configuration-refusal=true'* ]] || {
+    printf 'FAIL blocked artifacts did not propagate explicit refusal state\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
+
 outside_systemd="$fixture_root/outside-systemd"
 outside_config="$fixture_root/outside-config"
 mkdir -p "$outside_systemd" "$outside_config" "$sandbox/.config/systemd"
