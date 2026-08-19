@@ -365,39 +365,74 @@ set_managed_paths() {
         "$unit_dir/agenteiamail-logrotate.service"
         "$unit_dir/agenteiamail-logrotate.timer"
         "$config_dir/runtime.env"
+        # Generated Hermes secrets remain installer-owned across an explicit
+        # runtime migration so rollback can reuse them and uninstall can still
+        # account for them. Fresh OpenClaw installs never record these paths.
+        "$hermes_dir/notify.secret"
+        "$hermes_dir/roster.secret"
     )
-    if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
-        managed_paths+=(
-            "$hermes_dir/notify.secret"
-            "$hermes_dir/roster.secret"
-        )
-    fi
 }
 
 manifest_arguments() {
-    local path
-    printf '%s\0' --manifest "$manifest" --runtime "$runtime"
+    local manifest_runtime_value=${1:-$runtime} path
+    printf '%s\0' --manifest "$manifest" --runtime "$manifest_runtime_value"
     for path in "${managed_paths[@]}"; do
         printf '%s\0' --allowed "$path"
     done
 }
 
 load_ownership_manifest() {
-    local output kind path digest
+    local output kind path digest previous_runtime
     declare -gA owned_digests=()
     declare -gA owned_kinds=()
+    manifest_runtime=$runtime
     [[ -e "$manifest" || -L "$manifest" ]] || return 0
     local -a arguments=()
     mapfile -d '' -t arguments < <(manifest_arguments)
     if ! output=$(python3 "$ROOT/scripts/install_manifest.py" read "${arguments[@]}" 2>&1); then
-        printf '%s\n' "$output" >&2
-        exit "$EX_CONFIG"
+        if [[ "$mode" != upgrade ]]; then
+            printf '%s\n' "$output" >&2
+            exit "$EX_CONFIG"
+        fi
+        if [[ "$runtime" == openclaw ]]; then
+            previous_runtime=hermes
+        else
+            previous_runtime=openclaw
+        fi
+        mapfile -d '' -t arguments < <(manifest_arguments "$previous_runtime")
+        if ! output=$(python3 "$ROOT/scripts/install_manifest.py" read "${arguments[@]}" 2>&1); then
+            printf '%s\n' "$output" >&2
+            exit "$EX_CONFIG"
+        fi
+        manifest_runtime=$previous_runtime
     fi
     while IFS=$'\t' read -r kind path digest; do
         [[ -n "$kind" ]] || continue
         owned_kinds["$path"]=$kind
         owned_digests["$path"]=$digest
     done <<<"$output"
+}
+
+migrate_ownership_manifest() {
+    local output path
+    [[ "$manifest_runtime" != "$runtime" ]] || return 0
+    local -a arguments=(
+        --manifest "$manifest"
+        --from-runtime "$manifest_runtime"
+        --runtime "$runtime"
+    )
+    for path in "${managed_paths[@]}"; do
+        arguments+=(--allowed "$path")
+    done
+    if ! output=$(python3 "$ROOT/scripts/install_manifest.py" migrate-runtime \
+        "${arguments[@]}" 2>&1); then
+        printf '%s\n' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    printf 'runtime_migration=%s-to-%s state=ownership-transferred\n' \
+        "$manifest_runtime" "$runtime"
+    manifest_runtime=$runtime
+    changes_made=1
 }
 
 render_artifact() {
@@ -558,6 +593,11 @@ print_managed_inventory() {
     validate_container_chain "$config_dir" || config_container_safe=0
     if ((config_container_safe)); then
         load_ownership_manifest
+        if [[ "$manifest_runtime" != "$runtime" ]]; then
+            printf 'inventory planned-runtime-migration=%s-to-%s mode=upgrade\n' \
+                "$manifest_runtime" "$runtime"
+            inventory_changes=1
+        fi
     fi
 
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
@@ -1041,6 +1081,7 @@ write_count=0
 if [[ "$runtime" == hermes ]]; then
     probe_hermes_webhook_support
 fi
+migrate_ownership_manifest
 initialize_ownership_manifest
 if [[ "$runtime" == hermes ]]; then
     prepare_hermes_secrets

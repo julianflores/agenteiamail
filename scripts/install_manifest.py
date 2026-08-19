@@ -199,6 +199,16 @@ def cmd_finalize(args: argparse.Namespace) -> None:
         os.close(fd)
 
 
+def cmd_migrate_runtime(args: argparse.Namespace) -> None:
+    path = Path(args.manifest)
+    fd = _open_dir(path.parent)
+    try:
+        records = _read_manifest_at(fd, path.name, args.from_runtime, set(args.allowed))
+        _atomic_replace(fd, path.name, _serialize(args.runtime, records), 0o600)
+    finally:
+        os.close(fd)
+
+
 def cmd_remove_artifact(args: argparse.Namespace) -> None:
     destination = Path(args.path)
     dir_fd = _open_dir(destination.parent)
@@ -302,6 +312,11 @@ def parser() -> argparse.ArgumentParser:
     record.add_argument("--digest", required=True)
     forget = sub.choices["forget"]
     forget.add_argument("--path", required=True)
+    migrate = sub.add_parser("migrate-runtime")
+    migrate.add_argument("--manifest", required=True)
+    migrate.add_argument("--from-runtime", required=True, choices=("openclaw", "hermes"))
+    migrate.add_argument("--runtime", required=True, choices=("openclaw", "hermes"))
+    migrate.add_argument("--allowed", action="append", default=[])
     write = sub.add_parser("write-artifact")
     write.add_argument("--path", required=True)
     write.add_argument("--mode", type=lambda value: int(value, 8), required=True)
@@ -317,6 +332,7 @@ def main() -> None:
     try:
         {"read": cmd_read, "init": cmd_init, "record": cmd_record,
          "forget": cmd_forget, "finalize": cmd_finalize,
+         "migrate-runtime": cmd_migrate_runtime,
          "write-artifact": cmd_write_artifact,
          "remove-artifact": cmd_remove_artifact}[args.command](args)
     except Refusal as exc:

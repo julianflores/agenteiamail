@@ -203,6 +203,39 @@ check_status 'non-interactive Hermes secret-file shape parses' 78 \
     --runtime hermes --non-interactive --profile default \
     --notify-secret-file /tmp/notify --roster-secret-file /tmp/roster
 
+# Runtime migration is explicit upgrade work. A first-stage Hermes install owns
+# its generated secrets even before route configuration; switching to OpenClaw
+# must preserve those secrets and shared mail state while converging the common
+# unit/config boundary under the new runtime.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+check_status 'Hermes migration fixture creates owned route secrets' 78 \
+    --runtime hermes --profile default
+generated_notify="$sandbox/.config/agenteiamail/hermes/notify.secret"
+generated_roster="$sandbox/.config/agenteiamail/hermes/roster.secret"
+notify_before=$(sha256sum "$generated_notify")
+roster_before=$(sha256sum "$generated_roster")
+check_status 'runtime migration requires explicit upgrade mode' 78 \
+    --runtime openclaw
+check_status 'Hermes to OpenClaw upgrade preserves owned secrets and state' 10 \
+    --runtime openclaw --upgrade
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+if grep -Fxq $'runtime\topenclaw' "$manifest" &&
+   [[ "$(<"$runtime_env")" == 'AGENTEIAMAIL_RUNTIME=openclaw' &&
+      "$(sha256sum "$generated_notify")" == "$notify_before" &&
+      "$(sha256sum "$generated_roster")" == "$roster_before" ]]; then
+    printf 'ok   runtime migration preserves generated secrets and selects OpenClaw\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL runtime migration changed generated secrets or missed the runtime boundary\n'
+    fail=$((fail + 1))
+fi
+check_status 'migrated OpenClaw upgrade is idempotent' 0 \
+    --runtime openclaw --upgrade
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+
 
 # A fresh filesystem-only OpenClaw convergence creates each managed artifact,
 # then atomically records ownership, verifies the installed units, proves the
