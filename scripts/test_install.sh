@@ -227,6 +227,15 @@ for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
         fail=$((fail + 1))
     }
 done
+installed_dispatch="$sandbox/.config/systemd/user/agenteiamail-dispatch.service"
+[[ "$(<"$installed_dispatch")" == *'EnvironmentFile=%h/.config/agenteiamail/runtime.env'* ]] || {
+    printf 'FAIL dispatcher unit does not load the installer-generated runtime configuration\n'
+    fail=$((fail + 1))
+}
+[[ "$(<"$installed_dispatch")" != *'Environment=AGENTEIAMAIL_RUNTIME=auto'* ]] || {
+    printf 'FAIL dispatcher unit overrides the installer-selected runtime\n'
+    fail=$((fail + 1))
+}
 [[ -e "$sandbox/runtime-side-effect" ]] || {
     printf 'FAIL OpenClaw was not executed in the systemd service environment\n'
     fail=$((fail + 1))

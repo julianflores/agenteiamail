@@ -11,11 +11,13 @@ After=agenteiamail-idle.service
 
 [Service]
 Type=simple
-# AGENTEIAMAIL_RUNTIME selects the adapter: openclaw, hermes, or auto. `auto`
-# chooses only when exactly one runtime is present, and refuses rather than
-# guessing when none or several are. Set it explicitly on a host running more
-# than one harness.
-Environment=AGENTEIAMAIL_RUNTIME=auto
+# Written by scripts/install.sh. Keeping runtime selection and Hermes route
+# settings in one protected file makes installer convergence observable and
+# avoids embedding route configuration in the copied unit.
+EnvironmentFile=%h/.config/agenteiamail/runtime.env
+# AGENTEIAMAIL_RUNTIME in runtime.env selects openclaw, hermes, or auto. `auto`
+# chooses only when exactly one runtime is present and refuses rather than
+# guessing when none or several are.
 # A systemd user service gets a minimal PATH with nothing under $HOME, so a
 # harness binary installed by npm is invisible here while an interactive shell
 # finds it. Set the full path if autodetection cannot.
