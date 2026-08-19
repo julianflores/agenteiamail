@@ -31,7 +31,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+_OPENER = urllib.request.build_opener(
+    _NoRedirect,
+    urllib.request.ProxyHandler({}),
+)
 
 
 def _open(request):

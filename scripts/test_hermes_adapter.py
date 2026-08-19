@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 import threading
@@ -66,6 +67,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def log_message(self, *_args):
+        pass
+
+
+class _RejectingProxy(BaseHTTPRequestHandler):
+    requests = []
+
+    def do_POST(self):
+        type(self).requests.append(self.path)
+        self.send_response(502)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, *_args):
         pass
@@ -149,6 +163,48 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertEqual(expected, headers["X-Webhook-Signature-V2"])
         self.assertNotIn("X-Webhook-Signature", headers)
         self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
+
+    def test_ambient_http_proxy_cannot_intercept_signed_loopback_delivery(self):
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), _RejectingProxy)
+        proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        _RejectingProxy.requests = []
+        proxy_thread.start()
+        try:
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(ROOT / "harness")
+            environment["HERMES_TEST_ENVELOPE"] = json.dumps(self.envelope)
+            proxy_url = f"http://127.0.0.1:{proxy.server_port}"
+            environment["http_proxy"] = proxy_url
+            environment["HTTP_PROXY"] = proxy_url
+            environment.pop("no_proxy", None)
+            environment.pop("NO_PROXY", None)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json, os; "
+                        "from adapters import hermes; "
+                        "result = hermes.deliver(json.loads("
+                        "os.environ['HERMES_TEST_ENVELOPE'])); "
+                        "print(json.dumps({'status': result.status, "
+                        "'detail': result.detail}))"
+                    ),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
+            proxy_thread.join(timeout=2)
+
+        result = json.loads(completed.stdout)
+        self.assertEqual("accepted", result["status"], result["detail"])
+        self.assertEqual([], _RejectingProxy.requests)
+        self.assertEqual("/webhooks/agenteiamail-roster", _Handler.requests[0][0])
 
     def test_listener_fault_uses_direct_notify_route_without_roster_field(self):
         fault = {
