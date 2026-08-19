@@ -387,6 +387,8 @@ because it is what the templates are for:
 mkdir -p ~/.local/state/agenteiamail
 systemctl --user daemon-reload
 systemctl --user enable --now agenteiamail-idle.service
+systemctl --user enable --now agenteiamail-dispatch.service
+systemctl --user enable --now agenteiamail-logrotate.timer
 ```
 
 **Then enable lingering**, or the service dies when your human logs out:
