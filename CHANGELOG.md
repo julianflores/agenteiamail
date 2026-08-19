@@ -3,8 +3,8 @@
 ## 1.6.0 — 2026-08-19
 
 Adds the supported, idempotent installer for OpenClaw and Hermes Agent runtimes,
-runtime-aware service generation and health checks, and durable adapter delivery
-behavior.
+including runtime-aware service generation and health checks, plus documentation
+corrections for installation and upgrades.
 
 ### Upgrade actions
 
@@ -15,7 +15,7 @@ behavior.
   ```bash
   systemctl --user enable agenteiamail-idle.service
   systemctl --user enable agenteiamail-dispatch.service
-  systemctl --user enable agenteiamail-watchdog.timer
+  systemctl --user enable agenteiamail-logrotate.timer
   ```
 
 - Generated units use

@@ -3,6 +3,7 @@
 
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -29,6 +30,21 @@ def enabled_units(document):
     return set(re.findall(
         r"systemctl --user enable(?: --now)? (agenteiamail-[^\s]+)", text
     ))
+
+
+def enabled_units_in_tracked_markdown():
+    documents = subprocess.check_output(
+        ["git", "ls-files", "--", "*.md"], cwd=ROOT, text=True
+    ).splitlines()
+    enabled = set()
+    for document in documents:
+        for line in (ROOT / document).read_text().splitlines():
+            if re.search(r"systemctl\s+--user\s+enable(?:\s+--now)?\b", line):
+                enabled.update(re.findall(
+                    r"\bagenteiamail-[A-Za-z0-9_.@-]+\.(?:service|timer)\b",
+                    line,
+                ))
+    return enabled
 
 
 def required_environment_files():
@@ -65,6 +81,11 @@ enableable = {
 check("INSTALL.md installs every shipped unit", shipped, installed)
 check("INSTALL.md enables every installed enableable unit", enableable, enabled_units("INSTALL.md"))
 check("UPGRADE.md enables every installed enableable unit", enableable, enabled_units("UPGRADE.md"))
+check(
+    "tracked Markdown enable lines name only shipped units",
+    set(),
+    enabled_units_in_tracked_markdown() - shipped,
+)
 required_env_files = required_environment_files()
 manual_files = manually_created_files("INSTALL.md")
 check(
