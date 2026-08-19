@@ -65,12 +65,12 @@ def main():
         return _fail(notify, "Hermes notify-route smoke probe")
     print("hermes_notify_smoke=delivered")
 
-    listener_error = hermes.deliver(_listener_error_envelope(token))
-    if listener_error is None:
+    listener_error_result = hermes.deliver(_listener_error_envelope(token))
+    if listener_error_result is None:
         print("install: Hermes listener.error notify-route smoke probe returned no result", file=sys.stderr)
         return EX_CONFIG
-    if not listener_error.ok:
-        return _fail(listener_error, "Hermes listener.error notify-route smoke probe")
+    if not listener_error_result.ok:
+        return _fail(listener_error_result, "Hermes listener.error notify-route smoke probe")
     print("hermes_notify_listener_error_smoke=delivered")
 
     roster = hermes.deliver(_envelope(True, token))
