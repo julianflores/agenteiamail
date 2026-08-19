@@ -173,6 +173,7 @@ discover_prerequisites() {
             fi
         elif [[ "$mode" == uninstall ]]; then
             systemd_state="unavailable (filesystem inventory continues)"
+            systemctl_bin=""
         else
             prereq_error 'systemctl --user is unavailable; use a host with a systemd user session'
         fi
@@ -727,6 +728,30 @@ converge_artifact() {
     fi
 }
 
+deactivate_owned_services() {
+    local unit unit_path changed=0
+    if [[ -z "$discovered_systemctl" ]]; then
+        printf 'install: warning: systemd user manager unavailable; service deactivation unconfirmed.\n' >&2
+        return 0
+    fi
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+        agenteiamail-logrotate.timer; do
+        unit_path="$unit_dir/$unit"
+        [[ -n "${owned_digests[$unit_path]+present}" ]] || continue
+        if "$discovered_systemctl" --user is-enabled --quiet "$unit" 2>/dev/null ||
+           "$discovered_systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+            "$discovered_systemctl" --user disable --now "$unit" || \
+                die_config "failed to disable owned user unit $unit; filesystem preserved"
+            changed=1
+        fi
+        if "$discovered_systemctl" --user is-enabled --quiet "$unit" 2>/dev/null ||
+           "$discovered_systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+            die_config "owned user unit $unit remained enabled or active; filesystem preserved"
+        fi
+    done
+    ((changed == 0)) || changes_made=1
+}
+
 uninstall_owned_filesystem() {
     local destination output
     local -a arguments=()
@@ -737,6 +762,22 @@ uninstall_owned_filesystem() {
         return
     fi
     load_ownership_manifest
+    # Validate every durable ownership record before the first service or
+    # filesystem mutation. A late modified artifact must not leave a half-
+    # uninstalled runtime boundary.
+    for destination in "${managed_paths[@]}"; do
+        [[ -n "${owned_digests[$destination]+present}" ]] || continue
+        validate_container_chain "${destination%/*}" >/dev/null || \
+            die_config "unsafe artifact container during uninstall: ${destination%/*}"
+        if [[ -d "${destination%/*}" ]]; then
+            if ! output=$(python3 "$ROOT/scripts/install_manifest.py" verify-artifact \
+                --path "$destination" --expected-digest "${owned_digests[$destination]}" 2>&1); then
+                printf '%s\n' "$output" >&2
+                exit "$EX_CONFIG"
+            fi
+        fi
+    done
+    deactivate_owned_services
     for destination in "${managed_paths[@]}"; do
         [[ -n "${owned_digests[$destination]+present}" ]] || continue
         validate_container_chain "${destination%/*}" >/dev/null || \
@@ -763,6 +804,10 @@ uninstall_owned_filesystem() {
         exit "$EX_CONFIG"
     fi
     changes_made=1
+    if [[ -n "$discovered_systemctl" ]]; then
+        "$discovered_systemctl" --user daemon-reload || \
+            die_config 'filesystem removed, but systemctl --user daemon-reload failed; rerun daemon-reload manually'
+    fi
 }
 
 initialize_ownership_manifest() {
@@ -1064,7 +1109,7 @@ if [[ "$mode" == uninstall ]]; then
     changes_made=0
     uninstall_owned_filesystem
     if ((changes_made)); then
-        printf 'install: recorded filesystem artifacts removed; credentials, state, and service state unchanged.\n'
+        printf 'install: owned services deactivated when reachable and recorded artifacts removed; credentials and state preserved.\n'
         exit "$EX_CHANGED"
     fi
     printf 'install: no ownership manifest; no filesystem artifacts removed.\n'

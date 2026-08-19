@@ -79,6 +79,11 @@ case "$*" in
         fi
         printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
         ;;
+    '--user disable --now '*)
+        unit=${*: -1}
+        rm -f "$FAKE_SYSTEMD_STATE/$unit.enabled" "$FAKE_SYSTEMD_STATE/$unit.active"
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
     *) exit 2 ;;
 esac
 EOF
@@ -403,12 +408,26 @@ check_status 'modified owned artifact is preserved with actionable recovery' 78 
     printf 'FAIL modified-artifact refusal omitted the path or safe uninstall recovery\n'
     fail=$((fail + 1))
 }
+[[ -f "$sandbox/.config/systemd/user/agenteiamail-idle.service" &&
+   -f "$sandbox/.config/systemd/user/agenteiamail-dispatch.service" &&
+   -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.active" &&
+   -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.active" ]] || {
+    printf 'FAIL uninstall mutated units or service state before validating all owned artifacts\n'
+    fail=$((fail + 1))
+}
 modified_backup="$fixture_root/operator-runtime.env"
 mv -- "$modified" "$modified_backup"
 check_status 'uninstall forgets a preserved modified artifact after move-aside' 10 \
     --runtime openclaw --uninstall
-[[ -f "$modified_backup" && ! -e "$sandbox/.config/agenteiamail/install.manifest" ]] || {
-    printf 'FAIL move-aside recovery did not preserve the edit and clear ownership\n'
+[[ -f "$modified_backup" &&
+   ! -e "$sandbox/.config/agenteiamail/install.manifest" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.active" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.active" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-logrotate.timer.enabled" &&
+   ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-logrotate.timer.active" ]] || {
+    printf 'FAIL move-aside recovery did not preserve the edit, stop services, and clear ownership\n'
     fail=$((fail + 1))
 }
 rm -rf "$sandbox/.config" "$sandbox/.local"

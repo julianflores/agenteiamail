@@ -235,6 +235,8 @@ def cmd_remove_artifact(args: argparse.Namespace) -> None:
         latest = os.stat(destination.name, dir_fd=dir_fd, follow_symlinks=False)
         if (opened.st_dev, opened.st_ino) != (latest.st_dev, latest.st_ino):
             raise Refusal(f"owned artifact changed during removal: {destination}")
+        if args.verify_only:
+            return
         os.unlink(destination.name, dir_fd=dir_fd)
         os.fsync(dir_fd)
     finally:
@@ -324,6 +326,11 @@ def parser() -> argparse.ArgumentParser:
     remove = sub.add_parser("remove-artifact")
     remove.add_argument("--path", required=True)
     remove.add_argument("--expected-digest", required=True)
+    remove.set_defaults(verify_only=False)
+    verify = sub.add_parser("verify-artifact")
+    verify.add_argument("--path", required=True)
+    verify.add_argument("--expected-digest", required=True)
+    verify.set_defaults(verify_only=True)
     return result
 
 
@@ -334,7 +341,8 @@ def main() -> None:
          "forget": cmd_forget, "finalize": cmd_finalize,
          "migrate-runtime": cmd_migrate_runtime,
          "write-artifact": cmd_write_artifact,
-         "remove-artifact": cmd_remove_artifact}[args.command](args)
+         "remove-artifact": cmd_remove_artifact,
+         "verify-artifact": cmd_remove_artifact}[args.command](args)
     except Refusal as exc:
         _die(str(exc))
     except OSError as exc:
