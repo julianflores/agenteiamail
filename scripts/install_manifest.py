@@ -84,16 +84,22 @@ def _serialize(runtime: str, records: list[tuple[str, str, str]]) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("short write")
+        view = view[written:]
+
+
 def _atomic_replace(dir_fd: int, name: str, data: bytes, mode: int) -> None:
     temp_name = f".{name}.tmp.{os.getpid()}.{os.urandom(8).hex()}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(temp_name, flags, mode, dir_fd=dir_fd)
     try:
         os.fchmod(fd, mode)
-        view = memoryview(data)
-        while view:
-            written = os.write(fd, view)
-            view = view[written:]
+        _write_all(fd, data)
         os.fsync(fd)
     except BaseException:
         os.close(fd)
@@ -131,7 +137,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         temp_name = f".{path.name}.tmp.{os.getpid()}.{os.urandom(8).hex()}"
         temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
         try:
-            os.write(temp_fd, data)
+            _write_all(temp_fd, data)
             os.fsync(temp_fd)
         finally:
             os.close(temp_fd)
@@ -156,6 +162,61 @@ def cmd_record(args: argparse.Namespace) -> None:
         _atomic_replace(fd, path.name, _serialize(args.runtime, updated), 0o600)
     finally:
         os.close(fd)
+
+
+def cmd_forget(args: argparse.Namespace) -> None:
+    path = Path(args.manifest)
+    fd = _open_dir(path.parent)
+    try:
+        records = _read_manifest_at(fd, path.name, args.runtime, set(args.allowed))
+        updated = [record for record in records if record[1] != args.path]
+        if len(updated) == len(records):
+            raise Refusal("ownership manifest does not authorize requested removal")
+        _atomic_replace(fd, path.name, _serialize(args.runtime, updated), 0o600)
+    finally:
+        os.close(fd)
+
+
+def cmd_finalize(args: argparse.Namespace) -> None:
+    path = Path(args.manifest)
+    fd = _open_dir(path.parent)
+    try:
+        records = _read_manifest_at(fd, path.name, args.runtime, set(args.allowed))
+        if records:
+            raise Refusal("ownership manifest still contains artifacts; refusing final removal")
+        os.unlink(path.name, dir_fd=fd)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def cmd_remove_artifact(args: argparse.Namespace) -> None:
+    destination = Path(args.path)
+    dir_fd = _open_dir(destination.parent)
+    try:
+        try:
+            metadata = os.stat(destination.name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise Refusal(f"owned artifact is not a user-owned regular file: {destination}")
+        file_fd = os.open(destination.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=dir_fd)
+        try:
+            current = hashlib.sha256()
+            while chunk := os.read(file_fd, 8192):
+                current.update(chunk)
+            opened = os.fstat(file_fd)
+        finally:
+            os.close(file_fd)
+        if current.hexdigest() != args.expected_digest:
+            raise Refusal(f"owned artifact changed outside the installer: {destination}")
+        latest = os.stat(destination.name, dir_fd=dir_fd, follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (latest.st_dev, latest.st_ino):
+            raise Refusal(f"owned artifact changed during removal: {destination}")
+        os.unlink(destination.name, dir_fd=dir_fd)
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def cmd_write_artifact(args: argparse.Namespace) -> None:
@@ -210,7 +271,7 @@ def cmd_write_artifact(args: argparse.Namespace) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     sub = result.add_subparsers(dest="command", required=True)
-    for name in ("read", "init", "record"):
+    for name in ("read", "init", "record", "forget", "finalize"):
         p = sub.add_parser(name)
         p.add_argument("--manifest", required=True)
         p.add_argument("--runtime", required=True)
@@ -219,10 +280,15 @@ def parser() -> argparse.ArgumentParser:
     record.add_argument("--kind", required=True, choices=("file", "secret"))
     record.add_argument("--path", required=True)
     record.add_argument("--digest", required=True)
+    forget = sub.choices["forget"]
+    forget.add_argument("--path", required=True)
     write = sub.add_parser("write-artifact")
     write.add_argument("--path", required=True)
     write.add_argument("--mode", type=lambda value: int(value, 8), required=True)
     write.add_argument("--expected-digest", default="")
+    remove = sub.add_parser("remove-artifact")
+    remove.add_argument("--path", required=True)
+    remove.add_argument("--expected-digest", required=True)
     return result
 
 
@@ -230,7 +296,9 @@ def main() -> None:
     args = parser().parse_args()
     try:
         {"read": cmd_read, "init": cmd_init, "record": cmd_record,
-         "write-artifact": cmd_write_artifact}[args.command](args)
+         "forget": cmd_forget, "finalize": cmd_finalize,
+         "write-artifact": cmd_write_artifact,
+         "remove-artifact": cmd_remove_artifact}[args.command](args)
     except Refusal as exc:
         _die(str(exc))
     except OSError as exc:

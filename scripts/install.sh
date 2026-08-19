@@ -563,6 +563,44 @@ converge_artifact() {
     fi
 }
 
+uninstall_owned_filesystem() {
+    local destination output
+    local -a arguments=()
+    set_managed_paths
+    validate_container_chain "$config_dir" >/dev/null || \
+        die_config "unsafe config container during uninstall: $config_dir"
+    if [[ ! -e "$manifest" && ! -L "$manifest" ]]; then
+        return
+    fi
+    load_ownership_manifest
+    for destination in "${managed_paths[@]}"; do
+        [[ -n "${owned_digests[$destination]+present}" ]] || continue
+        validate_container_chain "${destination%/*}" >/dev/null || \
+            die_config "unsafe artifact container during uninstall: ${destination%/*}"
+        if [[ -d "${destination%/*}" ]]; then
+            if ! output=$(python3 "$ROOT/scripts/install_manifest.py" remove-artifact \
+                --path "$destination" --expected-digest "${owned_digests[$destination]}" 2>&1); then
+                printf '%s\n' "$output" >&2
+                exit "$EX_CONFIG"
+            fi
+        fi
+        mapfile -d '' -t arguments < <(manifest_arguments)
+        if ! output=$(python3 "$ROOT/scripts/install_manifest.py" forget "${arguments[@]}" \
+            --path "$destination" 2>&1); then
+            printf '%s\n' "$output" >&2
+            exit "$EX_CONFIG"
+        fi
+        unset 'owned_digests[$destination]' 'owned_kinds[$destination]'
+        changes_made=1
+    done
+    mapfile -d '' -t arguments < <(manifest_arguments)
+    if ! output=$(python3 "$ROOT/scripts/install_manifest.py" finalize "${arguments[@]}" 2>&1); then
+        printf '%s\n' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    changes_made=1
+}
+
 converge_openclaw_filesystem() {
     local output unit
     create_secure_containers
@@ -735,7 +773,18 @@ if ((dry_run)); then
     exit "$EX_OK"
 fi
 
-if [[ "$runtime" != openclaw || "$mode" == uninstall ]]; then
+if [[ "$mode" == uninstall ]]; then
+    changes_made=0
+    uninstall_owned_filesystem
+    if ((changes_made)); then
+        printf 'install: recorded filesystem artifacts removed; credentials, state, and service state unchanged.\n'
+        exit "$EX_CHANGED"
+    fi
+    printf 'install: no ownership manifest; no filesystem artifacts removed.\n'
+    exit "$EX_OK"
+fi
+
+if [[ "$runtime" != openclaw ]]; then
     printf 'install: runtime=%s mode=%s mutation is not implemented in this boundary; no changes made.\n' \
         "$runtime" "$mode" >&2
     exit "$EX_CONFIG"

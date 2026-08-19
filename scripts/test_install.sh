@@ -133,7 +133,7 @@ check_status 'profile and delivery configuration are alternatives' 64 \
     --runtime hermes --profile default --deliver telegram --chat-id 12345
 check_status 'upgrade mode converges the same owned filesystem boundary' 10 --runtime openclaw --upgrade
 rm -rf "$sandbox/.config"
-check_status 'uninstall mode parses' 78 --runtime openclaw --uninstall
+check_status 'uninstall without ownership is idempotent' 0 --runtime openclaw --uninstall
 check_status 'upgrade and uninstall are mutually exclusive' 64 \
     --runtime hermes --upgrade --uninstall
 [[ "$LAST_OUTPUT" == *'mutually exclusive'* ]] || {
@@ -221,6 +221,31 @@ done <"$manifest"
 check_status 'partial convergence resumes to completion' 10 --runtime openclaw
 check_status 'resumed convergence is idempotent' 0 --runtime openclaw
 rm -rf "$sandbox/.config"
+
+# Uninstall consumes only durable ownership records from a partial run. A file
+# at a later planned destination, plus credentials/state, must survive.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
+    'second partial run prepares uninstall authorization fixture' 99 \
+    --runtime openclaw
+unowned_later="$sandbox/.config/systemd/user/agenteiamail-logrotate.service"
+printf 'operator-managed later artifact\n' >"$unowned_later"
+printf 'mail-password=preserve\n' >"$sandbox/.config/agenteiamail/env"
+mkdir -p "$sandbox/.local/state/agenteiamail"
+printf 'uid-state\n' >"$sandbox/.local/state/agenteiamail/uid.json"
+check_status 'partial-run uninstall removes exactly recorded artifacts' 10 \
+    --runtime openclaw --uninstall
+[[ ! -e "$sandbox/.config/systemd/user/agenteiamail-idle.service" &&
+   ! -e "$sandbox/.config/systemd/user/agenteiamail-dispatch.service" &&
+   -f "$unowned_later" &&
+   -f "$sandbox/.config/agenteiamail/env" &&
+   -f "$sandbox/.local/state/agenteiamail/uid.json" &&
+   ! -e "$sandbox/.config/agenteiamail/install.manifest" ]] || {
+    printf 'FAIL partial uninstall removed an unowned artifact or preserved owned state\n'
+    fail=$((fail + 1))
+}
+check_status 'second partial-run uninstall is idempotent' 0 \
+    --runtime openclaw --uninstall
+rm -rf "$sandbox/.config" "$sandbox/.local"
 
 # The ownership reader fails closed on metadata and syntax before trusting any
 # path. An attacker-controlled/symlinked record is never followed.
