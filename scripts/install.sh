@@ -30,9 +30,9 @@ Modes:
 
 Options:
   --runtime RUNTIME          Required: openclaw or hermes
-  --deliver TARGET          Hermes user-facing delivery target (for example telegram)
-  --chat-id ID               Hermes target chat ID
-  --profile PROFILE          Select an existing operator-managed Hermes profile
+  --deliver TARGET          Guidance label for an operator-managed Hermes target
+  --chat-id ID               Guidance label for that target's chat ID
+  --profile PROFILE          Guidance label for an existing operator-managed profile
   --non-interactive          Never create or print route secrets
   --notify-secret-file PATH  Pre-provisioned Hermes notification-route secret
   --roster-secret-file PATH  Pre-provisioned Hermes roster-route secret
@@ -871,8 +871,26 @@ converge_generated_secret() {
     secret_value=''
 }
 
+print_hermes_route_guidance() {
+    local quoted
+    if [[ -n "$profile" ]]; then
+        printf -v quoted '%q' "$profile"
+        printf 'hermes_route_guidance=existing-profile profile=%s edits_hermes_config=false\n' \
+            "$quoted"
+    elif [[ -n "$deliver" ]]; then
+        local quoted_deliver quoted_chat
+        printf -v quoted_deliver '%q' "$deliver"
+        printf -v quoted_chat '%q' "$chat_id"
+        printf 'hermes_route_guidance=guided-only delivery_target=%s chat_id=%s edits_hermes_config=false\n' \
+            "$quoted_deliver" "$quoted_chat"
+    else
+        printf 'hermes_route_guidance=operator-selection-required edits_hermes_config=false\n'
+    fi
+}
+
 prepare_hermes_secrets() {
     generated_secrets=0
+    print_hermes_route_guidance
     if [[ -n "$notify_secret_file" ]]; then
         return
     fi
@@ -1058,6 +1076,10 @@ fi
 if [[ -n "$profile" && ( -n "$deliver" || -n "$chat_id" ) ]]; then
     die_usage '--profile is mutually exclusive with --deliver and --chat-id'
 fi
+for value in "$deliver" "$chat_id" "$profile"; do
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || \
+        die_usage 'Hermes delivery and profile labels must be single-line values'
+done
 if [[ -n "$notify_secret_file" && -z "$roster_secret_file" ]] ||
    [[ -n "$roster_secret_file" && -z "$notify_secret_file" ]]; then
     die_usage '--notify-secret-file and --roster-secret-file must be supplied together'

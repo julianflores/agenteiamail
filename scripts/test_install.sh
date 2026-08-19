@@ -157,7 +157,8 @@ check_status 'help is runnable' 0 --help
 }
 if grep -Fq 'Exit status `10` is success' "$ROOT/INSTALL.md" &&
    grep -Fq -- '--upgrade' "$ROOT/INSTALL.md" &&
-   grep -Fq -- '--uninstall' "$ROOT/INSTALL.md"; then
+   grep -Fq -- '--uninstall' "$ROOT/INSTALL.md" &&
+   grep -Fq -- '`--deliver` and `--chat-id` are guidance labels only' "$ROOT/INSTALL.md"; then
     printf 'ok   INSTALL.md documents installer modes and successful status 10\n'
     pass=$((pass + 1))
 else
@@ -167,6 +168,13 @@ fi
 
 check_status 'Hermes delivery CLI shape parses' 78 \
     --runtime hermes --deliver telegram --chat-id 12345
+[[ "$LAST_OUTPUT" == *'hermes_route_guidance=guided-only'* &&
+   "$LAST_OUTPUT" == *'delivery_target=telegram'* &&
+   "$LAST_OUTPUT" == *'chat_id=12345'* &&
+   "$LAST_OUTPUT" == *'edits_hermes_config=false'* ]] || {
+    printf 'FAIL guided delivery shape did not disclose its non-mutating boundary\n'
+    fail=$((fail + 1))
+}
 # Interactive Hermes parsing now creates one-time route secrets before stopping
 # for operator route configuration. Keep the alternative profile shape isolated
 # so it tests its own first-run boundary rather than reusing the prior fixture.
@@ -174,6 +182,12 @@ rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'Hermes profile CLI shape parses' 78 \
     --runtime hermes --profile default
+[[ "$LAST_OUTPUT" == *'hermes_route_guidance=existing-profile'* &&
+   "$LAST_OUTPUT" == *'profile=default'* &&
+   "$LAST_OUTPUT" == *'edits_hermes_config=false'* ]] || {
+    printf 'FAIL profile shape did not disclose its operator-managed boundary\n'
+    fail=$((fail + 1))
+}
 check_status 'runtime is mandatory' 64
 check_status 'unknown runtime is rejected' 64 --runtime something-else
 check_status 'duplicate value option is rejected' 64 \
