@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import threading
@@ -73,6 +74,8 @@ class HermesInstallerTest(unittest.TestCase):
 
         _HermesFixture.requests = []
         _HermesFixture.reject_notify = False
+        _HermesFixture.notify_secret = b"notify-installer-secret"
+        _HermesFixture.roster_secret = b"roster-installer-secret"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _HermesFixture)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -146,20 +149,20 @@ printf 'Hermes webhook support\\n'
             environment.update(self.urls)
         return environment
 
-    def _run(self, include_urls=True):
+    def _run(self, include_urls=True, external_secrets=True):
+        arguments = [str(INSTALL), "--runtime", "hermes", "--profile", "default"]
+        if external_secrets:
+            arguments.extend(
+                [
+                    "--non-interactive",
+                    "--notify-secret-file",
+                    str(self.notify_secret),
+                    "--roster-secret-file",
+                    str(self.roster_secret),
+                ]
+            )
         return subprocess.run(
-            [
-                str(INSTALL),
-                "--runtime",
-                "hermes",
-                "--profile",
-                "default",
-                "--non-interactive",
-                "--notify-secret-file",
-                str(self.notify_secret),
-                "--roster-secret-file",
-                str(self.roster_secret),
-            ],
+            arguments,
             cwd=ROOT,
             env=self._environment(include_urls),
             text=True,
@@ -238,6 +241,38 @@ printf 'Hermes webhook support\\n'
         systemd_calls = self.systemd_log.read_text(encoding="utf-8")
         self.assertNotIn("--user enable --now", systemd_calls)
         self.assertEqual(["GET", "POST"], [item[0] for item in _HermesFixture.requests])
+
+    def test_interactive_secrets_are_shown_once_then_reused_for_route_probes(self):
+        generated = self._run(external_secrets=False)
+
+        self.assertEqual(78, generated.returncode, generated.stdout + generated.stderr)
+        notify_match = re.search(r"^hermes_notify_secret=(\S+)$", generated.stdout, re.MULTILINE)
+        roster_match = re.search(r"^hermes_roster_secret=(\S+)$", generated.stdout, re.MULTILINE)
+        if notify_match is None or roster_match is None:
+            self.fail("generated secrets were not shown exactly once")
+        notify_value = notify_match.group(1)
+        roster_value = roster_match.group(1)
+        self.assertNotEqual(notify_value, roster_value)
+        self.assertIn("configure the two Hermes routes", generated.stderr)
+        self.assertEqual([], _HermesFixture.requests)
+        self.assertFalse(any(self.state.glob("*.enabled")))
+
+        default_dir = self.home / ".config" / "agenteiamail" / "hermes"
+        notify_path = default_dir / "notify.secret"
+        roster_path = default_dir / "roster.secret"
+        self.assertEqual(notify_value, notify_path.read_text(encoding="utf-8").strip())
+        self.assertEqual(roster_value, roster_path.read_text(encoding="utf-8").strip())
+        self.assertEqual(0o600, notify_path.stat().st_mode & 0o777)
+        self.assertEqual(0o600, roster_path.stat().st_mode & 0o777)
+
+        _HermesFixture.notify_secret = notify_value.encode("utf-8")
+        _HermesFixture.roster_secret = roster_value.encode("utf-8")
+        converged = self._run(external_secrets=False)
+
+        self.assertEqual(10, converged.returncode, converged.stdout + converged.stderr)
+        self.assertNotIn("hermes_notify_secret=", converged.stdout)
+        self.assertNotIn("hermes_roster_secret=", converged.stdout)
+        self.assertEqual(["GET", "POST", "POST"], [item[0] for item in _HermesFixture.requests])
 
 
 if __name__ == "__main__":

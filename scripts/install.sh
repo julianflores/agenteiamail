@@ -234,9 +234,7 @@ discover_prerequisites() {
             if ! route_error=$(validate_hermes_route_environment); then
                 prereq_error "$route_error"
             fi
-            if ((dry_run == 0)) && [[ -z "$notify_secret_file" ]]; then
-                prereq_error 'interactive Hermes secret creation is not implemented; supply both route secret files'
-            fi
+
         fi
     fi
 
@@ -368,6 +366,12 @@ set_managed_paths() {
         "$unit_dir/agenteiamail-logrotate.timer"
         "$config_dir/runtime.env"
     )
+    if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
+        managed_paths+=(
+            "$hermes_dir/notify.secret"
+            "$hermes_dir/roster.secret"
+        )
+    fi
 }
 
 manifest_arguments() {
@@ -502,6 +506,39 @@ classify_planned_artifact() {
     fi
 }
 
+classify_planned_secret() {
+    local destination=$1 actual expected
+    if [[ ! -e "$destination" && ! -L "$destination" ]]; then
+        printf 'inventory planned-managed-secret=%s source=generated-once-interactively\n' \
+            "$destination"
+        inventory_changes=1
+        return
+    fi
+    expected=${owned_digests[$destination]:-}
+    if [[ -z "$expected" ]]; then
+        printf 'inventory conflict-preserve-secret=%s reason=unproven-ownership\n' \
+            "$destination"
+        inventory_conflicts=1
+        inventory_unproven_conflicts=1
+        return
+    fi
+    if [[ -L "$destination" || ! -f "$destination" || ! -O "$destination" ||
+          "$(stat -Lc '%a' -- "$destination" 2>/dev/null || true)" != 600 ]]; then
+        printf 'inventory conflict-owned-secret=%s reason=unsafe-artifact-metadata\n' \
+            "$destination"
+        inventory_conflicts=1
+        return
+    fi
+    actual=$(sha256_file "$destination")
+    if [[ "$actual" != "$expected" ]]; then
+        printf 'inventory conflict-owned-secret=%s reason=changed-outside-installer\n' \
+            "$destination"
+        inventory_conflicts=1
+        return
+    fi
+    printf 'inventory existing-managed-secret=%s state=converged\n' "$destination"
+}
+
 print_managed_inventory() {
     local unit
     local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
@@ -573,10 +610,8 @@ print_managed_inventory() {
             printf 'inventory container-directory=%s policy=never-own-directory\n' \
                 "$hermes_dir"
             if ((hermes_container_safe)); then
-                classify_planned_artifact secret "$hermes_dir/notify.secret" \
-                    generated-once-interactively
-                classify_planned_artifact secret "$hermes_dir/roster.secret" \
-                    generated-once-interactively
+                classify_planned_secret "$hermes_dir/notify.secret"
+                classify_planned_secret "$hermes_dir/roster.secret"
             else
                 inventory_blocked=1
                 printf 'inventory blocked-managed-secret=%s/notify.secret reason=unsafe-container\n' \
@@ -604,6 +639,11 @@ create_secure_containers() {
     mkdir -p -- "$unit_dir" "$config_dir"
     validate_container_chain "$unit_dir" >/dev/null || die_config "unsafe unit container after creation: $unit_dir"
     validate_container_chain "$config_dir" >/dev/null || die_config "unsafe config container after creation: $config_dir"
+    if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
+        mkdir -p -- "$hermes_dir"
+        validate_container_chain "$hermes_dir" >/dev/null || \
+            die_config "unsafe Hermes secret container after creation: $hermes_dir"
+    fi
 }
 
 converge_artifact() {
@@ -685,8 +725,8 @@ uninstall_owned_filesystem() {
     changes_made=1
 }
 
-converge_runtime_filesystem() {
-    local output unit
+initialize_ownership_manifest() {
+    local output
     create_secure_containers
     local -a arguments=()
     mapfile -d '' -t arguments < <(manifest_arguments)
@@ -696,10 +736,67 @@ converge_runtime_filesystem() {
         exit "$EX_CONFIG"
     fi
     load_ownership_manifest
+}
+
+converge_runtime_filesystem() {
+    local unit
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service         agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
         converge_artifact file "$unit_dir/$unit" "$ROOT/systemd/$unit" 0644
     done
     converge_artifact file "$config_dir/runtime.env" generated-runtime-config 0600
+}
+
+converge_generated_secret() {
+    local label=$1 destination=$2 expected actual secret_value output digest
+    expected=${owned_digests[$destination]:-}
+    if [[ -e "$destination" && -n "$expected" ]]; then
+        actual=$(sha256_file "$destination")
+        if [[ "$actual" == "$expected" ]]; then
+            return
+        fi
+        die_config "owned Hermes $label secret changed outside the installer: $destination"
+    fi
+    [[ ! -e "$destination" && ! -L "$destination" ]] || \
+        die_config "unowned Hermes $label secret is preserved; move it aside before retrying: $destination"
+    secret_value=$("$discovered_python" -c 'import secrets; print(secrets.token_urlsafe(32))')
+    if ! output=$(printf '%s\n' "$secret_value" | \
+        "$discovered_python" "$ROOT/scripts/install_manifest.py" write-artifact \
+        --path "$destination" --mode 0600 --expected-digest '' 2>&1); then
+        printf '%s\n' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    digest=${output##*$'\n'}
+    write_count=$((write_count + 1))
+    local -a arguments=()
+    mapfile -d '' -t arguments < <(manifest_arguments)
+    if ! output=$("$discovered_python" "$ROOT/scripts/install_manifest.py" record \
+        "${arguments[@]}" --kind secret --path "$destination" --digest "$digest" 2>&1); then
+        printf '%s\n' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    owned_kinds["$destination"]=secret
+    owned_digests["$destination"]=$digest
+    changes_made=1
+    mutation_count=$((mutation_count + 1))
+    generated_secrets=1
+    printf 'hermes_%s_secret=%s\n' "$label" "$secret_value"
+    secret_value=''
+}
+
+prepare_hermes_secrets() {
+    generated_secrets=0
+    if [[ -n "$notify_secret_file" ]]; then
+        return
+    fi
+    converge_generated_secret notify "$hermes_dir/notify.secret"
+    converge_generated_secret roster "$hermes_dir/roster.secret"
+    notify_secret_file="$hermes_dir/notify.secret"
+    roster_secret_file="$hermes_dir/roster.secret"
+    if ((generated_secrets)); then
+        printf '%s\n' \
+            'install: configure the two Hermes routes with the newly shown secrets, then rerun the installer; services were not activated' >&2
+        exit "$EX_CONFIG"
+    fi
 }
 
 probe_hermes_webhook_support() {
@@ -943,6 +1040,10 @@ mutation_count=0
 write_count=0
 if [[ "$runtime" == hermes ]]; then
     probe_hermes_webhook_support
+fi
+initialize_ownership_manifest
+if [[ "$runtime" == hermes ]]; then
+    prepare_hermes_secrets
 fi
 converge_runtime_filesystem
 verify_installed_units
