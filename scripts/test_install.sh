@@ -60,13 +60,20 @@ case "$*" in
     '--user daemon-reload')
         printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
         ;;
-    '--user is-enabled --quiet '*|'--user is-active --quiet '*)
+    '--user is-enabled --quiet '*)
         unit=${*: -1}
-        [[ -e "$FAKE_SYSTEMD_STATE/$unit" ]]
+        [[ -e "$FAKE_SYSTEMD_STATE/$unit.enabled" ]]
+        ;;
+    '--user is-active --quiet '*)
+        unit=${*: -1}
+        [[ -e "$FAKE_SYSTEMD_STATE/$unit.active" ]]
         ;;
     '--user enable --now '*)
         unit=${*: -1}
-        : >"$FAKE_SYSTEMD_STATE/$unit"
+        : >"$FAKE_SYSTEMD_STATE/$unit.enabled"
+        if [[ "${FAKE_START_INACTIVE_UNIT:-}" != "$unit" ]]; then
+            : >"$FAKE_SYSTEMD_STATE/$unit.active"
+        fi
         printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
         ;;
     *) exit 2 ;;
@@ -242,6 +249,20 @@ check_status 'second OpenClaw convergence is idempotent' 0 --runtime openclaw
 check_status 'owned converged artifacts are accepted by dry-run' 0 \
     --runtime openclaw --dry-run
 rm -rf "$sandbox/.config"
+
+# A successful `enable --now` subprocess is not enough: the required unit must
+# actually converge to both enabled and active before installation reports green.
+rm -rf "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
+FAKE_START_INACTIVE_UNIT=agenteiamail-dispatch.service check_status \
+    'activation refuses a required unit that does not become active' 78 \
+    --runtime openclaw
+[[ "$LAST_OUTPUT" == *'required user unit did not become enabled and active: agenteiamail-dispatch.service'* ]] || {
+    printf 'FAIL activation postcondition refusal is not actionable\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
 
 # Deliberately terminate after artifact N. The durable manifest must authorize
 # exactly successful artifacts 1..N, not later planned paths.

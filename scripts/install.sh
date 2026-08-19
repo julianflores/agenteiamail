@@ -691,6 +691,10 @@ converge_required_services() {
         fi
         "$discovered_systemctl" --user enable --now "$unit" || \
             die_config "failed to enable and start required user unit: $unit"
+        if ! "$discovered_systemctl" --user is-enabled --quiet "$unit" || \
+           ! "$discovered_systemctl" --user is-active --quiet "$unit"; then
+            die_config "required user unit did not become enabled and active: $unit"
+        fi
         printf 'service=%s state=enabled-active changed=true\n' "$unit"
         changes_made=1
     done
