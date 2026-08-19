@@ -18,6 +18,7 @@ INSTALL = ROOT / "scripts" / "install.sh"
 
 class _HermesFixture(BaseHTTPRequestHandler):
     requests = []
+    reject_notify = False
     notify_secret = b"notify-installer-secret"
     roster_secret = b"roster-installer-secret"
 
@@ -29,7 +30,10 @@ class _HermesFixture(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         type(self).requests.append(("POST", self.path, dict(self.headers), body))
         if self.path.endswith("agenteiamail-notify"):
-            self._answer(200, {"status": "delivered", "route": "agenteiamail-notify"})
+            if type(self).reject_notify:
+                self._answer(401, {"status": "error"})
+            else:
+                self._answer(200, {"status": "delivered", "route": "agenteiamail-notify"})
         else:
             self._answer(202, {"status": "accepted", "route": "agenteiamail-roster"})
 
@@ -68,6 +72,7 @@ class HermesInstallerTest(unittest.TestCase):
         self.roster_secret.chmod(0o600)
 
         _HermesFixture.requests = []
+        _HermesFixture.reject_notify = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _HermesFixture)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -221,6 +226,18 @@ printf 'Hermes webhook support\\n'
         systemd_calls = self.systemd_log.read_text(encoding="utf-8")
         self.assertIn("verify ", systemd_calls)
         self.assertIn("--user enable --now agenteiamail-dispatch.service", systemd_calls)
+
+    def test_rejected_signed_route_fails_closed_before_service_activation(self):
+        _HermesFixture.reject_notify = True
+
+        completed = self._run()
+
+        self.assertEqual(78, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("notify-route smoke probe failed", completed.stderr)
+        self.assertFalse(any(self.state.glob("*.enabled")))
+        systemd_calls = self.systemd_log.read_text(encoding="utf-8")
+        self.assertNotIn("--user enable --now", systemd_calls)
+        self.assertEqual(["GET", "POST"], [item[0] for item in _HermesFixture.requests])
 
 
 if __name__ == "__main__":
