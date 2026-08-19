@@ -89,6 +89,12 @@ printf '# Changelog\n\n## 2.0.01 (2026-08-18)\n' >"$clone/CHANGELOG.md"
 run 2.0.0
 assert "a longer version is not a match"     'grep -q "no entry for 2.0.0" <<<"$out"'
 
+# A heading whose separators are not dots must not match. Without the escaping
+# in version.sh, `.` is a wildcard and this reports an entry that is not there.
+printf '# Changelog\n\n## 2x0x0 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "dots are literal, not wildcards"     'grep -q "no entry for 2.0.0" <<<"$out"'
+
 printf '# Changelog\n\n## 2.0.0 — 2026-08-19\n' >"$clone/CHANGELOG.md"
 run 2.0.0
 assert "ahead with changelog exits 0"    '[ "$rc" -eq 0 ]'
