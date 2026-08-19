@@ -242,6 +242,10 @@ discover_prerequisites() {
         done
         return 1
     fi
+    discovered_python=$python
+    discovered_systemctl=$systemctl_bin
+    discovered_runtime_cli=$runtime_cli
+    discovered_service_path=$service_path
 }
 
 resolve_credentials_path() {
@@ -646,6 +650,52 @@ converge_openclaw_filesystem() {
     converge_artifact file "$config_dir/runtime.env" generated-runtime-config 0600
 }
 
+verify_installed_units() {
+    local systemd_analyze output
+    systemd_analyze=$(resolve_command systemd-analyze || true)
+    [[ -n "$systemd_analyze" ]] || \
+        die_config 'systemd-analyze executable not found; installed units were not activated'
+    if ! output=$("$systemd_analyze" verify \
+        "$unit_dir/agenteiamail-idle.service" \
+        "$unit_dir/agenteiamail-dispatch.service" \
+        "$unit_dir/agenteiamail-logrotate.service" \
+        "$unit_dir/agenteiamail-logrotate.timer" 2>&1); then
+        printf '%s\n' "$output" >&2
+        die_config 'systemd-analyze verify rejected the installed units; no service state was changed'
+    fi
+}
+
+probe_openclaw_service_environment() {
+    local systemd_run output
+    systemd_run=$(resolve_command systemd-run || true)
+    [[ -n "$systemd_run" ]] || \
+        die_config 'systemd-run executable not found; cannot execute OpenClaw in the systemd user environment'
+    if ! output=$("$systemd_run" --user --pipe --quiet --wait \
+        "$discovered_runtime_cli" --version 2>&1); then
+        printf '%s\n' "$output" >&2
+        die_config 'OpenClaw is present but cannot run in the systemd user service environment'
+    fi
+    printf 'openclaw_service_probe=accepted executable=%s\n' "$discovered_runtime_cli"
+}
+
+converge_required_services() {
+    local unit
+    "$discovered_systemctl" --user daemon-reload || \
+        die_config 'systemctl --user daemon-reload failed; no service was enabled'
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+        agenteiamail-logrotate.timer; do
+        if "$discovered_systemctl" --user is-enabled --quiet "$unit" && \
+           "$discovered_systemctl" --user is-active --quiet "$unit"; then
+            printf 'service=%s state=enabled-active\n' "$unit"
+            continue
+        fi
+        "$discovered_systemctl" --user enable --now "$unit" || \
+            die_config "failed to enable and start required user unit: $unit"
+        printf 'service=%s state=enabled-active changed=true\n' "$unit"
+        changes_made=1
+    done
+}
+
 runtime=""
 deliver=""
 chat_id=""
@@ -826,9 +876,12 @@ changes_made=0
 mutation_count=0
 write_count=0
 converge_openclaw_filesystem
+verify_installed_units
+probe_openclaw_service_environment
+converge_required_services
 if ((changes_made)); then
-    printf 'install: OpenClaw filesystem artifacts converged; service state unchanged.\n'
+    printf 'install: OpenClaw artifacts and required user services converged.\n'
     exit "$EX_CHANGED"
 fi
-printf 'install: OpenClaw filesystem artifacts already converged; service state unchanged.\n'
+printf 'install: OpenClaw artifacts and required user services already converged.\n'
 exit "$EX_OK"

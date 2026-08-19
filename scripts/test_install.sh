@@ -14,6 +14,9 @@ check_status() {
     local description=$1 expected=$2
     shift 2
     local output status service_path
+    # Every invocation gets a fresh hostile-runtime marker. This keeps a real
+    # non-dry probe from contaminating the later dry-run inertness assertion.
+    rm -f "$sandbox/runtime-side-effect"
     service_path=${FAKE_SERVICE_PATH:-$fixture_bin:/usr/bin:/bin}
     output=$(env -u AGENTEIAMAIL_ENV \
         HOME="$sandbox" USER='victim; id' \
@@ -46,12 +49,40 @@ before=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path
 cat >"$fixture_bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 [[ "${FAKE_SYSTEMD:-yes}" == yes ]] || exit 1
-[[ "$*" == '--user show-environment' ]] || exit 0
-if [[ "${FAKE_SERVICE_PATH:-}" == '__NONE__' ]]; then
-    printf 'LANG=C.UTF-8\n'
-else
-    printf 'PATH=%s\n' "${FAKE_SERVICE_PATH:-/usr/bin:/bin}"
-fi
+case "$*" in
+    '--user show-environment')
+        if [[ "${FAKE_SERVICE_PATH:-}" == '__NONE__' ]]; then
+            printf 'LANG=C.UTF-8\n'
+        else
+            printf 'PATH=%s\n' "${FAKE_SERVICE_PATH:-/usr/bin:/bin}"
+        fi
+        ;;
+    '--user daemon-reload')
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    '--user is-enabled --quiet '*|'--user is-active --quiet '*)
+        unit=${*: -1}
+        [[ -e "$FAKE_SYSTEMD_STATE/$unit" ]]
+        ;;
+    '--user enable --now '*)
+        unit=${*: -1}
+        : >"$FAKE_SYSTEMD_STATE/$unit"
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
+    *) exit 2 ;;
+esac
+EOF
+cat >"$fixture_bin/systemd-analyze" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+[[ "${FAKE_VERIFY:-yes}" == yes ]]
+EOF
+cat >"$fixture_bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+[[ "${FAKE_RUNTIME_RUN:-yes}" == yes ]] || exit 23
+runtime=${*: -2:1}
+"$runtime" "${@: -1}"
 EOF
 cat >"$fixture_bin/loginctl" <<'EOF'
 #!/usr/bin/env bash
@@ -83,7 +114,11 @@ fi
 printf 'hermes test\n'
 EOF
 chmod 755 "$fixture_bin/systemctl" "$fixture_bin/loginctl" "$fixture_bin/id" \
+    "$fixture_bin/systemd-analyze" "$fixture_bin/systemd-run" \
     "$fixture_bin/openclaw" "$fixture_bin/hermes"
+export FAKE_SYSTEMD_LOG="$fixture_root/systemd.log"
+export FAKE_SYSTEMD_STATE="$fixture_root/systemd-state"
+mkdir -p "$FAKE_SYSTEMD_STATE"
 notify_secret="$fixture_root/notify.secret"
 roster_secret="$fixture_root/roster.secret"
 printf 'notify-test-secret\n' >"$notify_secret"
@@ -150,8 +185,8 @@ check_status 'non-interactive Hermes secret-file shape parses' 78 \
 
 
 # A fresh filesystem-only OpenClaw convergence creates each managed artifact,
-# then atomically records ownership. It does not invoke the runtime or alter
-# systemd service state in this implementation unit.
+# then atomically records ownership, verifies the installed units, proves the
+# runtime through the user manager, and converges only required service state.
 check_status 'fresh OpenClaw convergence creates managed artifacts' 10 \
     --runtime openclaw
 manifest="$sandbox/.config/agenteiamail/install.manifest"
@@ -185,11 +220,25 @@ for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
         fail=$((fail + 1))
     }
 done
-[[ ! -e "$sandbox/runtime-side-effect" && ! -e "$fixture_root/systemctl-side-effect" ]] || {
-    printf 'FAIL filesystem convergence executed a runtime or changed service state\n'
+[[ -e "$sandbox/runtime-side-effect" ]] || {
+    printf 'FAIL OpenClaw was not executed in the systemd service environment\n'
     fail=$((fail + 1))
 }
+rm -f "$sandbox/runtime-side-effect"
+[[ "$(<"$FAKE_SYSTEMD_LOG")" == *"verify $sandbox/.config/systemd/user/agenteiamail-idle.service"* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user --pipe --quiet --wait '*"$fixture_bin/openclaw --version"* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-idle.service'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-dispatch.service'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" == *'--user enable --now agenteiamail-logrotate.timer'* &&
+   "$(<"$FAKE_SYSTEMD_LOG")" != *'enable --now agenteiamail-logrotate.service'* ]] || {
+    printf 'FAIL service verification, runtime probe, or activation command shape is wrong\n'
+    fail=$((fail + 1))
+}
+: >"$FAKE_SYSTEMD_LOG"
 check_status 'second OpenClaw convergence is idempotent' 0 --runtime openclaw
+[[ "$(<"$FAKE_SYSTEMD_LOG")" != *'enable --now'* ]] || {
+    printf 'FAIL converged service state was enabled again\n'; fail=$((fail + 1));
+}
 check_status 'owned converged artifacts are accepted by dry-run' 0 \
     --runtime openclaw --dry-run
 rm -rf "$sandbox/.config"
