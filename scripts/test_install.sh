@@ -124,7 +124,7 @@ check_status 'non-interactive Hermes install requires route secrets' 64 \
 check_status 'non-interactive Hermes secret-file shape parses' 78 \
     --runtime hermes --non-interactive --profile default \
     --notify-secret-file /tmp/notify --roster-secret-file /tmp/roster
-check_status 'dry-run discovers OpenClaw prerequisites' 0 \
+check_status 'dry-run reports planned OpenClaw changes' 10 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'runtime_cli='*"$fixture_bin/openclaw"* ]] || {
     printf 'FAIL dry-run reports resolved runtime CLI\n'; fail=$((fail + 1));
@@ -155,8 +155,43 @@ done
 [[ "$LAST_OUTPUT" == *"inventory preserve-file=$ROOT/roster.txt role=recipient-roster"* ]] || {
     printf 'FAIL inventory does not preserve the roster\n'; fail=$((fail + 1));
 }
+[[ "$LAST_OUTPUT" == *'plan contains create, modify, or remove actions'* ]] || {
+    printf 'FAIL dry-run does not explain successful drift status 10\n'; fail=$((fail + 1));
+}
 
-check_status 'Hermes dry-run validates pre-provisioned route secrets' 0 \
+# A plan with matching managed unit sources and all generated-path placeholders
+# present is converged at this inventory-only boundary.
+mkdir -p "$sandbox/.config/systemd/user" "$sandbox/.config/agenteiamail"
+for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+    agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+    cp "$ROOT/systemd/$unit" "$sandbox/.config/systemd/user/$unit"
+done
+: >"$sandbox/.config/agenteiamail/runtime.env"
+: >"$sandbox/.config/agenteiamail/install.manifest"
+check_status 'dry-run exits 0 when the current plan is converged' 0 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'system is converged; no changes needed'* ]] || {
+    printf 'FAIL converged dry-run does not explain status 0\n'; fail=$((fail + 1));
+}
+rm -rf "$sandbox/.config"
+
+# The OpenClaw workspace path is a read-only legacy-migration probe. A symlink
+# must be preserved and must never appear in the managed inventory.
+mkdir -p "$sandbox/.openclaw/workspace"
+legacy_target="$fixture_root/legacy-env"
+printf 'legacy=true\n' >"$legacy_target"
+ln -s "$legacy_target" "$sandbox/.openclaw/workspace/.env"
+check_status 'legacy credential symlink is detected as preserve-only' 10 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$sandbox/.openclaw/workspace/.env role=mailbox-credentials"* ]] || {
+    printf 'FAIL legacy credential symlink was not preserved\n'; fail=$((fail + 1));
+}
+[[ "$LAST_OUTPUT" != *"inventory managed-file=$sandbox/.openclaw/workspace/.env"* ]] || {
+    printf 'FAIL legacy credential probe became an owned write target\n'; fail=$((fail + 1));
+}
+rm -rf "$sandbox/.openclaw"
+
+check_status 'Hermes dry-run validates secrets and reports planned changes' 10 \
     --runtime hermes --profile default --non-interactive --dry-run \
     --notify-secret-file "$notify_secret" --roster-secret-file "$roster_secret"
 [[ "$LAST_OUTPUT" == *"inventory external-secret=$notify_secret role=notify validate-only=true"* ]] || {
@@ -216,6 +251,24 @@ FAKE_LINGER=no check_status 'disabled lingering fails with exact operator comman
 [[ "$LAST_OUTPUT" == *'sudo loginctl enable-linger '* ]] || {
     printf 'FAIL linger failure prints the required command\n'; fail=$((fail + 1));
 }
+FAKE_LINGER=no check_status 'uninstall continues when lingering is disabled' 0 \
+    --runtime openclaw --uninstall --dry-run
+[[ "$LAST_OUTPUT" == *'linger=disabled (informational; uninstall continues)'* ]] || {
+    printf 'FAIL uninstall does not report disabled lingering informationally\n'
+    fail=$((fail + 1))
+}
+
+mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
+FAKE_SYSTEMD=no FAKE_LINGER=no check_status \
+    'dry-run aggregates all prerequisite failures' 78 --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'systemctl --user is unavailable'* &&
+   "$LAST_OUTPUT" == *'user lingering is disabled'* &&
+   "$LAST_OUTPUT" == *'openclaw executable not found'* &&
+   "$LAST_OUTPUT" == *'prerequisite failures (3)'* ]] || {
+    printf 'FAIL dry-run did not report all prerequisite failures together\n'
+    fail=$((fail + 1))
+}
+mv "$fixture_bin/openclaw.off" "$fixture_bin/openclaw"
 
 after=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path("'$sandbox'").rglob("*")))')
 if [[ "$before" == "$after" ]]; then

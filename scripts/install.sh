@@ -70,10 +70,12 @@ resolve_command() {
 validate_hermes_secret_files() {
     local python=$1 output
     if ! output=$(PYTHONPATH="$ROOT/harness" "$python" - \
-        "$notify_secret_file" "$roster_secret_file" <<'PY'
+        "$notify_secret_file" "$roster_secret_file" <<'PYINNER'
 import hmac
 import sys
 
+# Installer validation deliberately shares the adapter contract. A regression
+# test pins this import and its mode-0600 rejection behavior.
 from adapters.hermes import _load_secret
 
 loaded = []
@@ -86,49 +88,79 @@ for label, path in (("notify", sys.argv[1]), ("roster", sys.argv[2])):
 if hmac.compare_digest(loaded[0], loaded[1]):
     print("Hermes notify and roster route secrets must differ")
     raise SystemExit(1)
-PY
+PYINNER
     ); then
-        die_config "$output"
+        printf '%s' "$output"
+        return 1
+    fi
+}
+
+prereq_error() {
+    if ((dry_run)); then
+        prerequisite_errors+=("$1")
+    else
+        die_config "$1"
     fi
 }
 
 discover_prerequisites() {
-    local python systemctl_bin loginctl_bin linger user_name runtime_cli logrotate_bin
+    local python="" systemctl_bin="" loginctl_bin="" linger="unknown" user_name
+    local runtime_cli="" logrotate_bin=""
+    prerequisite_errors=()
 
-    [[ -n "${HOME:-}" && "$HOME" == /* ]] ||
-        die_config 'HOME must be set to an absolute path'
+    if [[ -z "${HOME:-}" || "$HOME" != /* ]]; then
+        prereq_error 'HOME must be set to an absolute path'
+    fi
 
-    python=$(resolve_command python3) || die_config 'python3 executable not found'
-    systemctl_bin=$(resolve_command systemctl) ||
-        die_config 'systemctl executable not found; a systemd user session is required'
-    if ! "$systemctl_bin" --user show-environment >/dev/null 2>&1; then
-        die_config 'systemctl --user is unavailable; use a host with a systemd user session'
+    python=$(resolve_command python3 || true)
+    [[ -n "$python" ]] || prereq_error 'python3 executable not found'
+
+    systemctl_bin=$(resolve_command systemctl || true)
+    if [[ -z "$systemctl_bin" ]]; then
+        prereq_error 'systemctl executable not found; a systemd user session is required'
+    elif ! "$systemctl_bin" --user show-environment >/dev/null 2>&1; then
+        prereq_error 'systemctl --user is unavailable; use a host with a systemd user session'
     fi
 
     user_name=${USER:-}
     [[ -n "$user_name" ]] || user_name=$(id -un)
-    loginctl_bin=$(resolve_command loginctl) ||
-        die_config 'loginctl executable not found; cannot verify user lingering'
-    linger=$(
-        "$loginctl_bin" show-user "$user_name" -p Linger --value 2>/dev/null || true
-    )
-    if [[ "$linger" != yes ]]; then
-        die_config "user lingering is disabled; run: sudo loginctl enable-linger $user_name"
+    loginctl_bin=$(resolve_command loginctl || true)
+    if [[ -z "$loginctl_bin" ]]; then
+        if [[ "$mode" == uninstall ]]; then
+            linger="unknown (informational; uninstall continues)"
+        else
+            prereq_error 'loginctl executable not found; cannot verify user lingering'
+        fi
+    else
+        linger=$("$loginctl_bin" show-user "$user_name" -p Linger --value 2>/dev/null || true)
+        if [[ "$linger" != yes ]]; then
+            if [[ "$mode" == uninstall ]]; then
+                linger="disabled (informational; uninstall continues)"
+            else
+                prereq_error "user lingering is disabled; run: sudo loginctl enable-linger $user_name"
+            fi
+        else
+            linger="enabled"
+        fi
     fi
 
     if [[ "$mode" == uninstall ]]; then
         runtime_cli="not-required-for-uninstall"
     else
-        runtime_cli=$(resolve_command "$runtime") ||
-            die_config "$runtime executable not found in the service-safe PATH"
-        if [[ "$runtime" == openclaw ]]; then
-            "$runtime_cli" --version >/dev/null 2>&1 ||
-                die_config 'openclaw executable exists but cannot run --version'
+        runtime_cli=$(resolve_command "$runtime" || true)
+        if [[ -z "$runtime_cli" ]]; then
+            prereq_error "$runtime executable not found in the service-safe PATH"
+        elif [[ "$runtime" == openclaw ]]; then
+            "$runtime_cli" --version >/dev/null 2>&1 || \
+                prereq_error 'openclaw executable exists but cannot run --version'
         else
-            "$runtime_cli" webhook --help >/dev/null 2>&1 ||
-                die_config 'hermes executable does not expose webhook support'
-            if [[ -n "$notify_secret_file" ]]; then
-                validate_hermes_secret_files "$python"
+            "$runtime_cli" webhook --help >/dev/null 2>&1 || \
+                prereq_error 'hermes executable does not expose webhook support'
+            if [[ -n "$notify_secret_file" && -n "$python" ]]; then
+                local secret_error=""
+                if ! secret_error=$(validate_hermes_secret_files "$python"); then
+                    prereq_error "$secret_error"
+                fi
             fi
         fi
     fi
@@ -136,15 +168,25 @@ discover_prerequisites() {
     logrotate_bin=$(resolve_command logrotate || true)
     printf 'discovery runtime=%s\n' "$runtime"
     printf 'repo_root=%s\n' "$ROOT"
-    printf 'python=%s\n' "$python"
-    printf 'runtime_cli=%s\n' "$runtime_cli"
-    printf 'systemd_user=available\n'
-    printf 'linger=enabled\n'
+    [[ -n "$python" ]] && printf 'python=%s\n' "$python"
+    [[ -n "$runtime_cli" ]] && printf 'runtime_cli=%s\n' "$runtime_cli"
+    [[ -n "$systemctl_bin" ]] && printf 'systemd_user=checked\n'
+    printf 'linger=%s\n' "$linger"
     if [[ -n "$logrotate_bin" ]]; then
         printf 'logrotate=%s\n' "$logrotate_bin"
     else
         printf 'logrotate=absent (managed Python rotation will be used)\n'
     fi
+
+    if ((${#prerequisite_errors[@]})); then
+        printf 'prerequisite failures (%d):\n' "${#prerequisite_errors[@]}" >&2
+        local error
+        for error in "${prerequisite_errors[@]}"; do
+            printf -- '- %s\n' "$error" >&2
+        done
+        return 1
+    fi
+    printf 'systemd_user=available\n'
 }
 
 resolve_credentials_path() {
@@ -158,8 +200,10 @@ resolve_credentials_path() {
         printf '%s' "$neutral"
         return
     fi
+    # Legacy-migration probe only: this path is read-only discovery input.
+    # It is never a write target, a new-install default, or an owned artifact.
     legacy="$HOME/.openclaw/workspace/.env"
-    if [[ -f "$legacy" ]]; then
+    if [[ -e "$legacy" || -L "$legacy" ]]; then
         printf '%s' "$legacy"
         return
     fi
@@ -206,6 +250,38 @@ print_managed_inventory() {
                 "$config_dir"
         fi
     fi
+}
+
+plan_has_changes() {
+    local config_home config_dir unit_dir unit source destination
+    config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+    config_dir="$config_home/agenteiamail"
+    unit_dir="$config_home/systemd/user"
+
+    if [[ "$mode" == uninstall ]]; then
+        [[ -e "$config_dir/install.manifest" || -L "$config_dir/install.manifest" ]]
+        return
+    fi
+
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+        agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+        source="$ROOT/systemd/$unit"
+        destination="$unit_dir/$unit"
+        if [[ ! -e "$destination" && ! -L "$destination" ]] || \
+           ! cmp -s "$source" "$destination"; then
+            return 0
+        fi
+    done
+    for destination in "$config_dir/runtime.env" "$config_dir/install.manifest"; do
+        [[ -e "$destination" || -L "$destination" ]] || return 0
+    done
+    if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
+        for destination in "$config_dir/hermes/notify.secret" \
+            "$config_dir/hermes/roster.secret"; do
+            [[ -e "$destination" || -L "$destination" ]] || return 0
+        done
+    fi
+    return 1
 }
 
 runtime=""
@@ -303,9 +379,15 @@ if [[ "$runtime" == hermes && "$mode" != uninstall ]] && ((non_interactive)) &&
 fi
 
 if ((dry_run)); then
-    discover_prerequisites
+    if ! discover_prerequisites; then
+        exit "$EX_CONFIG"
+    fi
     print_managed_inventory
-    printf 'dry-run: discovery and inventory complete; no changes made.\n'
+    if plan_has_changes; then
+        printf 'dry-run: plan contains create, modify, or remove actions; no changes made.\n'
+        exit "$EX_CHANGED"
+    fi
+    printf 'dry-run: system is converged; no changes needed.\n'
     exit "$EX_OK"
 fi
 
