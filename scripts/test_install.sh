@@ -224,6 +224,14 @@ check_status 'blocked unit container is a configuration refusal, not plan status
     printf 'FAIL blocked artifacts did not propagate explicit refusal state\n'
     fail=$((fail + 1))
 }
+[[ "$LAST_OUTPUT" == *"install: unsafe managed container $sandbox/.config/systemd/user reason=group-or-world-writable; run: chmod go-w -- $sandbox/.config/systemd/user"* ]] || {
+    printf 'FAIL refusal did not name the unsafe container, reason, and chmod remediation\n'
+    fail=$((fail + 1))
+}
+[[ "$LAST_OUTPUT" != *'unproven pre-existing artifacts are preserved'* ]] || {
+    printf 'FAIL unsafe-container refusal used the unrelated ownership-manifest explanation\n'
+    fail=$((fail + 1))
+}
 rm -rf "$sandbox/.config"
 
 outside_systemd="$fixture_root/outside-systemd"

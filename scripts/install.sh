@@ -267,6 +267,7 @@ validate_container_chain() {
     [[ "$target" == "$HOME"/* ]] || {
         printf 'inventory conflict-container=%s reason=outside-home\n' "$target"
         inventory_conflicts=1
+        inventory_blocked_details+=("$target"$'\t'outside-home)
         return 1
     }
 
@@ -280,12 +281,14 @@ validate_container_chain() {
         if [[ -L "$current" ]]; then
             printf 'inventory conflict-container=%s reason=symlink\n' "$current"
             inventory_conflicts=1
+            inventory_blocked_details+=("$current"$'\t'symlink)
             return 1
         fi
         if [[ -e "$current" ]]; then
             if [[ ! -d "$current" ]]; then
                 printf 'inventory conflict-container=%s reason=not-directory\n' "$current"
                 inventory_conflicts=1
+                inventory_blocked_details+=("$current"$'\t'not-directory)
                 return 1
             fi
             owner=$(stat -Lc '%u' -- "$current" 2>/dev/null || true)
@@ -294,6 +297,7 @@ validate_container_chain() {
                 printf 'inventory conflict-container=%s reason=unsafe-owner-or-metadata\n' \
                     "$current"
                 inventory_conflicts=1
+                inventory_blocked_details+=("$current"$'\t'unsafe-owner-or-metadata)
                 return 1
             fi
             mode_value=$((8#$mode))
@@ -301,6 +305,7 @@ validate_container_chain() {
                 printf 'inventory conflict-container=%s reason=group-or-world-writable\n' \
                     "$current"
                 inventory_conflicts=1
+                inventory_blocked_details+=("$current"$'\t'group-or-world-writable)
                 return 1
             fi
         else
@@ -318,6 +323,7 @@ classify_planned_artifact() {
         printf 'inventory conflict-preserve-%s=%s reason=unproven-ownership\n' \
             "$kind" "$destination"
         inventory_conflicts=1
+        inventory_unproven_conflicts=1
     else
         printf 'inventory planned-managed-%s=%s source=%s\n' \
             "$kind" "$destination" "$source"
@@ -337,7 +343,9 @@ print_managed_inventory() {
     hermes_dir="$config_dir/hermes"
     credentials=$(resolve_credentials_path)
     inventory_conflicts=0
+    inventory_unproven_conflicts=0
     inventory_blocked=0
+    inventory_blocked_details=()
 
     printf 'inventory root=%s mode=%s runtime=%s\n' "$ROOT" "$mode" "$runtime"
     validate_container_chain "$unit_dir" || unit_container_safe=0
@@ -530,7 +538,36 @@ if ((dry_run)); then
     fi
     print_managed_inventory
     if ((inventory_conflicts || inventory_blocked)); then
-        printf 'install: unproven pre-existing artifacts are preserved; ownership manifest support is required before mutation\n' >&2
+        if ((inventory_unproven_conflicts)); then
+            printf 'install: unproven pre-existing artifacts are preserved; ownership manifest support is required before mutation\n' >&2
+        fi
+        if ((inventory_blocked)); then
+            for blocked_detail in "${inventory_blocked_details[@]}"; do
+                IFS=$'\t' read -r blocked_container blocked_reason <<<"$blocked_detail"
+                case "$blocked_reason" in
+                    group-or-world-writable)
+                        printf 'install: unsafe managed container %s reason=%s; run: chmod go-w -- %q\n' \
+                            "$blocked_container" "$blocked_reason" "$blocked_container" >&2
+                        ;;
+                    symlink)
+                        printf 'install: unsafe managed container %s reason=%s; replace the symlink with a user-owned directory before retrying\n' \
+                            "$blocked_container" "$blocked_reason" >&2
+                        ;;
+                    not-directory)
+                        printf 'install: unsafe managed container %s reason=%s; replace it with a user-owned directory before retrying\n' \
+                            "$blocked_container" "$blocked_reason" >&2
+                        ;;
+                    unsafe-owner-or-metadata)
+                        printf 'install: unsafe managed container %s reason=%s; verify user ownership and readable metadata before retrying\n' \
+                            "$blocked_container" "$blocked_reason" >&2
+                        ;;
+                    *)
+                        printf 'install: unsafe managed container %s reason=%s; correct the container path before retrying\n' \
+                            "$blocked_container" "$blocked_reason" >&2
+                        ;;
+                esac
+            done
+        fi
         exit "$EX_CONFIG"
     fi
     if plan_has_changes; then
