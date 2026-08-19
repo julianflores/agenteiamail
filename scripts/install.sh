@@ -272,7 +272,6 @@ discover_prerequisites() {
     discovered_python=$python
     discovered_systemctl=$systemctl_bin
     discovered_runtime_cli=$runtime_cli
-    discovered_service_path=$service_path
 }
 
 resolve_credentials_path() {
@@ -385,7 +384,6 @@ manifest_arguments() {
 load_ownership_manifest() {
     local output kind path digest previous_runtime
     declare -gA owned_digests=()
-    declare -gA owned_kinds=()
     manifest_runtime=$runtime
     [[ -e "$manifest" || -L "$manifest" ]] || return 0
     local -a arguments=()
@@ -409,7 +407,6 @@ load_ownership_manifest() {
     fi
     while IFS=$'\t' read -r kind path digest; do
         [[ -n "$kind" ]] || continue
-        owned_kinds["$path"]=$kind
         owned_digests["$path"]=$digest
     done <<<"$output"
 }
@@ -719,7 +716,6 @@ converge_artifact() {
 ' "$output" >&2
         exit "$EX_CONFIG"
     fi
-    owned_kinds["$destination"]=$kind
     owned_digests["$destination"]=$digest
     changes_made=1
     runtime_filesystem_changed=1
@@ -798,7 +794,7 @@ uninstall_owned_filesystem() {
             printf '%s\n' "$output" >&2
             exit "$EX_CONFIG"
         fi
-        unset 'owned_digests[$destination]' 'owned_kinds[$destination]'
+        unset 'owned_digests[$destination]'
         changes_made=1
     done
     mapfile -d '' -t arguments < <(manifest_arguments)
@@ -862,7 +858,6 @@ converge_generated_secret() {
         printf '%s\n' "$output" >&2
         exit "$EX_CONFIG"
     fi
-    owned_kinds["$destination"]=secret
     owned_digests["$destination"]=$digest
     changes_made=1
     mutation_count=$((mutation_count + 1))
