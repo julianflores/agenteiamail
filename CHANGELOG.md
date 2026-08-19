@@ -1,20 +1,27 @@
 # Changelog
 
-The version this clone is on is in [`VERSION`](VERSION). `scripts/version.sh`
-compares it against the newest release and says what to do about the gap;
-[`UPGRADE.md`](UPGRADE.md) is how to close it.
+## 1.6.0 — 2026-08-19
 
-**Read every entry between your version and the one you are moving to**, not
-just the newest. An entry carries an **Upgrade actions** section when `git pull`
-alone leaves the install broken, and those are the releases where skipping the
-reading costs a working listener. Entries without that section need nothing
-beyond the standard sequence in `UPGRADE.md`.
+Adds the supported, idempotent installer for OpenClaw and Hermes Agent runtimes,
+including runtime-aware service generation and health checks, plus documentation
+corrections for installation and upgrades.
 
-Releases are tagged `vX.Y.Z` and have full notes on
-[the releases page](https://github.com/julianflores/agenteiamail/releases). What
-is here is the part that matters while upgrading.
+### Upgrade actions
 
----
+- Use `scripts/install.sh` as the supported installation and upgrade path. Run it
+  with `--dry-run` first, review the plan, then rerun without `--dry-run`.
+- Enable all three user units installed by the supported path:
+
+  ```bash
+  systemctl --user enable agenteiamail-idle.service
+  systemctl --user enable agenteiamail-dispatch.service
+  systemctl --user enable agenteiamail-logrotate.timer
+  ```
+
+- Generated units use
+  `EnvironmentFile=-%h/.config/agenteiamail/runtime.env`. The leading `-` makes
+  this runtime environment file optional, so existing manual installs continue
+  to work without it.
 
 ## 1.5.0 (2026-08-18)
 
