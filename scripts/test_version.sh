@@ -78,7 +78,18 @@ assert "2.0.0 is ahead of every tag"     '[ "$rc" -eq 0 ]'
 assert "ahead says so, not up to date"   'grep -q "ahead of the newest tag" <<<"$out"'
 assert "ahead without changelog says no entry" 'grep -q "no entry for 2.0.0" <<<"$out"'
 
-printf '## 2.0.0\n' >"$clone/CHANGELOG.md"
+# A changelog that exists but does not describe this version is the case the
+# pattern guards. The absent-file case above passes even with no pattern.
+printf '# Changelog\n\n## 1.9.0 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "present changelog without the entry" 'grep -q "no entry for 2.0.0" <<<"$out"'
+
+# A longer version that merely begins with this one is not this one.
+printf '# Changelog\n\n## 2.0.01 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "a longer version is not a match"     'grep -q "no entry for 2.0.0" <<<"$out"'
+
+printf '# Changelog\n\n## 2.0.0 — 2026-08-19\n' >"$clone/CHANGELOG.md"
 run 2.0.0
 assert "ahead with changelog exits 0"    '[ "$rc" -eq 0 ]'
 assert "ahead with changelog is observed" 'grep -q "does describe 2.0.0" <<<"$out"'
