@@ -113,6 +113,25 @@ PYINNER
     fi
 }
 
+validate_hermes_route_environment() {
+    local name value
+    for name in HERMES_NOTIFY_URL HERMES_ROSTER_URL HERMES_HEALTH_URL; do
+        value=${!name:-}
+        [[ -n "$value" ]] || {
+            printf '%s is required; supply the full operator-approved URL' "$name"
+            return 1
+        }
+        [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || {
+            printf '%s must be a single-line URL' "$name"
+            return 1
+        }
+    done
+    if [[ "${HERMES_SIGNATURE_MODE:-v2}" != v2 ]]; then
+        printf 'HERMES_SIGNATURE_MODE must be v2 for installer route verification'
+        return 1
+    fi
+}
+
 prereq_error() {
     if ((dry_run)); then
         prerequisite_errors+=("$1")
@@ -208,6 +227,15 @@ discover_prerequisites() {
             local secret_error=""
             if ! secret_error=$(validate_hermes_secret_files "$python"); then
                 prereq_error "$secret_error"
+            fi
+        fi
+        if [[ "$runtime" == hermes ]]; then
+            local route_error=""
+            if ! route_error=$(validate_hermes_route_environment); then
+                prereq_error "$route_error"
+            fi
+            if ((dry_run == 0)) && [[ -z "$notify_secret_file" ]]; then
+                prereq_error 'interactive Hermes secret creation is not implemented; supply both route secret files'
             fi
         fi
     fi
@@ -371,7 +399,31 @@ load_ownership_manifest() {
 render_artifact() {
     local destination=$1 source=$2
     if [[ "$source" == generated-runtime-config ]]; then
-        printf 'AGENTEIAMAIL_RUNTIME=%s\n' "$runtime"
+        if [[ "$runtime" == openclaw ]]; then
+            printf 'AGENTEIAMAIL_RUNTIME=openclaw\n'
+            return
+        fi
+        python3 - "$notify_secret_file" "$roster_secret_file" <<'PYINNER'
+import os
+import sys
+
+values = {
+    "AGENTEIAMAIL_RUNTIME": "hermes",
+    "HERMES_NOTIFY_URL": os.environ["HERMES_NOTIFY_URL"],
+    "HERMES_NOTIFY_SECRET_FILE": sys.argv[1],
+    "HERMES_ROSTER_URL": os.environ["HERMES_ROSTER_URL"],
+    "HERMES_ROSTER_SECRET_FILE": sys.argv[2],
+    "HERMES_HEALTH_URL": os.environ["HERMES_HEALTH_URL"],
+    "HERMES_SIGNATURE_MODE": "v2",
+}
+if os.environ.get("HERMES_ALLOW_REMOTE", "").lower() in ("1", "true", "yes"):
+    values["HERMES_ALLOW_REMOTE"] = "1"
+for name, value in values.items():
+    if "\n" in value or "\r" in value or "\0" in value:
+        raise SystemExit(f"invalid multiline or NUL value for {name}")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    print(f'{name}="{escaped}"')
+PYINNER
         return
     fi
     python3 - "$source" "$ROOT" "$credentials" <<'PYINNER'
@@ -633,7 +685,7 @@ uninstall_owned_filesystem() {
     changes_made=1
 }
 
-converge_openclaw_filesystem() {
+converge_runtime_filesystem() {
     local output unit
     create_secure_containers
     local -a arguments=()
@@ -648,6 +700,22 @@ converge_openclaw_filesystem() {
         converge_artifact file "$unit_dir/$unit" "$ROOT/systemd/$unit" 0644
     done
     converge_artifact file "$config_dir/runtime.env" generated-runtime-config 0600
+}
+
+probe_hermes_webhook_support() {
+    local output
+    if ! output=$("$discovered_runtime_cli" webhook --help 2>&1); then
+        printf '%s\n' "$output" >&2
+        die_config 'Hermes webhook support is unavailable; install a V2-capable Hermes release'
+    fi
+    printf 'hermes_webhook_probe=accepted executable=%s\n' "$discovered_runtime_cli"
+}
+
+probe_hermes_routes() {
+    HERMES_NOTIFY_SECRET_FILE="$notify_secret_file" \
+    HERMES_ROSTER_SECRET_FILE="$roster_secret_file" \
+    HERMES_SIGNATURE_MODE=v2 \
+    "$discovered_python" "$ROOT/scripts/hermes_smoke.py"
 }
 
 verify_installed_units() {
@@ -866,12 +934,6 @@ if [[ "$mode" == uninstall ]]; then
     exit "$EX_OK"
 fi
 
-if [[ "$runtime" != openclaw ]]; then
-    printf 'install: runtime=%s mode=%s mutation is not implemented in this boundary; no changes made.\n' \
-        "$runtime" "$mode" >&2
-    exit "$EX_CONFIG"
-fi
-
 print_managed_inventory
 if ((inventory_conflicts || inventory_blocked)); then
     die_config 'filesystem convergence refused because managed inventory is unsafe or unowned'
@@ -879,13 +941,20 @@ fi
 changes_made=0
 mutation_count=0
 write_count=0
-converge_openclaw_filesystem
+if [[ "$runtime" == hermes ]]; then
+    probe_hermes_webhook_support
+fi
+converge_runtime_filesystem
 verify_installed_units
-probe_openclaw_service_environment
+if [[ "$runtime" == openclaw ]]; then
+    probe_openclaw_service_environment
+else
+    probe_hermes_routes
+fi
 converge_required_services
 if ((changes_made)); then
-    printf 'install: OpenClaw artifacts and required user services converged.\n'
+    printf 'install: %s artifacts and required user services converged.\n' "$runtime"
     exit "$EX_CHANGED"
 fi
-printf 'install: OpenClaw artifacts and required user services already converged.\n'
+printf 'install: %s artifacts and required user services already converged.\n' "$runtime"
 exit "$EX_OK"

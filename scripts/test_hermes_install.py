@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Isolated installer contract tests for the Hermes FR7 flow."""
+
+import hashlib
+import hmac
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+INSTALL = ROOT / "scripts" / "install.sh"
+
+
+class _HermesFixture(BaseHTTPRequestHandler):
+    requests = []
+    notify_secret = b"notify-installer-secret"
+    roster_secret = b"roster-installer-secret"
+
+    def do_GET(self):
+        type(self).requests.append(("GET", self.path, dict(self.headers), b""))
+        self._answer(200, {"status": "ok", "platform": "webhook"})
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        type(self).requests.append(("POST", self.path, dict(self.headers), body))
+        if self.path.endswith("agenteiamail-notify"):
+            self._answer(200, {"status": "delivered", "route": "agenteiamail-notify"})
+        else:
+            self._answer(202, {"status": "accepted", "route": "agenteiamail-roster"})
+
+    def _answer(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        del format, args
+        pass
+
+
+class HermesInstallerTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name)
+        self.home = self.root / "home"
+        self.bin = self.root / "bin"
+        self.state = self.root / "systemd-state"
+        self.home.mkdir(mode=0o700)
+        self.bin.mkdir(mode=0o700)
+        self.state.mkdir(mode=0o700)
+        self.systemd_log = self.root / "systemd.log"
+        self.runtime_log = self.root / "runtime.log"
+        self._write_fakes()
+
+        self.notify_secret = self.root / "notify.secret"
+        self.roster_secret = self.root / "roster.secret"
+        self.notify_secret.write_bytes(_HermesFixture.notify_secret + b"\n")
+        self.roster_secret.write_bytes(_HermesFixture.roster_secret + b"\n")
+        self.notify_secret.chmod(0o600)
+        self.roster_secret.chmod(0o600)
+
+        _HermesFixture.requests = []
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _HermesFixture)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        base = f"http://127.0.0.1:{self.server.server_port}"
+        self.urls = {
+            "HERMES_NOTIFY_URL": base + "/webhooks/agenteiamail-notify",
+            "HERMES_ROSTER_URL": base + "/webhooks/agenteiamail-roster",
+            "HERMES_HEALTH_URL": base + "/health",
+        }
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.temp.cleanup()
+
+    def _write(self, name, text):
+        path = self.bin / name
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o755)
+
+    def _write_fakes(self):
+        self._write(
+            "systemctl",
+            """#!/usr/bin/env bash
+case "$*" in
+  '--user show-environment') printf 'PATH=%s\\n' "$FAKE_SERVICE_PATH" ;;
+  '--user daemon-reload') printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG" ;;
+  '--user is-enabled --quiet '*) unit=${*: -1}; [[ -e "$FAKE_SYSTEMD_STATE/$unit.enabled" ]] ;;
+  '--user is-active --quiet '*) unit=${*: -1}; [[ -e "$FAKE_SYSTEMD_STATE/$unit.active" ]] ;;
+  '--user enable --now '*) unit=${*: -1}; : >"$FAKE_SYSTEMD_STATE/$unit.enabled"; : >"$FAKE_SYSTEMD_STATE/$unit.active"; printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG" ;;
+  *) exit 2 ;;
+esac
+""",
+        )
+        self._write(
+            "systemd-analyze",
+            """#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+[[ "$1" == verify ]]
+""",
+        )
+        self._write("loginctl", "#!/usr/bin/env bash\nprintf 'yes\\n'\n")
+        self._write("id", "#!/usr/bin/env bash\nprintf 'test-user\\n'\n")
+        self._write(
+            "hermes",
+            """#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$FAKE_RUNTIME_LOG"
+[[ "$1" == webhook && "$2" == --help ]] || exit 9
+printf 'Hermes webhook support\\n'
+""",
+        )
+
+    def _environment(self, include_urls=True):
+        environment = os.environ.copy()
+        for name in tuple(environment):
+            if name.startswith("HERMES_") or name.startswith("AGENTEIAMAIL_"):
+                environment.pop(name)
+        environment.update(
+            {
+                "HOME": str(self.home),
+                "USER": "untrusted; value",
+                "PATH": f"{self.bin}:/usr/bin:/bin",
+                "FAKE_SERVICE_PATH": f"{self.bin}:/usr/bin:/bin",
+                "FAKE_SYSTEMD_LOG": str(self.systemd_log),
+                "FAKE_SYSTEMD_STATE": str(self.state),
+                "FAKE_RUNTIME_LOG": str(self.runtime_log),
+            }
+        )
+        if include_urls:
+            environment.update(self.urls)
+        return environment
+
+    def _run(self, include_urls=True):
+        return subprocess.run(
+            [
+                str(INSTALL),
+                "--runtime",
+                "hermes",
+                "--profile",
+                "default",
+                "--non-interactive",
+                "--notify-secret-file",
+                str(self.notify_secret),
+                "--roster-secret-file",
+                str(self.roster_secret),
+            ],
+            cwd=ROOT,
+            env=self._environment(include_urls),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_missing_route_urls_refuse_before_filesystem_or_runtime_mutation(self):
+        completed = self._run(include_urls=False)
+
+        self.assertEqual(78, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("HERMES_NOTIFY_URL", completed.stderr)
+        self.assertFalse((self.home / ".config").exists())
+        self.assertFalse(self.runtime_log.exists())
+        self.assertEqual([], _HermesFixture.requests)
+
+    def test_external_secrets_health_and_both_signed_routes_converge(self):
+        completed = self._run()
+
+        self.assertEqual(10, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("hermes_webhook_probe=accepted", completed.stdout)
+        self.assertIn("hermes_health_probe=accepted", completed.stdout)
+        self.assertIn("hermes_notify_smoke=delivered", completed.stdout)
+        self.assertIn("hermes_roster_smoke=accepted completion=unconfirmed", completed.stdout)
+
+        runtime_env = self.home / ".config" / "agenteiamail" / "runtime.env"
+        text = runtime_env.read_text(encoding="utf-8")
+        self.assertEqual(0o600, runtime_env.stat().st_mode & 0o777)
+        self.assertIn('AGENTEIAMAIL_RUNTIME="hermes"', text)
+        for name, value in self.urls.items():
+            self.assertIn(f"{name}=", text)
+            self.assertIn(value, text)
+        self.assertIn(str(self.notify_secret), text)
+        self.assertIn(str(self.roster_secret), text)
+        self.assertNotIn(_HermesFixture.notify_secret.decode(), text)
+        self.assertNotIn(_HermesFixture.roster_secret.decode(), text)
+        self.assertIn('HERMES_SIGNATURE_MODE="v2"', text)
+
+        requests = _HermesFixture.requests
+        self.assertEqual(["GET", "POST", "POST"], [item[0] for item in requests])
+        self.assertEqual("/health", requests[0][1])
+        for method, path, headers, body in requests[1:]:
+            self.assertEqual("POST", method)
+            secret = (
+                _HermesFixture.notify_secret
+                if path.endswith("agenteiamail-notify")
+                else _HermesFixture.roster_secret
+            )
+            timestamp = headers["X-Webhook-Timestamp"]
+            expected = hmac.new(
+                secret,
+                timestamp.encode("ascii") + b"." + body,
+                hashlib.sha256,
+            ).hexdigest()
+            self.assertEqual(expected, headers["X-Webhook-Signature-V2"])
+            self.assertNotIn("X-Webhook-Signature", headers)
+            self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
+            envelope = json.loads(body)
+            self.assertEqual("installer.smoke", envelope["source"])
+            self.assertFalse(envelope["authenticated_sender"])
+
+        runtime_calls = self.runtime_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(["webhook --help"], runtime_calls)
+        systemd_calls = self.systemd_log.read_text(encoding="utf-8")
+        self.assertIn("verify ", systemd_calls)
+        self.assertIn("--user enable --now agenteiamail-dispatch.service", systemd_calls)
+
+
+if __name__ == "__main__":
+    unittest.main()

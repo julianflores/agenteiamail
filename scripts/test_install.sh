@@ -22,6 +22,9 @@ check_status() {
         HOME="$sandbox" USER='victim; id' \
         XDG_CONFIG_HOME="$sandbox/ignored-config" \
         XDG_STATE_HOME="$sandbox/ignored-state" \
+        HERMES_NOTIFY_URL=http://127.0.0.1:9/webhooks/agenteiamail-notify \
+        HERMES_ROSTER_URL=http://127.0.0.1:9/webhooks/agenteiamail-roster \
+        HERMES_HEALTH_URL=http://127.0.0.1:9/health \
         FAKE_SERVICE_PATH="$service_path" \
         PATH="$fixture_bin:/usr/bin:/bin" \
         "$INSTALL" "$@" 2>&1)
