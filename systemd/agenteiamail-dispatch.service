@@ -11,10 +11,10 @@ After=agenteiamail-idle.service
 
 [Service]
 Type=simple
-# Written by scripts/install.sh. Keeping runtime selection and Hermes route
-# settings in one protected file makes installer convergence observable and
-# avoids embedding route configuration in the copied unit.
-EnvironmentFile=%h/.config/agenteiamail/runtime.env
+# scripts/install.sh writes runtime.env. Manual installs retain the inline auto
+# default; installer-managed installs override it from the optional file.
+Environment=AGENTEIAMAIL_RUNTIME=auto
+EnvironmentFile=-%h/.config/agenteiamail/runtime.env
 # AGENTEIAMAIL_RUNTIME in runtime.env selects openclaw, hermes, or auto. `auto`
 # chooses only when exactly one runtime is present and refuses rather than
 # guessing when none or several are.

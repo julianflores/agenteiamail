@@ -298,12 +298,17 @@ for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
     }
 done
 installed_dispatch="$sandbox/.config/systemd/user/agenteiamail-dispatch.service"
-[[ "$(<"$installed_dispatch")" == *'EnvironmentFile=%h/.config/agenteiamail/runtime.env'* ]] || {
-    printf 'FAIL dispatcher unit does not load the installer-generated runtime configuration\n'
+dispatch_unit="$(<"$installed_dispatch")"
+[[ "$dispatch_unit" == *'EnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+    printf 'FAIL dispatcher unit does not optionally load the installer-generated runtime configuration\n'
     fail=$((fail + 1))
 }
-[[ "$(<"$installed_dispatch")" != *'Environment=AGENTEIAMAIL_RUNTIME=auto'* ]] || {
-    printf 'FAIL dispatcher unit overrides the installer-selected runtime\n'
+[[ "$dispatch_unit" == *'Environment=AGENTEIAMAIL_RUNTIME=auto'* ]] || {
+    printf 'FAIL dispatcher unit does not retain the manual-install runtime default\n'
+    fail=$((fail + 1))
+}
+[[ "$dispatch_unit" == *$'Environment=AGENTEIAMAIL_RUNTIME=auto\nEnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+    printf 'FAIL dispatcher runtime configuration does not override the inline default\n'
     fail=$((fail + 1))
 }
 [[ -e "$sandbox/runtime-side-effect" ]] || {
