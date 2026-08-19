@@ -40,6 +40,7 @@ enableable = {
 
 check("INSTALL.md installs every shipped unit", shipped, installed)
 check("INSTALL.md enables every installed enableable unit", enableable, enabled_units("INSTALL.md"))
+check("UPGRADE.md enables every installed enableable unit", enableable, enabled_units("UPGRADE.md"))
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
