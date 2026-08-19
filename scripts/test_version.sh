@@ -75,7 +75,30 @@ assert "behind names the newer version"  'grep -q "1.10.0 has been released" <<<
 
 run 2.0.0
 assert "2.0.0 is ahead of every tag"     '[ "$rc" -eq 0 ]'
-assert "ahead says so, not up to date"   'grep -q "ahead of the newest release" <<<"$out"'
+assert "ahead says so, not up to date"   'grep -q "ahead of the newest tag" <<<"$out"'
+assert "ahead without changelog says no entry" 'grep -q "no entry for 2.0.0" <<<"$out"'
+
+# A changelog that exists but does not describe this version is the case the
+# pattern guards. The absent-file case above passes even with no pattern.
+printf '# Changelog\n\n## 1.9.0 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "present changelog without the entry" 'grep -q "no entry for 2.0.0" <<<"$out"'
+
+# A longer version that merely begins with this one is not this one.
+printf '# Changelog\n\n## 2.0.01 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "a longer version is not a match"     'grep -q "no entry for 2.0.0" <<<"$out"'
+
+# A heading whose separators are not dots must not match. Without the escaping
+# in version.sh, `.` is a wildcard and this reports an entry that is not there.
+printf '# Changelog\n\n## 2x0x0 (2026-08-18)\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "dots are literal, not wildcards"     'grep -q "no entry for 2.0.0" <<<"$out"'
+
+printf '# Changelog\n\n## 2.0.0 — 2026-08-19\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "ahead with changelog exits 0"    '[ "$rc" -eq 0 ]'
+assert "ahead with changelog is observed" 'grep -q "does describe 2.0.0" <<<"$out"'
 
 # A tag that is not a version must be ignored rather than sorted.
 assert "non-version tag ignored"         '! grep -q "not-a-version" <<<"$out"'

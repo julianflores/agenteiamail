@@ -162,11 +162,20 @@ EOF
 fi
 
 if is_newer "$latest" "$inst"; then
-    cat <<EOF
-This install is ahead of the newest release, so it is running code that has not
-been tagged. That is normal on a clone that tracks main, and it means the
-CHANGELOG entry for $inst does not exist yet.
+    changelog_version=${inst//./\\.}
+    if grep -qE "^## ${changelog_version}([^0-9]|$)" "$REPO/CHANGELOG.md" 2>/dev/null; then
+        cat <<EOF
+This install is ahead of the newest tag ($latest), so it is running code that
+has not been tagged yet. CHANGELOG.md does describe $inst, so read that entry
+for what you have; there is nothing newer to pull.
 EOF
+    else
+        cat <<EOF
+This install is ahead of the newest tag ($latest), so it is running code that
+has not been tagged yet. CHANGELOG.md has no entry for $inst either, so the
+commit history is the only description of what you are running.
+EOF
+    fi
     exit 0
 fi
 
