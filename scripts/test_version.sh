@@ -75,7 +75,13 @@ assert "behind names the newer version"  'grep -q "1.10.0 has been released" <<<
 
 run 2.0.0
 assert "2.0.0 is ahead of every tag"     '[ "$rc" -eq 0 ]'
-assert "ahead says so, not up to date"   'grep -q "ahead of the newest release" <<<"$out"'
+assert "ahead says so, not up to date"   'grep -q "ahead of the newest tag" <<<"$out"'
+assert "ahead without changelog says no entry" 'grep -q "no entry for 2.0.0" <<<"$out"'
+
+printf '## 2.0.0\n' >"$clone/CHANGELOG.md"
+run 2.0.0
+assert "ahead with changelog exits 0"    '[ "$rc" -eq 0 ]'
+assert "ahead with changelog is observed" 'grep -q "does describe 2.0.0" <<<"$out"'
 
 # A tag that is not a version must be ignored rather than sorted.
 assert "non-version tag ignored"         '! grep -q "not-a-version" <<<"$out"'
