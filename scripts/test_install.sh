@@ -157,6 +157,11 @@ fi
 
 check_status 'Hermes delivery CLI shape parses' 78 \
     --runtime hermes --deliver telegram --chat-id 12345
+# Interactive Hermes parsing now creates one-time route secrets before stopping
+# for operator route configuration. Keep the alternative profile shape isolated
+# so it tests its own first-run boundary rather than reusing the prior fixture.
+rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'Hermes profile CLI shape parses' 78 \
     --runtime hermes --profile default
 check_status 'runtime is mandatory' 64
