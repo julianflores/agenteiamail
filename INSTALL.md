@@ -1,10 +1,43 @@
 # Installing agenteiamail on a new host
 
-**Audience:** an AI agent under the OpenClaw harness on Ubuntu 24.04, with sudo,
-deploying this repository for the first time.
+**Audience:** an AI agent or operator deploying this repository on Ubuntu 24.04
+for either OpenClaw or Hermes Agent, with access to a systemd user session.
 
-You are not building anything. The code exists. This is: prove the host can run
-it, get the credentials, wire it up, and verify it actually works.
+The established manual procedure below remains the complete installation path.
+`scripts/install.sh` is being built as the runtime-neutral, idempotent equivalent.
+At the current FR7 structural boundary it validates arguments, performs discovery,
+and prints a managed-artifact inventory only when `--dry-run` is supplied. A
+non-dry invocation still refuses before changing the host.
+
+### FR7 installer boundary and exit statuses
+
+```bash
+scripts/install.sh --runtime openclaw --dry-run
+scripts/install.sh --runtime hermes --profile PROFILE --dry-run
+scripts/install.sh --runtime openclaw --upgrade --dry-run
+scripts/install.sh --runtime hermes --uninstall --dry-run
+```
+
+Install is the default mode. `--upgrade` and `--uninstall` are mutually exclusive
+modes that share prerequisite discovery and the same ownership inventory.
+`--dry-run` resolves paths and reports managed versus preserved artifacts without
+modifying files, secrets, services, or state.
+
+**Exit status `10` is success:** it means the requested mode converged and made
+changes. Exit `0` is also success and means the host was already converged. Shell
+wrappers, CI jobs, and configuration-management tools must accept both values;
+for example, do not put the installer directly on the left side of `&&` without
+handling `10`. Exit `64` is a usage error, and exit `78` is a configuration,
+prerequisite, or unavailable-phase error.
+
+The ownership boundary is fail-safe: generated units, runtime configuration, and
+the installer manifest are managed; mailbox credentials, `roster.txt`, the
+repository, UID state, event journal, cursor, and logs are always preserved.
+Operator-provisioned Hermes secret files are validation-only external artifacts.
+
+You are not building application code during a manual installation. The code
+exists. The job is to prove the host can run it, get the credentials, wire it up,
+and verify it actually works.
 
 **Read [`DESIGN.md`](DESIGN.md) before changing any of it.** Several lines here look
 like style and are not.
