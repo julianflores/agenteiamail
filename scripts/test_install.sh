@@ -110,11 +110,6 @@ else
     fail=$((fail + 1))
 fi
 
-check_status 'OpenClaw skeleton is explicitly inert' 78 --runtime openclaw
-[[ "$LAST_OUTPUT" == *'no changes made'* ]] || {
-    printf 'FAIL inert result is explicit\n'; fail=$((fail + 1));
-}
-
 check_status 'Hermes delivery CLI shape parses' 78 \
     --runtime hermes --deliver telegram --chat-id 12345
 check_status 'Hermes profile CLI shape parses' 78 \
@@ -136,7 +131,8 @@ check_status 'delivery target requires a chat ID' 64 \
     --runtime hermes --deliver telegram
 check_status 'profile and delivery configuration are alternatives' 64 \
     --runtime hermes --profile default --deliver telegram --chat-id 12345
-check_status 'upgrade mode parses' 78 --runtime openclaw --upgrade
+check_status 'upgrade mode converges the same owned filesystem boundary' 10 --runtime openclaw --upgrade
+rm -rf "$sandbox/.config"
 check_status 'uninstall mode parses' 78 --runtime openclaw --uninstall
 check_status 'upgrade and uninstall are mutually exclusive' 64 \
     --runtime hermes --upgrade --uninstall
@@ -151,6 +147,93 @@ check_status 'non-interactive Hermes install requires route secrets' 64 \
 check_status 'non-interactive Hermes secret-file shape parses' 78 \
     --runtime hermes --non-interactive --profile default \
     --notify-secret-file /tmp/notify --roster-secret-file /tmp/roster
+
+
+# A fresh filesystem-only OpenClaw convergence creates each managed artifact,
+# then atomically records ownership. It does not invoke the runtime or alter
+# systemd service state in this implementation unit.
+check_status 'fresh OpenClaw convergence creates managed artifacts' 10 \
+    --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+[[ -f "$manifest" && ! -L "$manifest" && "$(stat -c %a "$manifest")" == 600 ]] || {
+    printf 'FAIL ownership manifest is not a mode-0600 regular file\n'
+    fail=$((fail + 1))
+}
+[[ "$(stat -c %a "$runtime_env")" == 600 ]] || {
+    printf 'FAIL generated runtime configuration is not mode 0600\n'
+    fail=$((fail + 1))
+}
+[[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
+    printf 'FAIL manifest does not record exactly five created artifacts\n'
+    fail=$((fail + 1))
+}
+[[ "$(<"$runtime_env")" == 'AGENTEIAMAIL_RUNTIME=openclaw' ]] || {
+    printf 'FAIL generated runtime configuration selects OpenClaw\n'
+    fail=$((fail + 1))
+}
+for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
+    agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+    installed="$sandbox/.config/systemd/user/$unit"
+    [[ -f "$installed" && ! -L "$installed" ]] || {
+        printf 'FAIL convergence omitted unit %s\n' "$unit"
+        fail=$((fail + 1))
+        continue
+    }
+    [[ "$(<"$installed")" != *'/path/to/agenteiamail'* ]] || {
+        printf 'FAIL unit %s retains unresolved repository placeholder\n' "$unit"
+        fail=$((fail + 1))
+    }
+done
+[[ ! -e "$sandbox/runtime-side-effect" && ! -e "$fixture_root/systemctl-side-effect" ]] || {
+    printf 'FAIL filesystem convergence executed a runtime or changed service state\n'
+    fail=$((fail + 1))
+}
+check_status 'second OpenClaw convergence is idempotent' 0 --runtime openclaw
+check_status 'owned converged artifacts are accepted by dry-run' 0 \
+    --runtime openclaw --dry-run
+rm -rf "$sandbox/.config"
+
+# Deliberately terminate after artifact N. The durable manifest must authorize
+# exactly successful artifacts 1..N, not later planned paths.
+AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
+    'interrupted convergence exposes a partial-run status' 99 --runtime openclaw
+manifest="$sandbox/.config/agenteiamail/install.manifest"
+manifest_count=$(grep -c '^artifact[[:space:]]' "$manifest")
+created_count=0
+for path in "$sandbox/.config/systemd/user"/agenteiamail-*.service \
+    "$sandbox/.config/systemd/user"/agenteiamail-*.timer \
+    "$sandbox/.config/agenteiamail/runtime.env"; do
+    [[ -e "$path" ]] && created_count=$((created_count + 1))
+done
+[[ "$manifest_count" == 2 && "$created_count" == 2 ]] || {
+    printf 'FAIL partial run records %s artifacts but created %s (expected 2/2)\n' \
+        "$manifest_count" "$created_count"
+    fail=$((fail + 1))
+}
+while IFS=$'\t' read -r marker kind path digest extra; do
+    [[ "$marker" != artifact ]] && continue
+    [[ -f "$path" && -z "$extra" && -n "$digest" ]] || {
+        printf 'FAIL manifest authorizes an absent or malformed artifact: %s\n' "$path"
+        fail=$((fail + 1))
+    }
+done <"$manifest"
+check_status 'partial convergence resumes to completion' 10 --runtime openclaw
+check_status 'resumed convergence is idempotent' 0 --runtime openclaw
+rm -rf "$sandbox/.config"
+
+# The ownership reader fails closed on metadata and syntax before trusting any
+# path. An attacker-controlled/symlinked record is never followed.
+mkdir -p "$sandbox/.config/agenteiamail"
+printf 'version\t1\nruntime\topenclaw\n' >"$sandbox/.config/agenteiamail/install.manifest"
+chmod 0644 "$sandbox/.config/agenteiamail/install.manifest"
+check_status 'insecure ownership manifest metadata fails closed' 78 \
+    --runtime openclaw --dry-run
+[[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
+    printf 'FAIL insecure manifest refusal is not actionable\n'
+    fail=$((fail + 1))
+}
+rm -rf "$sandbox/.config"
 check_status 'dry-run reports planned OpenClaw changes' 10 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'runtime_cli='*"$fixture_bin/openclaw"* ]] || {
@@ -176,7 +259,7 @@ done
 [[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/runtime.env"* ]] || {
     printf 'FAIL inventory omits planned runtime configuration\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory planned-ownership-manifest=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
     printf 'FAIL inventory omits planned ownership manifest\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *"inventory container-directory=$sandbox/.config/systemd/user policy=never-own-directory"* ]] || {

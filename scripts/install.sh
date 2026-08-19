@@ -48,7 +48,8 @@ Exit status:
 Exit status 10 is success. Shell wrappers, CI, and configuration-management
 callers must accept both 0 and 10 as successful convergence.
 
-FR7 boundary status: dry-run discovery and inventory only; non-dry runs are inert.
+FR7 boundary status: OpenClaw filesystem artifacts converge atomically;
+service enablement and Hermes mutation remain deferred.
 EOF
 }
 
@@ -317,39 +318,132 @@ validate_container_chain() {
     printf 'inventory existing-container=%s policy=revalidate-before-write\n' "$target"
 }
 
+set_managed_paths() {
+    config_dir="$HOME/.config/agenteiamail"
+    state_dir="$HOME/.local/state/agenteiamail"
+    unit_dir="$HOME/.config/systemd/user"
+    hermes_dir="$config_dir/hermes"
+    manifest="$config_dir/install.manifest"
+    credentials=$(resolve_credentials_path)
+    managed_paths=(
+        "$unit_dir/agenteiamail-idle.service"
+        "$unit_dir/agenteiamail-dispatch.service"
+        "$unit_dir/agenteiamail-logrotate.service"
+        "$unit_dir/agenteiamail-logrotate.timer"
+        "$config_dir/runtime.env"
+    )
+}
+
+manifest_arguments() {
+    local path
+    printf '%s\0' --manifest "$manifest" --runtime "$runtime"
+    for path in "${managed_paths[@]}"; do
+        printf '%s\0' --allowed "$path"
+    done
+}
+
+load_ownership_manifest() {
+    local output kind path digest
+    declare -gA owned_digests=()
+    declare -gA owned_kinds=()
+    [[ -e "$manifest" || -L "$manifest" ]] || return 0
+    local -a arguments=()
+    mapfile -d '' -t arguments < <(manifest_arguments)
+    if ! output=$(python3 "$ROOT/scripts/install_manifest.py" read "${arguments[@]}" 2>&1); then
+        printf '%s\n' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    while IFS=$'\t' read -r kind path digest; do
+        [[ -n "$kind" ]] || continue
+        owned_kinds["$path"]=$kind
+        owned_digests["$path"]=$digest
+    done <<<"$output"
+}
+
+render_artifact() {
+    local destination=$1 source=$2
+    if [[ "$source" == generated-runtime-config ]]; then
+        printf 'AGENTEIAMAIL_RUNTIME=%s\n' "$runtime"
+        return
+    fi
+    python3 - "$source" "$ROOT" "$credentials" <<'PYINNER'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+text = text.replace("/path/to/agenteiamail", sys.argv[2])
+text = text.replace("/path/to/env", sys.argv[3])
+sys.stdout.write(text)
+PYINNER
+}
+
+sha256_file() {
+    sha256sum -- "$1" | cut -d ' ' -f1
+}
+
+sha256_desired() {
+    render_artifact "$1" "$2" | sha256sum | cut -d ' ' -f1
+}
+
 classify_planned_artifact() {
-    local kind=$1 destination=$2 source=$3
+    local kind=$1 destination=$2 source=$3 actual desired
     if [[ -e "$destination" || -L "$destination" ]]; then
-        printf 'inventory conflict-preserve-%s=%s reason=unproven-ownership\n' \
-            "$kind" "$destination"
-        inventory_conflicts=1
-        inventory_unproven_conflicts=1
+        if [[ -n "${owned_digests[$destination]+present}" ]]; then
+            if [[ -L "$destination" || ! -f "$destination" ]]; then
+                printf 'inventory conflict-owned-%s=%s reason=unsafe-artifact-type\n' \
+                    "$kind" "$destination"
+                inventory_conflicts=1
+                return
+            fi
+            actual=$(sha256_file "$destination")
+            if [[ "$actual" != "${owned_digests[$destination]}" ]]; then
+                printf 'inventory conflict-owned-%s=%s reason=changed-outside-installer\n' \
+                    "$kind" "$destination"
+                inventory_conflicts=1
+                return
+            fi
+            desired=$(sha256_desired "$destination" "$source")
+            if [[ "$actual" == "$desired" ]]; then
+                printf 'inventory existing-managed-%s=%s state=converged\n' \
+                    "$kind" "$destination"
+            else
+                printf 'inventory planned-update-%s=%s source=%s\n' \
+                    "$kind" "$destination" "$source"
+                inventory_changes=1
+            fi
+        else
+            printf 'inventory conflict-preserve-%s=%s reason=unproven-ownership\n' \
+                "$kind" "$destination"
+            inventory_conflicts=1
+            inventory_unproven_conflicts=1
+        fi
     else
         printf 'inventory planned-managed-%s=%s source=%s\n' \
             "$kind" "$destination" "$source"
+        inventory_changes=1
     fi
 }
 
 print_managed_inventory() {
-    local config_dir state_dir unit_dir hermes_dir credentials unit
+    local unit
     local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
     # These paths deliberately follow the runtime and systemd contracts rather
     # than XDG overrides: the Hermes adapter defaults state via expanduser(),
     # while the shipped units read %h paths. Honoring XDG_CONFIG_HOME here would
     # place secrets where the unit never reads them and surface later as a 401.
-    config_dir="$HOME/.config/agenteiamail"
-    state_dir="$HOME/.local/state/agenteiamail"
-    unit_dir="$HOME/.config/systemd/user"
-    hermes_dir="$config_dir/hermes"
-    credentials=$(resolve_credentials_path)
+    set_managed_paths
     inventory_conflicts=0
     inventory_unproven_conflicts=0
     inventory_blocked=0
+    inventory_changes=0
     inventory_blocked_details=()
 
     printf 'inventory root=%s mode=%s runtime=%s\n' "$ROOT" "$mode" "$runtime"
     validate_container_chain "$unit_dir" || unit_container_safe=0
     validate_container_chain "$config_dir" || config_container_safe=0
+    if ((config_container_safe)); then
+        load_ownership_manifest
+    fi
 
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
         agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
@@ -363,8 +457,14 @@ print_managed_inventory() {
     done
     if ((config_container_safe)); then
         classify_planned_artifact file "$config_dir/runtime.env" generated-runtime-config
-        classify_planned_artifact file "$config_dir/install.manifest" \
-            generated-ownership-record
+        if [[ -e "$manifest" && ! -L "$manifest" ]]; then
+            printf 'inventory ownership-manifest=%s state=secure
+' "$manifest"
+        else
+            printf 'inventory planned-ownership-manifest=%s
+' "$manifest"
+            inventory_changes=1
+        fi
     else
         inventory_blocked=1
         printf 'inventory blocked-managed-file=%s/runtime.env reason=unsafe-container\n' \
@@ -414,14 +514,70 @@ print_managed_inventory() {
 }
 
 plan_has_changes() {
-    local manifest="$HOME/.config/agenteiamail/install.manifest"
     if [[ "$mode" == uninstall ]]; then
         [[ -e "$manifest" || -L "$manifest" ]]
         return
     fi
-    # With no ownership manifest reader in this structural boundary, every
-    # conflict has already failed closed and every remaining candidate is absent.
-    return 0
+    ((inventory_changes))
+}
+
+create_secure_containers() {
+    umask 077
+    mkdir -p -- "$unit_dir" "$config_dir"
+    validate_container_chain "$unit_dir" >/dev/null || die_config "unsafe unit container after creation: $unit_dir"
+    validate_container_chain "$config_dir" >/dev/null || die_config "unsafe config container after creation: $config_dir"
+}
+
+converge_artifact() {
+    local kind=$1 destination=$2 source=$3 file_mode=$4 expected="" actual desired digest output
+    expected=${owned_digests[$destination]:-}
+    desired=$(sha256_desired "$destination" "$source")
+    if [[ -e "$destination" && -n "$expected" ]]; then
+        actual=$(sha256_file "$destination")
+        if [[ "$actual" == "$desired" && "$actual" == "$expected" ]]; then
+            return
+        fi
+    fi
+    if ! output=$(render_artifact "$destination" "$source" | python3         "$ROOT/scripts/install_manifest.py" write-artifact --path "$destination"         --mode "$file_mode" --expected-digest "$expected" 2>&1); then
+        printf '%s
+' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    digest=${output##*$'
+'}
+    local -a arguments=()
+    mapfile -d '' -t arguments < <(manifest_arguments)
+    if ! output=$(python3 "$ROOT/scripts/install_manifest.py" record "${arguments[@]}"         --kind "$kind" --path "$destination" --digest "$digest" 2>&1); then
+        printf '%s
+' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    owned_kinds["$destination"]=$kind
+    owned_digests["$destination"]=$digest
+    changes_made=1
+    mutation_count=$((mutation_count + 1))
+    if [[ "${AGENTEIAMAIL_TEST_INTERRUPT_AFTER:-}" == "$mutation_count" ]]; then
+        printf 'install: test interruption after artifact %d
+' "$mutation_count" >&2
+        exit 99
+    fi
+}
+
+converge_openclaw_filesystem() {
+    local output unit
+    create_secure_containers
+    local -a arguments=()
+    mapfile -d '' -t arguments < <(manifest_arguments)
+    if ! output=$(python3 "$ROOT/scripts/install_manifest.py" init "${arguments[@]}" 2>&1); then
+        printf '%s
+' "$output" >&2
+        exit "$EX_CONFIG"
+    fi
+    load_ownership_manifest
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service         agenteiamail-logrotate.service agenteiamail-logrotate.timer; do
+        converge_artifact file "$unit_dir/$unit" "$ROOT/systemd/$unit" 0644
+    done
+    converge_artifact file "$config_dir/runtime.env" generated-runtime-config 0600
 }
 
 runtime=""
@@ -532,10 +688,11 @@ if [[ "$runtime" == hermes && "$mode" != uninstall ]] && ((non_interactive)) &&
     die_usage '--non-interactive requires --notify-secret-file and --roster-secret-file for Hermes'
 fi
 
+if ! discover_prerequisites; then
+    exit "$EX_CONFIG"
+fi
+
 if ((dry_run)); then
-    if ! discover_prerequisites; then
-        exit "$EX_CONFIG"
-    fi
     print_managed_inventory
     if ((inventory_conflicts || inventory_blocked)); then
         if ((inventory_unproven_conflicts)); then
@@ -578,6 +735,22 @@ if ((dry_run)); then
     exit "$EX_OK"
 fi
 
-printf 'FR7 installer skeleton validated runtime=%s mode=%s; no changes made.\n' \
-    "$runtime" "$mode" >&2
-exit "$EX_CONFIG"
+if [[ "$runtime" != openclaw || "$mode" == uninstall ]]; then
+    printf 'install: runtime=%s mode=%s mutation is not implemented in this boundary; no changes made.\n' \
+        "$runtime" "$mode" >&2
+    exit "$EX_CONFIG"
+fi
+
+print_managed_inventory
+if ((inventory_conflicts || inventory_blocked)); then
+    die_config 'filesystem convergence refused because managed inventory is unsafe or unowned'
+fi
+changes_made=0
+mutation_count=0
+converge_openclaw_filesystem
+if ((changes_made)); then
+    printf 'install: OpenClaw filesystem artifacts converged; service state unchanged.\n'
+    exit "$EX_CHANGED"
+fi
+printf 'install: OpenClaw filesystem artifacts already converged; service state unchanged.\n'
+exit "$EX_OK"
