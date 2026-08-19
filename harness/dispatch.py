@@ -24,6 +24,7 @@ import errno
 import fcntl
 import importlib
 import os
+import random
 import sys
 import json
 import time
@@ -55,6 +56,10 @@ KNOWN_RUNTIMES = ("openclaw", "hermes")
 # second, and one that blinks is retried almost at once.
 RETRY_MIN = float(os.environ.get("DISPATCH_RETRY_MIN", 2))
 RETRY_MAX = float(os.environ.get("DISPATCH_RETRY_MAX", 60))
+RETRY_JITTER = float(os.environ.get("DISPATCH_RETRY_JITTER", 0.2))
+# Accepted backlog is deliberately paced so a recovered fleet does not turn a
+# quiet outage into a synchronized burst against Hermes route rate limits.
+CATCHUP_PACE = float(os.environ.get("DISPATCH_CATCHUP_PACE", 0.05))
 # Configuration faults get their own, longer, pause. Nothing about retrying fixes
 # them, so the only reason to try again at all is to notice when a human has.
 CONFIG_RETRY = float(os.environ.get("DISPATCH_CONFIG_RETRY", 60))
@@ -288,9 +293,16 @@ def deliver_with_retries(adapter, record, stop, status_path=None):
             log(f"{adapter.NAME} refused {record.get('event_id')}: {result.detail}")
             log(f"Retrying; the cursor stays put, so nothing moves past it.")
             complaining = True
-        _sleep(delay, stop)
+        _sleep(_jitter(delay, RETRY_MAX), stop)
         delay = min(delay * 2, RETRY_MAX)
     return False
+
+
+def _jitter(seconds, maximum):
+    fraction = min(1.0, max(0.0, RETRY_JITTER))
+    low = max(0.0, seconds * (1.0 - fraction))
+    high = max(low, seconds * (1.0 + fraction))
+    return min(maximum, random.uniform(low, high))
 
 
 def _sleep(seconds, stop):
@@ -330,6 +342,11 @@ def run_once(adapter, journal, cursor_path, stop=lambda: False, status_path=None
             break
         ev.write_cursor(cursor_path, end)
         delivered += 1
+        if CATCHUP_PACE > 0:
+            _sleep(
+                _jitter(CATCHUP_PACE, CATCHUP_PACE * 2.0),
+                stop,
+            )
     return delivered
 
 

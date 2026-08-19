@@ -23,7 +23,6 @@ class _Handler(BaseHTTPRequestHandler):
     requests = []
     health_requests = []
     response_queue = []
-    redirect_location = None
     response_status = 202
     response_body = {
         "status": "accepted",
@@ -31,6 +30,9 @@ class _Handler(BaseHTTPRequestHandler):
         "event": "email.received",
         "delivery_id": "placeholder",
     }
+    health_status = 200
+    health_body = {"status": "ok", "platform": "webhook"}
+    health_location: str | None = None
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -42,15 +44,13 @@ class _Handler(BaseHTTPRequestHandler):
                 type(self).response_status,
                 type(self).response_body,
             )
-        if 300 <= response_status <= 399 and type(self).redirect_location:
-            self.send_response(response_status)
-            self.send_header("Location", type(self).redirect_location)
-            self.end_headers()
-            return
         response = dict(response_body)
+        location = response.pop("_location", None)
         response["delivery_id"] = self.headers.get("X-Request-ID")
         data = json.dumps(response).encode("utf-8")
         self.send_response(response_status)
+        if location:
+            self.send_header("Location", location)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -58,8 +58,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         type(self).health_requests.append((self.path, dict(self.headers)))
-        data = b'{"status":"ok","platform":"webhook"}'
-        self.send_response(200)
+        data = json.dumps(type(self).health_body).encode("utf-8")
+        self.send_response(type(self).health_status)
+        if type(self).health_location:
+            self.send_header("Location", str(type(self).health_location))
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -74,7 +76,9 @@ class HermesAdapterTest(unittest.TestCase):
         _Handler.requests = []
         _Handler.health_requests = []
         _Handler.response_queue = []
-        _Handler.redirect_location = None
+        _Handler.health_status = 200
+        _Handler.health_body = {"status": "ok", "platform": "webhook"}
+        _Handler.health_location = None
         _Handler.response_status = 202
         _Handler.response_body = {
             "status": "accepted",
@@ -94,7 +98,9 @@ class HermesAdapterTest(unittest.TestCase):
         self.notify_secret.chmod(0o600)
         self.roster_secret.chmod(0o600)
         self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.state = root / "state"
         self.env = mock.patch.dict(os.environ, {
+            "AGENTEIAMAIL_STATE": str(self.state),
             "HERMES_NOTIFY_URL": self.base + "/webhooks/agenteiamail-notify",
             "HERMES_NOTIFY_SECRET_FILE": str(self.notify_secret),
             "HERMES_ROSTER_URL": self.base + "/webhooks/agenteiamail-roster",
@@ -144,23 +150,25 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertNotIn("X-Webhook-Signature", headers)
         self.assertFalse(any(name.lower().startswith("svix-") for name in headers))
 
-    def test_listener_error_uses_notify_route_without_roster_match(self):
+    def test_listener_fault_uses_direct_notify_route_without_roster_field(self):
         fault = {
             "schema_version": 1,
             "event_type": "listener.error",
-            "event_id": "listener:1700000000:deadbeef",
+            "event_id": "listener:deadbeef",
             "source": "agenteiamail",
-            "notification_text": "[listener] simulated fault",
+            "account": "agent@example.com",
+            "observed_at": "2026-08-18T12:00:00Z",
+            "message": "connection lost",
+            "notification_text": "[listener] connection lost",
         }
-
+        _Handler.response_status = 200
+        _Handler.response_body = {
+            "status": "delivered",
+            "route": "agenteiamail-notify",
+        }
         result = hermes.deliver(fault)
-
         self.assertTrue(result.ok, result.detail)
-        self.assertEqual(1, len(_Handler.requests))
-        self.assertEqual(
-            "/webhooks/agenteiamail-notify",
-            _Handler.requests[0][0],
-        )
+        self.assertEqual("/webhooks/agenteiamail-notify", _Handler.requests[0][0])
 
     def test_plain_http_non_loopback_route_is_configuration_error(self):
         os.environ["HERMES_ROSTER_URL"] = "http://example.com/webhooks/agenteiamail-roster"
@@ -169,14 +177,29 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertIn("HTTPS", result.detail)
         self.assertEqual([], _Handler.requests)
 
+    def test_webhook_redirect_is_refused_without_following_location(self):
+        _Handler.response_status = 302
+        _Handler.response_body = {
+            "status": "redirect",
+            "_location": self.base + "/redirected",
+        }
+        result = hermes.deliver(self.envelope)
+        self.assertEqual("config", result.status)
+        self.assertIn("redirect", result.detail.lower())
+        self.assertEqual([], _Handler.health_requests)
+
+    def test_response_body_is_bounded(self):
+        with mock.patch.object(hermes, "MAX_RESPONSE_BYTES", 8):
+            result = hermes.deliver(self.envelope)
+        self.assertEqual("config", result.status)
+        self.assertIn("exceeds", result.detail)
+
     def test_http_and_json_statuses_are_classified_for_the_ordered_queue(self):
         cases = (
-            (200, "delivered", "accepted"),
+            (200, "delivered", "config"),
             (200, "duplicate", "accepted"),
             (200, "ignored", "config"),
             (202, "accepted", "accepted"),
-            (202, "queued", "accepted"),
-            (302, "redirect", "config"),
             (400, "error", "config"),
             (401, "error", "config"),
             (403, "error", "config"),
@@ -194,29 +217,26 @@ class HermesAdapterTest(unittest.TestCase):
                 result = hermes.deliver(self.envelope)
                 self.assertEqual(expected, result.status, result.detail)
 
-    def test_redirect_is_configuration_error_and_is_not_followed(self):
-        target = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
-        target_thread.start()
-        try:
-            _Handler.response_status = 307
-            _Handler.redirect_location = (
-                f"http://127.0.0.1:{target.server_port}/redirect-target"
-            )
+    def test_route_mode_and_named_route_are_enforced(self):
+        self.envelope["roster_match"] = False
+        _Handler.response_status = 202
+        _Handler.response_body = {
+            "status": "accepted",
+            "route": "agenteiamail-notify",
+        }
+        result = hermes.deliver(self.envelope)
+        self.assertEqual("config", result.status)
+        self.assertIn("direct", result.detail)
 
-            result = hermes.deliver(self.envelope)
-
-            self.assertEqual("config", result.status)
-            self.assertIn("HERMES_*_URL", result.detail)
-            self.assertEqual(1, len(_Handler.requests))
-            self.assertEqual(
-                "/webhooks/agenteiamail-roster",
-                _Handler.requests[0][0],
-            )
-        finally:
-            target.shutdown()
-            target.server_close()
-            target_thread.join(timeout=2)
+        self.envelope["roster_match"] = True
+        _Handler.response_status = 202
+        _Handler.response_body = {
+            "status": "accepted",
+            "route": "different-roster-route",
+        }
+        result = hermes.deliver(self.envelope)
+        self.assertEqual("config", result.status)
+        self.assertIn("route", result.detail.lower())
 
     def test_explicit_direct_502_retries_with_a_new_transport_id(self):
         self.envelope["roster_match"] = False
@@ -242,6 +262,33 @@ class HermesAdapterTest(unittest.TestCase):
             self.envelope["event_id"],
             json.loads(_Handler.requests[1][2])["event_id"],
         )
+
+    def test_repeated_direct_502_persists_failed_attempt_and_never_reuses_base(self):
+        self.envelope["roster_match"] = False
+        _Handler.response_queue = [
+            (502, {"status": "error"}),
+            (502, {"status": "error"}),
+        ]
+        first_result = hermes.deliver(self.envelope)
+        self.assertEqual("retry", first_result.status)
+        first_ids = [
+            {key.lower(): value for key, value in headers.items()}["x-request-id"]
+            for _path, headers, _body in _Handler.requests
+        ]
+        self.assertEqual(2, len(first_ids))
+
+        _Handler.response_queue = [
+            (200, {"status": "delivered", "route": "agenteiamail-notify"}),
+        ]
+        second_result = hermes.deliver(self.envelope)
+        self.assertTrue(second_result.ok, second_result.detail)
+        third_headers = {
+            key.lower(): value for key, value in _Handler.requests[2][1].items()
+        }
+        third_id = third_headers["x-request-id"]
+        self.assertNotIn(third_id, first_ids)
+        attempt_dir = self.state / "hermes-attempts"
+        self.assertEqual([], list(attempt_dir.glob("*.json")))
 
     def test_legacy_v1_requires_explicit_mode_and_warns_about_replay(self):
         os.environ["HERMES_SIGNATURE_MODE"] = "v1"
@@ -284,15 +331,18 @@ class HermesAdapterTest(unittest.TestCase):
                 self.roster_secret.chmod(0o600)
                 os.environ["HERMES_ROSTER_SECRET_FILE"] = str(self.roster_secret)
 
-    def test_missing_application_event_id_is_refused_before_transport(self):
-        broken = dict(self.envelope)
-        broken.pop("event_id")
+    def test_missing_application_event_id_or_account_is_refused_before_transport(self):
+        for field in ("event_id", "account"):
+            with self.subTest(field=field):
+                broken = dict(self.envelope)
+                broken.pop(field)
+                _Handler.requests = []
 
-        result = hermes.deliver(broken)
+                result = hermes.deliver(broken)
 
-        self.assertEqual("config", result.status)
-        self.assertIn("event_id", result.detail)
-        self.assertEqual([], _Handler.requests)
+                self.assertEqual("config", result.status)
+                self.assertIn(field, result.detail)
+                self.assertEqual([], _Handler.requests)
 
     def test_email_event_requires_boolean_roster_match(self):
         for unsafe in (None, "false", 0):
@@ -326,6 +376,15 @@ class HermesAdapterTest(unittest.TestCase):
         notify_id = notify_headers["x-request-id"]
         self.assertTrue(notify_id.startswith("agenteiamail-notify-v1-"))
         self.assertNotEqual(roster_ids[0], notify_id)
+
+        same_uid_other_account = dict(self.envelope)
+        same_uid_other_account["roster_match"] = True
+        same_uid_other_account["account"] = "second-agent@example.com"
+        other_account_id = hermes._request_id(
+            same_uid_other_account,
+            os.environ["HERMES_ROSTER_URL"],
+        )
+        self.assertNotEqual(roster_ids[0], other_account_id)
 
     def test_check_validates_both_routes_without_sending_mail(self):
         self.notify_secret.chmod(0o644)
@@ -361,7 +420,7 @@ class HermesAdapterTest(unittest.TestCase):
         )
         self.assertEqual(
             "agenteiamail-roster-v1-"
-            "b98b77b9eaccb0993c639c7027c0c9d2afd1816c13fa0fb949eb237a68ca0d0a",
+            "364a0c4300b2a11d546751ea20d5308806b2158708051b15fd684c888652d001",
             hermes._request_id(
                 envelope,
                 "https://gateway.example/p/clean/webhooks/agenteiamail-roster",
@@ -400,8 +459,8 @@ class HermesAdapterTest(unittest.TestCase):
 
     def test_network_error_is_retryable_and_does_not_expose_secret(self):
         with mock.patch.object(
-            hermes._OPENER,
-            "open",
+            hermes,
+            "_open",
             side_effect=hermes.urllib.error.URLError("simulated outage"),
         ):
             result = hermes.deliver(self.envelope)
@@ -415,6 +474,16 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertEqual(["/health"], [path for path, _ in _Handler.health_requests])
         self.assertEqual([], _Handler.requests)
         self.assertIn("not route readiness", result.detail.lower())
+
+    def test_health_redirect_is_refused_without_following_location(self):
+        _Handler.health_status = 302
+        _Handler.health_location = f"{self.base}/unrelated-health"
+
+        result = hermes.check()
+
+        self.assertEqual("config", result.status)
+        self.assertIn("redirect", result.detail.lower())
+        self.assertEqual(["/health"], [path for path, _ in _Handler.health_requests])
 
     def test_missing_health_url_halts_delivery_as_incomplete_configuration(self):
         os.environ.pop("HERMES_HEALTH_URL")
