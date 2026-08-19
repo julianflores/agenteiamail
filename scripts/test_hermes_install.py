@@ -107,6 +107,7 @@ case "$*" in
   '--user is-enabled --quiet '*) unit=${*: -1}; [[ -e "$FAKE_SYSTEMD_STATE/$unit.enabled" ]] ;;
   '--user is-active --quiet '*) unit=${*: -1}; [[ -e "$FAKE_SYSTEMD_STATE/$unit.active" ]] ;;
   '--user enable --now '*) unit=${*: -1}; : >"$FAKE_SYSTEMD_STATE/$unit.enabled"; : >"$FAKE_SYSTEMD_STATE/$unit.active"; printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG" ;;
+  '--user restart '*) unit=${*: -1}; : >"$FAKE_SYSTEMD_STATE/$unit.active"; printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG" ;;
   *) exit 2 ;;
 esac
 """,
@@ -120,6 +121,8 @@ printf '%s\\n' "$*" >>"$FAKE_SYSTEMD_LOG"
         )
         self._write("loginctl", "#!/usr/bin/env bash\nprintf 'yes\\n'\n")
         self._write("id", "#!/usr/bin/env bash\nprintf 'test-user\\n'\n")
+        self._write("openclaw", "#!/usr/bin/env bash\n[[ \"$1\" == --version ]]\n")
+        self._write("systemd-run", "#!/usr/bin/env bash\n\"${@: -2}\"\n")
         self._write(
             "hermes",
             """#!/usr/bin/env bash
@@ -149,8 +152,10 @@ printf 'Hermes webhook support\\n'
             environment.update(self.urls)
         return environment
 
-    def _run(self, include_urls=True, external_secrets=True):
+    def _run(self, include_urls=True, external_secrets=True, upgrade=False):
         arguments = [str(INSTALL), "--runtime", "hermes", "--profile", "default"]
+        if upgrade:
+            arguments.append("--upgrade")
         if external_secrets:
             arguments.extend(
                 [
@@ -169,6 +174,37 @@ printf 'Hermes webhook support\\n'
             capture_output=True,
             check=False,
         )
+
+    def test_openclaw_to_hermes_upgrade_restarts_owned_runtime_boundary(self):
+        openclaw = subprocess.run(
+            [str(INSTALL), "--runtime", "openclaw"],
+            cwd=ROOT,
+            env=self._environment(include_urls=False),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(10, openclaw.returncode, openclaw.stdout + openclaw.stderr)
+        self.systemd_log.write_text("", encoding="utf-8")
+
+        migrated = self._run(upgrade=True)
+        self.assertEqual(10, migrated.returncode, migrated.stdout + migrated.stderr)
+        manifest = self.home / ".config" / "agenteiamail" / "install.manifest"
+        runtime_env = self.home / ".config" / "agenteiamail" / "runtime.env"
+        self.assertIn("runtime\thermes\n", manifest.read_text(encoding="utf-8"))
+        self.assertIn('AGENTEIAMAIL_RUNTIME="hermes"\n', runtime_env.read_text(encoding="utf-8"))
+        calls = self.systemd_log.read_text(encoding="utf-8")
+        for unit in (
+            "agenteiamail-idle.service",
+            "agenteiamail-dispatch.service",
+            "agenteiamail-logrotate.timer",
+        ):
+            self.assertIn(f"--user restart {unit}", calls)
+
+        self.systemd_log.write_text("", encoding="utf-8")
+        repeated = self._run(upgrade=True)
+        self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
+        self.assertNotIn("--user restart", self.systemd_log.read_text(encoding="utf-8"))
 
     def test_missing_route_urls_refuse_before_filesystem_or_runtime_mutation(self):
         completed = self._run(include_urls=False)

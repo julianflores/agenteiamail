@@ -688,12 +688,14 @@ create_secure_containers() {
 }
 
 converge_artifact() {
-    local kind=$1 destination=$2 source=$3 file_mode=$4 expected="" actual desired digest output
+    local kind=$1 destination=$2 source=$3 file_mode=$4 expected="" actual desired digest output current_mode
     expected=${owned_digests[$destination]:-}
     desired=$(sha256_desired "$destination" "$source")
     if [[ -e "$destination" && -n "$expected" ]]; then
         actual=$(sha256_file "$destination")
-        if [[ "$actual" == "$desired" && "$actual" == "$expected" ]]; then
+        current_mode=$(stat -Lc '%a' -- "$destination" 2>/dev/null || true)
+        if [[ "$actual" == "$desired" && "$actual" == "$expected" &&
+              "$current_mode" == "${file_mode#0}" ]]; then
             return
         fi
     fi
@@ -720,6 +722,7 @@ converge_artifact() {
     owned_kinds["$destination"]=$kind
     owned_digests["$destination"]=$digest
     changes_made=1
+    runtime_filesystem_changed=1
     mutation_count=$((mutation_count + 1))
     if [[ "${AGENTEIAMAIL_TEST_INTERRUPT_AFTER:-}" == "$mutation_count" ]]; then
         printf 'install: test interruption after artifact %d
@@ -936,6 +939,15 @@ converge_required_services() {
         agenteiamail-logrotate.timer; do
         if "$discovered_systemctl" --user is-enabled --quiet "$unit" && \
            "$discovered_systemctl" --user is-active --quiet "$unit"; then
+            if ((runtime_filesystem_changed)); then
+                "$discovered_systemctl" --user restart "$unit" || \
+                    die_config "failed to restart changed required user unit: $unit"
+                if ! "$discovered_systemctl" --user is-active --quiet "$unit"; then
+                    die_config "restarted required user unit did not remain active: $unit"
+                fi
+                printf 'service=%s state=enabled-active restarted=true\n' "$unit"
+                continue
+            fi
             printf 'service=%s state=enabled-active\n' "$unit"
             continue
         fi
@@ -1123,6 +1135,7 @@ fi
 changes_made=0
 mutation_count=0
 write_count=0
+runtime_filesystem_changed=0
 if [[ "$runtime" == hermes ]]; then
     probe_hermes_webhook_support
 fi

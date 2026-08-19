@@ -84,6 +84,11 @@ case "$*" in
         rm -f "$FAKE_SYSTEMD_STATE/$unit.enabled" "$FAKE_SYSTEMD_STATE/$unit.active"
         printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
         ;;
+    '--user restart '*)
+        unit=${*: -1}
+        : >"$FAKE_SYSTEMD_STATE/$unit.active"
+        printf '%s\n' "$*" >>"$FAKE_SYSTEMD_LOG"
+        ;;
     *) exit 2 ;;
 esac
 EOF
