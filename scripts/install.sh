@@ -836,6 +836,16 @@ plan_legacy_migration() {
 migration_staging() { printf '%s/.migrate-staging' "$install_root"; }
 migration_transaction() { printf '%s/.migrate-transaction' "$install_root"; }
 
+# The ordering lives in scripts/durable.py, with the reason for each step, and
+# scripts/test_durable.py pins the sequence of calls. A rename is not durable
+# because it returned: until the directory holding the new name is fsynced the
+# kernel may persist a later unlink while losing the rename, which produces the
+# split install by the one route the transaction did not model.
+durable() {
+    python3 "$ROOT/scripts/durable.py" "$@" || \
+        die_config "could not make $2 durable; refusing to continue a migration that cannot survive a reboot"
+}
+
 # A test hook, in the same shape as AGENTEIAMAIL_TEST_INTERRUPT_AFTER. Failure
 # has to be injectable at every commit boundary or the recovery paths are
 # assertions about code nobody has run.
@@ -885,37 +895,74 @@ stage_legacy_migration() {
         fi
 
         printf 'migrate staged=%s at=%s\n' "$source" "$staged"
-        migration_staged+=("$source"$'\t'"$staged"$'\t'"$destination")
+        migration_staged+=("$source"$'\t'"$staged"$'\t'"$destination"$'\t'"$(migration_digest "$staged")")
         index=$((index + 1))
     done
+
+    # Data before any name is trusted to refer to it.
+    durable tree "$staging"
+    durable dir "$install_root"
+}
+
+# Evidence, so a resume can revalidate rather than infer.
+#
+# Existence used to be treated as proof that a destination was the artifact that
+# had been committed there. It is not: it does not catch a truncated copy, a
+# stale staging tree, or a destination that merely exists. This is a consistency
+# check and not an authentication boundary — an attacker who can rewrite the
+# destination can rewrite the digest beside it — but accidental corruption is
+# the case that actually happens.
+migration_digest() {
+    local target=$1
+    if [[ -d "$target" && ! -L "$target" ]]; then
+        # Names and contents both: a tree that lost a file has the same
+        # concatenated content as one that never had it.
+        ( cd "$target" && find . -print0 | LC_ALL=C sort -z | \
+            xargs -0 -I{} sh -c 'printf "%s\n" "{}"; [ -f "{}" ] && cat "{}" || true' ) \
+            2>/dev/null | sha256sum | cut -d' ' -f1
+    elif [[ -e "$target" ]]; then
+        sha256sum -- "$target" | cut -d' ' -f1
+    else
+        printf 'absent'
+    fi
 }
 
 write_migration_transaction() {
-    local phase=$1 entry transaction
+    local phase=$1 entry unit transaction
     transaction=$(migration_transaction)
     {
-        printf 'version\t1\n'
+        printf 'version\t2\n'
         printf 'phase\t%s\n' "$phase"
         printf 'root\t%s\n' "$install_root"
+        # The set of units that were running before anything was stopped. It is
+        # recorded here rather than held in a variable because the process that
+        # has to put them back may not be the process that stopped them: an
+        # interrupted run is resumed by a new one, and a variable does not
+        # survive that. Restoring "whatever was running" is not good enough
+        # either — a unit the operator had deliberately stopped must stay
+        # stopped.
+        for unit in "${migration_active_before[@]}"; do
+            printf 'active\t%s\n' "$unit"
+        done
         for entry in "${migration_staged[@]}"; do
             printf 'entry\t%s\n' "$entry"
         done
     } >"$transaction.tmp"
     chmod 600 -- "$transaction.tmp"
-    # Durable before it is authoritative: a manifest that describes a commit
-    # which has already started, and which did not survive the power cut that
-    # interrupted it, is worse than no manifest.
-    python3 -c 'import os,sys
-fd = os.open(sys.argv[1], os.O_RDONLY)
-os.fsync(fd)
-os.close(fd)' "$transaction.tmp"
+    durable file "$transaction.tmp"
     mv -- "$transaction.tmp" "$transaction"
+    # The rename, not just the bytes. A manifest describing a commit that has
+    # already started, which did not survive the crash that interrupted it, is
+    # worse than no manifest — and this is why it happens before the services
+    # are stopped rather than after.
+    durable dir "$install_root"
 }
 
 read_migration_transaction() {
     local transaction line kind rest
     transaction=$(migration_transaction)
     migration_staged=()
+    migration_active_before=()
     migration_phase=""
     [[ -f "$transaction" ]] || return 1
     while IFS= read -r line; do
@@ -923,10 +970,30 @@ read_migration_transaction() {
         rest=${line#*$'\t'}
         case "$kind" in
             phase) migration_phase=$rest ;;
+            active) migration_active_before+=("$rest") ;;
             entry) migration_staged+=("$rest") ;;
         esac
     done <"$transaction"
     return 0
+}
+
+# What is running right now, before anything stops it.
+#
+# Recorded rather than assumed, because the restore has to put back exactly this
+# set and no more: a unit the operator had deliberately stopped must still be
+# stopped afterwards, and "start everything" would quietly undo their decision.
+record_active_units_before_stop() {
+    local unit
+    migration_active_before=()
+    [[ -n "$discovered_systemctl" ]] || return 0
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
+        if "$discovered_systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+            migration_active_before+=("$unit")
+            printf 'migrate active-before-stop=%s\n' "$unit"
+        else
+            printf 'migrate inactive-before-stop=%s\n' "$unit"
+        fi
+    done
 }
 
 stop_services_for_migration() {
@@ -935,6 +1002,11 @@ stop_services_for_migration() {
         printf 'migrate services=not-managed reason=no-systemctl\n'
         return 0
     }
+
+    # From here on, any exit owes the operator their services back. The trap is
+    # how that promise is kept on paths nobody remembered to write: a refusal
+    # three functions deep still unwinds through it.
+    migration_services_stopped=1
 
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
         "$discovered_systemctl" --user stop "$unit" >/dev/null 2>&1 || true
@@ -954,30 +1026,89 @@ stop_services_for_migration() {
             sleep 1
         done
         if [[ "$active" == yes ]]; then
-            die_config "refusing to migrate: $unit is still active after stop; nothing was moved and the install is unchanged"
+            # Says only what it knows. The services have already been asked to
+            # stop by this point, so whether the install is "unchanged" is not
+            # this line's to claim — the restore runs on the way out and reports
+            # its own outcome, including when it fails.
+            die_config "refusing to migrate: $unit is still active after stop; no artifact was moved"
         fi
         printf 'migrate stopped=%s state=inactive\n' "$unit"
     done
 }
 
-restart_services_after_migration() {
-    local unit
+# Put back exactly what was running, and say so when it cannot.
+#
+# The previous version restored services on the success path only — where it was
+# redundant, because converge_required_services already verifies is-active and
+# dies otherwise — and was absent from every failure path, where it was the only
+# thing that could have helped. A rollback left the listener and the dispatcher
+# stopped while printing "the install is unchanged". The files were indeed
+# unchanged. The mail had stopped, and the tool had just told the operator
+# everything was fine.
+restore_pre_stop_services() {
+    local unit attempt active
+    local -a unrestored=()
+
+    ((migration_services_stopped)) || return 0
     [[ -n "$discovered_systemctl" ]] || return 0
+    migration_services_stopped=0
+
     "$discovered_systemctl" --user daemon-reload >/dev/null 2>&1 || true
-    for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
+
+    for unit in "${migration_active_before[@]}"; do
         "$discovered_systemctl" --user start "$unit" >/dev/null 2>&1 || true
+        active=no
+        for attempt in 1 2 3 4 5; do
+            if "$discovered_systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+                active=yes
+                break
+            fi
+            sleep 1
+        done
+        if [[ "$active" == yes ]]; then
+            printf 'migrate restored=%s state=active\n' "$unit"
+        else
+            printf 'migrate restore-failed=%s state=inactive\n' "$unit" >&2
+            unrestored+=("$unit")
+        fi
     done
+
+    if ((${#unrestored[@]})); then
+        # Loud, and never folded into a success. The transaction is kept on
+        # purpose: it is what a retry needs, and a host with mail stopped must
+        # not read as finished.
+        for unit in "${unrestored[@]}"; do
+            printf 'install: %s could not be restarted and remains inactive; no mail is being detected\n' \
+                "$unit" >&2
+        done
+        printf 'install: the migration transaction was kept so this can be retried; rerun --migrate\n' >&2
+        return 1
+    fi
+    return 0
+}
+
+# Every exit after a stop attempt unwinds through here, including the ones
+# nobody remembered to write.
+migration_exit_restore() {
+    local status=$?
+    if ((migration_services_stopped)); then
+        if ! restore_pre_stop_services; then
+            ((status)) || status=1
+        fi
+    fi
+    exit "$status"
 }
 
 commit_legacy_migration() {
-    local entry source staged destination index=0
+    local entry source staged destination digest index=0
 
     for entry in "${migration_staged[@]}"; do
-        IFS=$'\t' read -r source staged destination <<<"$entry"
+        IFS=$'\t' read -r source staged destination digest <<<"$entry"
 
         if [[ -e "$destination" || -L "$destination" ]]; then
-            # Already committed by an interrupted run. Replaying forward is the
-            # whole point of the manifest.
+            # Committed by an interrupted run. Replaying forward is the point of
+            # the manifest — but existence is not proof it is the right artifact,
+            # so it is checked rather than assumed.
             printf 'migrate already-committed=%s\n' "$destination"
         else
             if migration_fail_here "commit:$index"; then
@@ -985,21 +1116,30 @@ commit_legacy_migration() {
             fi
             mv -- "$staged" "$destination" || \
                 die_config "commit failed at $destination; rerun --migrate to finish, every artifact is still staged"
+            # The destination's parent, before any source is unlinked below. If
+            # the unlink outlives the rename across a reboot, the artifact is
+            # gone from both places.
+            durable dir "$(dirname -- "$destination")"
             printf 'migrate committed=%s\n' "$destination"
         fi
         index=$((index + 1))
     done
 
-    # Sources go last, and only once every destination exists. Until this loop
-    # the host has two complete copies, which is the state that makes both
-    # recovery directions possible.
+    # Sources go last, and only once every destination exists and has been
+    # proven. Until this loop the host holds two complete copies, which is what
+    # makes both recovery directions possible.
     index=0
     for entry in "${migration_staged[@]}"; do
-        IFS=$'\t' read -r source staged destination <<<"$entry"
+        IFS=$'\t' read -r source staged destination digest <<<"$entry"
         if migration_fail_here "cleanup:$index"; then
             die_config "cleanup interrupted at $source; rerun --migrate to finish, the new install is complete"
         fi
-        rm -rf -- "$source"
+        if [[ -e "$source" || -L "$source" ]]; then
+            rm -rf -- "$source"
+            # After the unlink, so a reboot cannot resurrect a legacy entry that
+            # was deleted and leave the host reading as legacy again.
+            durable dir "$(dirname -- "$source")"
+        fi
         index=$((index + 1))
     done
 
@@ -1007,6 +1147,10 @@ commit_legacy_migration() {
     rmdir -- "$HOME/.local/state/agenteiamail" 2>/dev/null || true
     rm -rf -- "$(migration_staging)"
     rm -f -- "$(migration_transaction)"
+    # Last, before success is reported: a reboot must not resurrect a
+    # transaction that already finished, because a manifest describing a
+    # completed migration sends the next run back into resume.
+    durable dir "$install_root"
 }
 
 rollback_legacy_migration() {
@@ -1015,16 +1159,66 @@ rollback_legacy_migration() {
     # device, which is why the transaction is built this way round.
     rm -rf -- "$(migration_staging)"
     rm -f -- "$(migration_transaction)"
+    durable dir "$install_root"
     printf 'migrate result=rolled-back reason=no-artifact-was-committed\n'
+}
+
+# Every committed destination and every surviving staged copy is what the
+# transaction says it is.
+#
+# Resume used to treat a destination's existence as proof it held the committed
+# artifact. It does not: a truncated copy, a stale staging tree, or a
+# destination that merely exists all pass an existence check. This is a
+# consistency check rather than an authentication boundary — whoever can rewrite
+# the destination can rewrite the digest beside it — but accidental corruption
+# is the case that actually happens, and it fails closed.
+validate_migration_evidence() {
+    local entry source staged destination digest actual index=0 mismatches=0
+
+    for entry in "${migration_staged[@]}"; do
+        IFS=$'\t' read -r source staged destination digest <<<"$entry"
+
+        if [[ -e "$destination" || -L "$destination" ]]; then
+            actual=$(migration_digest "$destination")
+            if [[ "$actual" != "$digest" ]]; then
+                printf 'migrate conflict-destination=%s reason=does-not-match-committed-artifact\n' \
+                    "$destination" >&2
+                mismatches=1
+            else
+                printf 'migrate revalidated=%s state=committed\n' "$destination"
+            fi
+        elif [[ -e "$staged" || -L "$staged" ]]; then
+            actual=$(migration_digest "$staged")
+            if [[ "$actual" != "$digest" ]]; then
+                printf 'migrate conflict-staged=%s reason=staged-copy-changed-since-it-was-recorded\n' \
+                    "$staged" >&2
+                mismatches=1
+            else
+                printf 'migrate revalidated=%s state=staged\n' "$staged"
+            fi
+        else
+            printf 'migrate conflict-missing=%s reason=neither-destination-nor-staged-copy-exists\n' \
+                "$destination" >&2
+            mismatches=1
+        fi
+        index=$((index + 1))
+    done
+
+    if ((mismatches)); then
+        # Nothing is deleted and the manifest is kept. A host that cannot be
+        # proven consistent is one a human should look at, not one this should
+        # tidy up.
+        die_config 'refusing to continue: the migration transaction no longer matches what is on disk; every copy and the transaction manifest have been left in place'
+    fi
 }
 
 # Rerunning --migrate on a host with a transaction manifest. Decides forward or
 # back by looking at what is actually on disk, not at what the manifest hoped.
 resume_legacy_migration() {
-    local entry source staged destination committed=0
+    local entry source staged destination digest committed=0
 
     for entry in "${migration_staged[@]}"; do
-        IFS=$'\t' read -r source staged destination <<<"$entry"
+        IFS=$'\t' read -r source staged destination digest <<<"$entry"
         if [[ -e "$destination" || -L "$destination" ]]; then
             committed=1
             break
@@ -1038,12 +1232,10 @@ resume_legacy_migration() {
     fi
 
     printf 'migrate resume=forward reason=partially-committed\n'
-    for entry in "${migration_staged[@]}"; do
-        IFS=$'\t' read -r source staged destination <<<"$entry"
-        if [[ ! -e "$destination" && ! -L "$destination" && ! -e "$staged" ]]; then
-            die_config "cannot resume: $destination is missing and its staged copy is gone; restore from $source by hand"
-        fi
-    done
+    # Before the stop, so a refusal here does not have to put services back.
+    validate_migration_evidence
+    record_active_units_before_stop
+    write_migration_transaction committing
     stop_services_for_migration
     commit_legacy_migration
     return 0
@@ -1052,9 +1244,11 @@ resume_legacy_migration() {
 perform_legacy_migration() {
     ((${#migration_staged[@]})) || return 0
 
+    # Recorded before the manifest is written, so the set of units to put back
+    # is durable before anything is stopped rather than after.
+    record_active_units_before_stop
     write_migration_transaction staged
     stop_services_for_migration
-    write_migration_transaction committing
     commit_legacy_migration
 
     if agenteiamail_legacy_layout; then
@@ -1568,7 +1762,14 @@ fi
 changes_made=0
 migration_moves=()
 migration_staged=()
+migration_active_before=()
 migration_phase=""
+migration_services_stopped=0
+
+# Armed before anything can stop a service. Every exit after a stop attempt
+# unwinds through this, which is what makes the restore cover the refusal paths
+# nobody remembered to write rather than only the ones somebody did.
+trap migration_exit_restore EXIT
 
 set_managed_paths
 # An outstanding transaction means the host is mid-migration. Every path this
@@ -1595,7 +1796,11 @@ if [[ "$mode" == migrate ]]; then
             changes_made=1
             mode=upgrade
         else
-            printf 'install: migration rolled back; the install is unchanged.\n'
+            # "Unchanged" was a lie in the way that matters: the files were
+            # unchanged and the services were still stopped, so the mailbox had
+            # gone quiet while this line said everything was fine. The restore
+            # runs on the way out, and says so itself if it cannot.
+            printf 'install: migration rolled back; no artifact was committed and the previous layout is intact.\n'
             exit "$EX_CHANGED"
         fi
     else
@@ -1613,7 +1818,6 @@ if [[ "$mode" == migrate ]]; then
         if ((${#migration_moves[@]})); then
             stage_legacy_migration
             perform_legacy_migration
-            restart_services_after_migration
         fi
         # Converge from here on as an upgrade: the artifacts exist and are
         # owned, they are just in a new place and the units still name the old

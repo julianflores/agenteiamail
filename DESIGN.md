@@ -314,6 +314,35 @@ While a transaction manifest exists the host is between layouts, so
 `scripts/healthcheck.py` reports the install as unreliable. Resolving past an
 unfinished migration is how the units and the session hook end up disagreeing.
 
+**Durability is an ordering, and the ordering is the whole property.** A rename
+is not durable because it returned: until the directory holding the new name has
+been fsynced, the kernel may persist a later unlink while losing the rename, and
+the artifact is then gone from both places. `scripts/durable.py` owns that
+ordering — staged data before the manifest names it, the manifest rename before
+any service is stopped, each destination before its source is unlinked, each
+source's parent after the unlink, and the install root last, after the staging
+tree and the manifest are gone and before success is reported. The last two stop
+a reboot resurrecting a deleted legacy entry or a transaction that had already
+finished. `scripts/test_migrate.sh` pins the sequence, and each of those syncs
+has been removed to confirm its own assertion fails.
+
+An earlier version fsynced one temporary file beneath a comment claiming
+power-loss durability. That is the second time in this work a comment asserted a
+guarantee the code did not implement, the first being a `|| true` stop that
+claimed to protect the move. **A comment stating a property nothing enforces is
+worse than no comment**, because it stops the next reader from checking.
+
+**Any exit after a service has been stopped owes the operator their services
+back.** That is a trap rather than a call at each exit, because the paths that
+needed it were the ones nobody remembered to write: a rollback three functions
+deep used to leave the listener and the dispatcher stopped while printing that
+the install was unchanged. The files were unchanged. The mail had stopped. The
+set to restore is recorded before the first stop and written into the
+transaction, so a unit the operator had deliberately stopped stays stopped, and
+so a resume in a different process still knows what to put back. A restore that
+fails is reported, names the unit, keeps the transaction for a retry, and exits
+nonzero — it is never folded into a success.
+
 **The cost of this layout is that secrets live in a git working tree.** Three
 things hold that line: anchored `.gitignore` rules, a fail-closed check in the
 installer that refuses to write when a runtime-owned path is tracked or
@@ -340,6 +369,27 @@ The units are the one thing still outside, in `~/.config/systemd/user`, because
 systemd will not read them from anywhere else. They carry absolute paths rendered
 by the installer rather than `%h`, since `%h` cannot express "wherever the clone
 is".
+
+### What a complete assertion looks like
+
+Every test written for the single-root migration asserted artifacts — files in
+the right place, resolver agreeing, modes correct — and none of them asked
+whether mail was still being detected afterwards. That is why the same defect
+kept arriving in a new costume: a migration that left the services stopped
+passed every assertion in the suite.
+
+So, for any path that stops or starts a service: **an assertion about that path
+which does not cover the resulting service state is not a complete assertion.**
+The mocked suite must say what it expects both units to be doing at the end,
+including the cases where one of them was already stopped and the case where the
+restore itself fails.
+
+And the honest limit, because overclaiming here is the same mistake in a
+different place: `is-active` and start-call assertions establish **service
+state**, not **mail detection**. A running listener is not proof that mail is
+arriving. Proving detection needs a real host, real IMAP, and a message actually
+arriving — which is why releasing an install onto a live mailbox has its own gate
+and is not something the suite can grant.
 
 ## Why the roster is the whole model
 

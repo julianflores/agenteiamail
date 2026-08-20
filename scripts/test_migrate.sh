@@ -35,19 +35,44 @@ trap 'rm -rf "$sandbox"' EXIT
 
 # Enough of a host to get past discovery, which gates every mode: a systemd user
 # session whose service PATH can see the runtime CLI, and lingering enabled.
-# is-active is answered from a file so a test can decide whether the services
-# stopped. Returning 0 for everything would mean "still active" and is how the
-# fixture originally hid the refusal path entirely.
+# A fake systemd that tracks real per-unit state.
+#
+# The previous fake answered every command with success, which made "did the
+# services come back?" unanswerable — and that is precisely the question the
+# suite was not asking when a rollback left the listener stopped and the
+# installer reported the install unchanged. State lives in files so a test can
+# read it, and so `is-active` can tell the truth.
+unit_state="$sandbox/units"
+mkdir -p "$unit_state"
 cat >"$fixture_bin/systemctl" <<EOF
 #!/usr/bin/env bash
-case "\$*" in
-    '--user show-environment') printf 'PATH=%s:/usr/bin:/bin\\n' "$fixture_bin" ;;
-    '--user is-active --quiet '*)
-        [ -e "$sandbox/services-stay-active" ] && exit 0
-        exit 1
-        ;;
-    *) exit 0 ;;
+printf '%s\n' "\$*" >>"$sandbox/systemctl.log"
+# Joins the durability log when one is set, so the order of syncs relative to
+# stopping services and unlinking sources is answerable rather than assumed.
+[ -n "\${AGENTEIAMAIL_TEST_SYNC_LOG:-}" ] && \
+    printf 'systemctl\\t%s\\n' "\$*" >>"\$AGENTEIAMAIL_TEST_SYNC_LOG"
+case "\$1 \$2" in
+    '--user show-environment') printf 'PATH=%s:/usr/bin:/bin\n' "$fixture_bin"; exit 0 ;;
 esac
+case "\$2" in
+    stop)
+        # A unit named in refuse-stop will not stop, however often it is asked.
+        grep -qxF "\$3" "$sandbox/refuse-stop" 2>/dev/null && exit 0
+        rm -f "$unit_state/\$3"
+        exit 0
+        ;;
+    start)
+        grep -qxF "\$3" "$sandbox/refuse-start" 2>/dev/null && exit 1
+        : >"$unit_state/\$3"
+        exit 0
+        ;;
+    is-active)
+        unit=\${!#}
+        [ -e "$unit_state/\$unit" ] && exit 0 || exit 1
+        ;;
+    is-enabled) exit 0 ;;
+esac
+exit 0
 EOF
 chmod +x "$fixture_bin/systemctl"
 cat >"$fixture_bin/loginctl" <<'EOF'
@@ -65,6 +90,7 @@ clone=""
 run_migrate() {   # extra args...
     env -u AGENTEIAMAIL_ENV -u AGENTEIAMAIL_STATE \
         AGENTEIAMAIL_TEST_MIGRATE_FAIL_AT="${FAIL_AT:-}" \
+        AGENTEIAMAIL_TEST_SYNC_LOG="${SYNC_LOG:-}" \
         HOME="$sandbox/home" PATH="$fixture_bin:/usr/bin:/bin" \
         "$clone/scripts/install.sh" --runtime openclaw --migrate "$@" 2>&1
 }
@@ -80,6 +106,19 @@ run_install() {   # extra args...
 # one. "Complete" means every artifact is present and the resolver agrees which
 # layout it is looking at — a host where the credentials resolve one way and the
 # UID baseline the other is the failure this transaction exists to remove.
+# The assertion the whole suite was missing. Files in the right place prove a
+# migration moved things; they say nothing about whether mail is being detected
+# again afterwards. Note the honest limit: this establishes *service state*, not
+# mail detection — proving detection needs a live host, and that is the separate
+# gate on releasing the John Bravo hold.
+unit_is() {   # unit
+    [ -e "$unit_state/$1" ] && echo active || echo stopped
+}
+check_services() {   # description, expected-idle, expected-dispatch
+    check "$1: the listener is $2" "$2" "$(unit_is agenteiamail-idle.service)"
+    check "$1: the dispatcher is $3" "$3" "$(unit_is agenteiamail-dispatch.service)"
+}
+
 resolved_state() {
     HOME="$sandbox/home" python3 "$clone/harness/paths.py" state
 }
@@ -112,6 +151,11 @@ check_complete_new() {   # description
 # A legacy install: credentials, generated config, ownership manifest, route
 # secrets and a state tree with a UID baseline in it.
 build_legacy_install() {
+    # Reset the injection point. `FAIL_AT=x output=$(...)` is an assignment-only
+    # line, so its prefix persists rather than scoping to one command — which
+    # silently carried an injected failure into later scenarios and let them
+    # pass for the wrong reason.
+    FAIL_AT=""
     rm -rf "$sandbox/home"
     clone="$sandbox/home/workspace/agenteiamail"
     mkdir -p "$(dirname "$clone")"
@@ -119,7 +163,9 @@ build_legacy_install() {
     rm -rf "$clone/state" "$clone/.env" "$clone/runtime.env" \
         "$clone/install.manifest" "$clone/hermes" "$clone/roster.txt" \
         "$clone/.migrate-staging" "$clone/.migrate-transaction"
-    rm -f "$sandbox/services-stay-active"
+    rm -f "$sandbox/refuse-stop" "$sandbox/refuse-start"
+    : >"$unit_state/agenteiamail-idle.service"
+    : >"$unit_state/agenteiamail-dispatch.service"
 
     local config="$sandbox/home/.config/agenteiamail"
     local state="$sandbox/home/.local/state/agenteiamail"
@@ -254,6 +300,7 @@ for index in 0 1 2 3 4; do
         "$([ -e "$clone/.migrate-staging" ] && echo yes || echo no)"
     check "stage:$index left no transaction behind" no \
         "$([ -e "$clone/.migrate-transaction" ] && echo yes || echo no)"
+    check_services "stage:$index" active active
     check "stage:$index committed nothing" no \
         "$([ -e "$clone/.env" ] && echo yes || echo no)"
 done
@@ -269,6 +316,8 @@ check "commit:0 says a rerun will finish it" yes \
 check "commit:0 left a transaction to resume from" yes \
     "$([ -f "$clone/.migrate-transaction" ] && echo yes || echo no)"
 check_complete_legacy "commit:0 before resume"
+# The interrupted run stopped the services; its own exit must put them back.
+check_services "commit:0 before resume" active active
 
 # And every other mode refuses while that transaction is outstanding, because
 # every path it would resolve is a guess until the migration finishes.
@@ -282,6 +331,10 @@ check "resuming an uncommitted transaction rolls back" 10 "$status"
 check "and says it rolled back" yes \
     "$(case "$output" in *"result=rolled-back"*) echo yes ;; *) echo no ;; esac)"
 check_complete_legacy "commit:0 after rollback"
+# This is the assertion the suite did not have. A rollback that leaves the
+# listener stopped passes every file check while the mailbox goes quiet, and the
+# installer prints that the install is unchanged.
+check_services "commit:0 after rollback" active active
 check "rollback removed the transaction" no \
     "$([ -e "$clone/.migrate-transaction" ] && echo yes || echo no)"
 
@@ -298,6 +351,7 @@ for index in 1 2 3 4; do
     check "commit:$index resumes forward" yes \
         "$(case "$output" in *"resume=forward"*) echo yes ;; *) echo no ;; esac)"
     check_complete_new "commit:$index after resume"
+    check_services "commit:$index after resume" active active
     check "commit:$index cleared the transaction" no \
         "$([ -e "$clone/.migrate-transaction" ] && echo yes || echo no)"
     check "commit:$index cleared the staging copy" no \
@@ -317,6 +371,7 @@ for index in 0 3; do
 
     FAIL_AT="" output=$(run_migrate) || true
     check_complete_new "cleanup:$index after resume"
+    check_services "cleanup:$index after resume" active active
     check "cleanup:$index cleared the transaction" no \
         "$([ -e "$clone/.migrate-transaction" ] && echo yes || echo no)"
 done
@@ -329,17 +384,183 @@ done
 # state was then moved out from under a listener holding it open.
 # ---------------------------------------------------------------------------
 build_legacy_install
-touch "$sandbox/services-stay-active"
+printf 'agenteiamail-idle.service\n' >"$sandbox/refuse-stop"
 output=$(run_migrate); status=$?
-rm -f "$sandbox/services-stay-active"
+rm -f "$sandbox/refuse-stop"
 check "a service that will not stop refuses the migration" 78 "$status"
 check "and names the unit and the reason" yes \
     "$(case "$output" in *"agenteiamail-idle.service is still active after stop"*) echo yes ;; *) echo no ;; esac)"
-check "and says nothing was moved" yes \
-    "$(case "$output" in *"nothing was moved and the install is unchanged"*) echo yes ;; *) echo no ;; esac)"
+check "and says only that nothing was moved" yes \
+    "$(case "$output" in *"no artifact was moved"*) echo yes ;; *) echo no ;; esac)"
+# It must not claim the install is unchanged: the services were already asked to
+# stop, and whether they came back is the restore's outcome to report.
+check "and does not claim the install is unchanged" yes \
+    "$(case "$output" in *"the install is unchanged"*) echo no ;; *) echo yes ;; esac)"
 check_complete_legacy "refused stop"
+# A partial stop refusal must put back the unit that did stop. The refusal is
+# about the one that would not.
+check_services "refused stop" active active
 check "the refused stop committed nothing" no \
     "$([ -e "$clone/.env" ] && echo yes || echo no)"
+
+
+# ---------------------------------------------------------------------------
+# A unit that was already stopped stays stopped.
+#
+# Restoring "whatever is normally running" would quietly undo an operator's
+# deliberate decision to keep the dispatcher down.
+# ---------------------------------------------------------------------------
+build_legacy_install
+rm -f "$unit_state/agenteiamail-dispatch.service"
+FAIL_AT="commit:0" output=$(run_migrate); status=$?
+check "an originally-inactive unit is not started by the interruption" 78 "$status"
+check_services "interrupted with dispatcher already down" active stopped
+FAIL_AT="" output=$(run_migrate) >/dev/null 2>&1
+check_services "rolled back with dispatcher already down" active stopped
+check_complete_legacy "rollback with dispatcher already down"
+
+# Both already stopped: nothing to restore, and nothing started.
+build_legacy_install
+rm -f "$unit_state/agenteiamail-idle.service" "$unit_state/agenteiamail-dispatch.service"
+FAIL_AT="commit:0" output=$(run_migrate) >/dev/null 2>&1
+check_services "interrupted with both already down" stopped stopped
+
+# ---------------------------------------------------------------------------
+# A restore that fails is loud, and is never folded into a success.
+#
+# The host is left with mail stopped. Saying so, naming the unit and keeping the
+# transaction for a retry is the whole difference between a tool you can trust
+# and one that reports "unchanged" over a silent mailbox.
+# ---------------------------------------------------------------------------
+build_legacy_install
+printf 'agenteiamail-idle.service\n' >"$sandbox/refuse-start"
+FAIL_AT="commit:0" output=$(run_migrate); status=$?
+rm -f "$sandbox/refuse-start"
+check "a failed restore does not report success" 78 "$status"
+check "and names the unit left inactive" yes \
+    "$(case "$output" in *"agenteiamail-idle.service could not be restarted and remains inactive"*) echo yes ;; *) echo no ;; esac)"
+check "and says no mail is being detected" yes \
+    "$(case "$output" in *"no mail is being detected"*) echo yes ;; *) echo no ;; esac)"
+check "and says the transaction was kept for a retry" yes \
+    "$(case "$output" in *"transaction was kept so this can be retried"*) echo yes ;; *) echo no ;; esac)"
+check "and the transaction really was kept" yes \
+    "$([ -f "$clone/.migrate-transaction" ] && echo yes || echo no)"
+check_services "failed restore" stopped active
+
+# ---------------------------------------------------------------------------
+# Revalidation. A destination or a staged copy that is not what the transaction
+# recorded stops everything, preserves every copy, and refuses to clean up.
+# ---------------------------------------------------------------------------
+build_legacy_install
+FAIL_AT="commit:1" run_migrate >/dev/null 2>&1
+# Something still staged, not something already committed: at this boundary the
+# first entries have been renamed into place and only the later ones remain.
+staged_copy=$(find "$clone/.migrate-staging" -name 'idle.json' | head -1)
+[ -n "$staged_copy" ] || { printf 'FAIL revalidation fixture found nothing still staged\n'; fail=$((fail + 1)); }
+printf 'tampered\n' >"$staged_copy"
+output=$(run_migrate); status=$?
+check "a changed staged copy refuses the resume" 78 "$status"
+check "and says what no longer matches" yes \
+    "$(case "$output" in *"no longer matches what is on disk"*) echo yes ;; *) echo no ;; esac)"
+check "and keeps the transaction" yes \
+    "$([ -f "$clone/.migrate-transaction" ] && echo yes || echo no)"
+check "and keeps the staging tree" yes \
+    "$([ -d "$clone/.migrate-staging" ] && echo yes || echo no)"
+check "and deletes no source" yes \
+    "$([ -f "$sandbox/home/.local/state/agenteiamail/idle.json" ] && echo yes || echo no)"
+check_services "changed staged copy" active active
+
+build_legacy_install
+FAIL_AT="commit:1" run_migrate >/dev/null 2>&1
+printf 'not the committed artifact\n' >"$clone/.env"
+output=$(run_migrate); status=$?
+check "a destination that is not the committed artifact refuses" 78 "$status"
+check "and names the destination" yes \
+    "$(case "$output" in *"conflict-destination=$clone/.env"*) echo yes ;; *) echo no ;; esac)"
+check "and deletes no source" yes \
+    "$([ -f "$sandbox/home/.local/state/agenteiamail/idle.json" ] && echo yes || echo no)"
+check_services "wrong destination" active active
+
+
+# ---------------------------------------------------------------------------
+# The durability ordering, pinned.
+#
+# This is a syscall-order model test, not a power-loss test: it asserts that the
+# right fsync happens at the right point relative to the rename and the unlink
+# around it. A real power-loss test needs hardware that can be cut mid-write.
+#
+# The property being pinned is that a crash can never persist a later operation
+# while losing an earlier one it depended on. Specifically: the manifest is
+# durable before anything is stopped, a destination is durable before its source
+# is unlinked, and the transaction is gone durably before success is reported.
+# ---------------------------------------------------------------------------
+build_legacy_install
+SYNC_LOG="$sandbox/sync.log" run_migrate >/dev/null 2>&1
+SYNC_LOG=""
+
+
+line_of() {   # pattern, first|last
+    if [ "$2" = last ]; then
+        grep -n -- "$1" "$sandbox/sync.log" 2>/dev/null | tail -1 | cut -d: -f1
+    else
+        grep -n -- "$1" "$sandbox/sync.log" 2>/dev/null | head -1 | cut -d: -f1
+    fi
+}
+
+# The assertion has to name a window, not just "somewhere earlier".
+#
+# The first version of these checks matched `dir <clone>` anywhere before the
+# stop — and the staging phase syncs the clone too, so the check passed with the
+# pre-stop manifest sync deleted. A test that passes when the property is gone
+# is worse than no test, and this is the third time that shape has come up in
+# this work, so it is spelled out here.
+sync_between() {   # description, after-pattern, target-pattern, before-pattern
+    local desc=$1 after before found
+    after=$(line_of "$2" last)
+    before=$(line_of "$4" first)
+    if [ -z "$after" ] || [ -z "$before" ]; then
+        check "$desc" present "missing anchor (after=${after:-missing} before=${before:-missing})"
+        return
+    fi
+    found=$(awk -v a="$after" -v b="$before" 'NR>a && NR<b' "$sandbox/sync.log" \
+        | grep -c -- "$3")
+    if [ "${found:-0}" -ge 1 ]; then
+        check "$desc" present present
+    else
+        check "$desc" present "absent between lines $after and $before"
+    fi
+}
+
+check "the migration synced something at all" yes \
+    "$([ -s "$sandbox/sync.log" ] && echo yes || echo no)"
+
+# The staged copy is durable before the manifest that claims it exists.
+sync_between "staged data is durable before the manifest names it" \
+    "^tree.*migrate-staging" "^dir	$clone/.migrate-staging$" "^file.*migrate-transaction.tmp"
+
+# The manifest rename is durable before any service is stopped. A manifest that
+# does not survive the crash which interrupted it is worse than no manifest.
+sync_between "the manifest rename is durable before anything is stopped" \
+    "^file.*migrate-transaction.tmp" "^dir	$clone$" "systemctl.*--user stop"
+
+# A destination is durable before any source is unlinked. If the unlink outlives
+# the rename across a reboot, the artifact is gone from both places.
+sync_between "a destination is durable before any source is unlinked" \
+    "systemctl.*--user stop" "^dir	$clone$" "^dir	$sandbox/home/\."
+
+# The last sync, not the last log line: convergence keeps talking to systemd
+# afterwards and that is not part of the durability ordering. It must come after
+# the source-parent syncs, so a reboot cannot resurrect a finished transaction.
+check "the last sync is the install root" "dir	$clone" \
+    "$(grep -v '^systemctl' "$sandbox/sync.log" | tail -1)"
+last_sync=$(grep -vn '^systemctl' "$sandbox/sync.log" | tail -1 | cut -d: -f1)
+last_source=$(line_of "^dir	$sandbox/home/\." last)
+if [ -n "$last_sync" ] && [ -n "$last_source" ] && [ "$last_sync" -gt "$last_source" ]; then
+    check "and it comes after every source-parent sync" ordered ordered
+else
+    check "and it comes after every source-parent sync" ordered \
+        "out of order (last sync=${last_sync:-missing} last source=${last_source:-missing})"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
