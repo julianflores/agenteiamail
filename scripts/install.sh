@@ -258,7 +258,7 @@ discover_prerequisites() {
         printf 'logrotate=absent (managed Python rotation will be used)\n'
     fi
     if [[ -n "${XDG_CONFIG_HOME:-}${XDG_STATE_HOME:-}" ]]; then
-        printf 'xdg_overrides=ignored (application paths are fixed under HOME)\n'
+        printf 'xdg_overrides=ignored (the install root is the clone)\n'
     fi
 
     if ((${#prerequisite_errors[@]})); then
@@ -274,41 +274,42 @@ discover_prerequisites() {
     discovered_runtime_cli=$runtime_cli
 }
 
+# One rule, and it is not written here. harness/paths.py has it, scripts/
+# envpath.sh is the shell half, and scripts/test_paths.sh asserts the two agree.
+# A fourth copy in the installer is how the units end up pointing at a file the
+# listener never reads.
+# shellcheck source=envpath.sh
+. "$ROOT/scripts/envpath.sh"
+
 resolve_credentials_path() {
-    local neutral legacy
-    if [[ -n "${AGENTEIAMAIL_ENV:-}" ]]; then
-        printf '%s' "$AGENTEIAMAIL_ENV"
-        return
-    fi
-    neutral="$HOME/.config/agenteiamail/env"
-    if [[ -e "$neutral" || -L "$neutral" ]]; then
-        printf '%s' "$neutral"
-        return
-    fi
-    # Legacy-migration probe only: this path is read-only discovery input.
-    # It is never a write target, a new-install default, or an owned artifact.
-    legacy="$HOME/.openclaw/workspace/.env"
-    if [[ -e "$legacy" || -L "$legacy" ]]; then
-        printf '%s' "$legacy"
-        return
-    fi
-    printf '%s' "$neutral"
+    agenteiamail_env_file
 }
 
 validate_container_chain() {
-    local target=$1 current relative component owner mode mode_value
+    local target=$1 anchor current relative component owner mode mode_value
     local -a components=()
 
-    [[ "$target" == "$HOME"/* ]] || {
-        printf 'inventory conflict-container=%s reason=outside-home\n' "$target"
+    # Two anchors, because the install root is wherever the clone is and that is
+    # not necessarily under $HOME. Whichever anchor is used, it is validated
+    # itself before anything beneath it: the loop's first iteration checks
+    # `current` before appending a component.
+    if [[ "$target" == "$HOME" || "$target" == "$HOME"/* ]]; then
+        anchor=$HOME
+    elif [[ "$target" == "$install_root" || "$target" == "$install_root"/* ]]; then
+        anchor=$install_root
+    else
+        printf 'inventory conflict-container=%s reason=outside-home-and-install-root\n' "$target"
         inventory_conflicts=1
-        inventory_blocked_details+=("$target"$'\t'outside-home)
+        inventory_blocked_details+=("$target"$'\t'outside-home-and-install-root)
         return 1
-    }
+    fi
 
-    current=$HOME
-    relative=${target#"$HOME"/}
-    IFS='/' read -r -a components <<<"$relative"
+    current=$anchor
+    relative=${target#"$anchor"}
+    relative=${relative#/}
+    if [[ -n "$relative" ]]; then
+        IFS='/' read -r -a components <<<"$relative"
+    fi
     for component in "" "${components[@]}"; do
         if [[ -n "$component" ]]; then
             current="$current/$component"
@@ -353,8 +354,13 @@ validate_container_chain() {
 }
 
 set_managed_paths() {
-    config_dir="$HOME/.config/agenteiamail"
-    state_dir="$HOME/.local/state/agenteiamail"
+    # The clone is the install: config, state, credentials, secrets and roster
+    # all hang off it. A legacy install that was never migrated keeps its split
+    # layout instead, and the resolver — not this function — is what decides
+    # which of those two a host is in.
+    install_root=$(agenteiamail_root)
+    config_dir=$(agenteiamail_config_dir)
+    state_dir=$(agenteiamail_state_dir)
     unit_dir="$HOME/.config/systemd/user"
     hermes_dir="$config_dir/hermes"
     manifest="$config_dir/install.manifest"
@@ -463,13 +469,19 @@ for name, value in values.items():
 PYINNER
         return
     fi
-    python3 - "$source" "$ROOT" "$credentials" <<'PYINNER'
+    python3 - "$source" "$ROOT" "$credentials" "$config_dir" "$state_dir" <<'PYINNER'
 import sys
 from pathlib import Path
 
+# Order matters only in that every placeholder is distinct; none is a prefix of
+# another, so a single pass is enough. config and state are separate from the
+# root because a legacy install keeps them outside the clone, and rendering them
+# from the root would point a still-working install at empty directories.
 text = Path(sys.argv[1]).read_text()
 text = text.replace("/path/to/agenteiamail", sys.argv[2])
 text = text.replace("/path/to/env", sys.argv[3])
+text = text.replace("/path/to/config", sys.argv[4])
+text = text.replace("/path/to/state", sys.argv[5])
 sys.stdout.write(text)
 PYINNER
 }
@@ -575,10 +587,10 @@ classify_planned_secret() {
 print_managed_inventory() {
     local unit
     local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
-    # These paths deliberately follow the runtime and systemd contracts rather
-    # than XDG overrides: the Hermes adapter defaults state via expanduser(),
-    # while the shipped units read %h paths. Honoring XDG_CONFIG_HOME here would
-    # place secrets where the unit never reads them and surface later as a 401.
+    # These paths deliberately follow the resolver rather than XDG overrides.
+    # Everything the install owns hangs off the clone, and the units are
+    # rendered with the same answers; honoring XDG_CONFIG_HOME here would place
+    # secrets where the unit never reads them and surface later as a 401.
     set_managed_paths
     inventory_conflicts=0
     inventory_unproven_conflicts=0
@@ -659,8 +671,59 @@ print_managed_inventory() {
             fi
         fi
     fi
+    check_git_hygiene
     if ((inventory_blocked)); then
         printf 'inventory result=blocked configuration-refusal=true\n'
+    fi
+}
+
+# Every runtime-owned path is ignored by git, and none of them is tracked.
+#
+# The install lives inside the working tree now, so an ignore rule is all that
+# stands between a mail password and `git add -A`. This runs in the inventory
+# phase, before anything is written: refusing to write a secret beats writing it
+# and printing a warning nobody reads.
+#
+# A deployment with no .git — a tarball, an export — cannot be checked and is
+# not refused for it. It is reported, so the difference between "checked and
+# clean" and "could not check" stays visible.
+check_git_hygiene() {
+    local relative tracked=() exposed=()
+
+    if ! git -C "$install_root" rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'inventory git-hygiene=unverifiable reason=not-a-git-checkout root=%s\n' \
+            "$install_root"
+        return 0
+    fi
+
+    # `state/` and `hermes/` keep their trailing slash: .gitignore matches them
+    # as directories, and `git check-ignore state` answers "not ignored" for a
+    # directory that does not exist yet — which is exactly when this runs.
+    for relative in .env runtime.env install.manifest roster.txt \
+        hermes/notify.secret hermes/roster.secret hermes/ state/; do
+        if git -C "$install_root" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
+            tracked+=("$relative")
+        elif ! git -C "$install_root" check-ignore -q -- "$relative"; then
+            exposed+=("$relative")
+        fi
+    done
+
+    if ((${#tracked[@]})); then
+        for relative in "${tracked[@]}"; do
+            printf 'inventory conflict-git-tracked=%s reason=runtime-path-is-tracked\n' "$relative"
+        done
+        inventory_conflicts=1
+        inventory_blocked=1
+    fi
+    if ((${#exposed[@]})); then
+        for relative in "${exposed[@]}"; do
+            printf 'inventory conflict-git-exposed=%s reason=not-ignored\n' "$relative"
+        done
+        inventory_conflicts=1
+        inventory_blocked=1
+    fi
+    if ((${#tracked[@]} == 0 && ${#exposed[@]} == 0)); then
+        printf 'inventory git-hygiene=clean root=%s\n' "$install_root"
     fi
 }
 

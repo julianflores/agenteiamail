@@ -1,4 +1,15 @@
-# Template. Replace /path/to/agenteiamail with your clone's absolute path.
+# Template. scripts/install.sh renders it; a manual install edits it by hand.
+# Three placeholders:
+#
+#   /path/to/agenteiamail  your clone's absolute path, which is also the install
+#   /path/to/config        where runtime.env and hermes/ live — the clone on a
+#                          current install, ~/.config/agenteiamail on one that
+#                          predates the single root and was never migrated
+#   /path/to/state         the state tree, normally <clone>/state
+#
+# They are placeholders rather than %h paths because the install root is
+# wherever the clone is, which %h cannot express — and config is kept separate
+# from the root precisely so a legacy install still renders correctly.
 #
 # One dispatcher, and only one. It is the sole consumer of the event journal and
 # the sole writer of the cursor that says what has been delivered. A session must
@@ -14,7 +25,7 @@ Type=simple
 # scripts/install.sh writes runtime.env. Manual installs retain the inline auto
 # default; installer-managed installs override it from the optional file.
 Environment=AGENTEIAMAIL_RUNTIME=auto
-EnvironmentFile=-%h/.config/agenteiamail/runtime.env
+EnvironmentFile=-/path/to/config/runtime.env
 # AGENTEIAMAIL_RUNTIME in runtime.env selects openclaw, hermes, or auto. `auto`
 # chooses only when exactly one runtime is present and refuses rather than
 # guessing when none or several are.
@@ -26,9 +37,9 @@ EnvironmentFile=-%h/.config/agenteiamail/runtime.env
 # protected file. Keep the route secrets different. GET /health proves only the
 # gateway answers; signed smoke events must still verify both routes.
 #Environment=HERMES_NOTIFY_URL=http://127.0.0.1:8644/webhooks/agenteiamail-notify
-#Environment=HERMES_NOTIFY_SECRET_FILE=%h/.config/agenteiamail/hermes/notify.secret
+#Environment=HERMES_NOTIFY_SECRET_FILE=/path/to/config/hermes/notify.secret
 #Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/webhooks/agenteiamail-roster
-#Environment=HERMES_ROSTER_SECRET_FILE=%h/.config/agenteiamail/hermes/roster.secret
+#Environment=HERMES_ROSTER_SECRET_FILE=/path/to/config/hermes/roster.secret
 #Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
 #Environment=HERMES_SIGNATURE_MODE=v2
 ExecStart=/usr/bin/python3 /path/to/agenteiamail/harness/dispatch.py
@@ -40,8 +51,8 @@ RestartSec=10
 # the only place a delivery failure can land: it cannot report through the
 # runtime it is failing to reach. Somebody has to read this file, and
 # session_start.py does at the start of every session.
-StandardOutput=append:%h/.local/state/agenteiamail/dispatch.log
-StandardError=append:%h/.local/state/agenteiamail/dispatch.err.log
+StandardOutput=append:/path/to/state/dispatch.log
+StandardError=append:/path/to/state/dispatch.err.log
 SyslogIdentifier=agenteiamail-dispatch
 
 [Install]
