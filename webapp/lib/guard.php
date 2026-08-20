@@ -20,6 +20,23 @@ declare(strict_types=1);
 const LEGACY_CONFIG_RELATIVE = '.config/agenteiamail';
 const LEGACY_STATE_RELATIVE  = '.local/state/agenteiamail';
 const ENV_LEGACY_OPENCLAW    = '.openclaw/workspace/.env';
+
+/**
+ * Every file the old layout could durably own. An inventory, not a sample —
+ * see LEGACY_CONFIG_MARKERS / LEGACY_STATE_MARKERS in harness/paths.py for the
+ * journal-only case that made the difference. scripts/test_paths.sh asserts all
+ * three languages agree.
+ */
+const LEGACY_CONFIG_MARKERS = [
+    'env', 'install.manifest', 'runtime.env', 'logrotate.conf',
+    'hermes/notify.secret', 'hermes/roster.secret',
+];
+const LEGACY_STATE_MARKERS = [
+    'idle.json', 'events.jsonl', 'dispatch.offset', 'delivery.json',
+    'rotate-state.json', 'version.check', 'setup.token', 'mail.log',
+    'idle.err.log', 'dispatch.log', 'dispatch.err.log', 'watch.err.log',
+    'setup-web.log',
+];
 const TOKEN_BASENAME         = 'setup.token';
 
 /**
@@ -54,21 +71,33 @@ function legacy_config_dir(): string
  */
 function legacy_layout(): bool
 {
-    $config = legacy_config_dir();
-    clearstatcache(true, $config . '/env');
-    if (file_exists($config . '/env') || is_link($config . '/env')) {
-        return true;
+    $home  = rtrim(home_dir(), '/');
+    $state = $home . '/' . LEGACY_STATE_RELATIVE;
+
+    $groups = [
+        [legacy_config_dir(), LEGACY_CONFIG_MARKERS],
+        [$state, LEGACY_STATE_MARKERS],
+    ];
+    foreach ($groups as [$directory, $markers]) {
+        foreach ($markers as $marker) {
+            $candidate = $directory . '/' . $marker;
+            clearstatcache(true, $candidate);
+            if (file_exists($candidate) || is_link($candidate)) {
+                return true;
+            }
+        }
     }
-    if (file_exists($config . '/install.manifest')) {
-        return true;
+
+    // Rotated logs are durable too, and are the one marker the lists above
+    // cannot spell: mail.log.1 through mail.log.5.
+    foreach (glob($state . '/*.log.*') ?: [] as $rotated) {
+        if (file_exists($rotated) || is_link($rotated)) {
+            return true;
+        }
     }
-    if (is_file(rtrim(home_dir(), '/') . '/' . ENV_LEGACY_OPENCLAW)) {
-        return true;
-    }
-    if (file_exists(rtrim(home_dir(), '/') . '/' . LEGACY_STATE_RELATIVE . '/idle.json')) {
-        return true;
-    }
-    return false;
+
+    $openclaw = $home . '/' . ENV_LEGACY_OPENCLAW;
+    return is_file($openclaw) || is_link($openclaw);
 }
 
 /** The queue state, cursors and logs — one tree, whichever layout this is. */

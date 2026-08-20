@@ -28,6 +28,12 @@
 # Queue state, cursors, delivery status and logs.
 /state/
 
+# An in-flight migration: the staging copy and its transaction manifest. Both
+# are removed when the migration finishes or rolls back, but while they exist
+# they hold a complete copy of the credentials and the route secrets.
+/.migrate-staging/
+/.migrate-transaction
+
 # The real roster is per-install: it says who this agent may contact
 # unattended, and a git pull must never be able to change that list.
 /roster.txt

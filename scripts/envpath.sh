@@ -12,30 +12,51 @@ agenteiamail_root() {
     (cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 }
 
+# Every file the old layout could durably own. An inventory, not a sample: the
+# first version listed only idle.json, and a legacy state tree holding an
+# undelivered events.jsonl and no idle.json resolved into the clone and
+# abandoned the journal — mail that had arrived and never been delivered.
+# Keep in step with LEGACY_CONFIG_MARKERS / LEGACY_STATE_MARKERS in
+# harness/paths.py; scripts/test_paths.sh asserts the two agree.
+AGENTEIAMAIL_LEGACY_CONFIG_MARKERS="env install.manifest runtime.env logrotate.conf hermes/notify.secret hermes/roster.secret"
+AGENTEIAMAIL_LEGACY_STATE_MARKERS="idle.json events.jsonl dispatch.offset delivery.json rotate-state.json version.check setup.token mail.log idle.err.log dispatch.log dispatch.err.log watch.err.log setup-web.log"
+
 # True when this host has a pre-single-root install that must stay put.
 #
 # One predicate for the whole layout. Deciding credentials and state separately
 # is how you get a split-brain install, and that presents as a quiet mailbox.
-# Each probe is narrow on purpose: an empty leftover directory is not an
-# install. -e is false for a dangling symlink, and a link pointing at a file
-# nobody has created yet still says where that file belongs, so the link is
-# asked about separately. The idle.json probe is the safety net — it is the UID
-# baseline, and resolving past it would replay the mailbox or skip it.
+# Narrow on purpose: an empty leftover directory is not an install. -e is false
+# for a dangling symlink, and a link pointing at a file nobody has created yet
+# still says where that file belongs, so the link is asked about separately.
+#
 # Written as plain if-blocks rather than `[ ... ] && return 0` chains: this file
 # is sourced into scripts running under `set -e`, where a failing test at the
 # head of an AND list takes the caller down with it.
 agenteiamail_legacy_layout() {
     local config="$HOME/.config/agenteiamail"
-    if [ -e "$config/env" ] || [ -L "$config/env" ]; then
-        return 0
+    local state="$HOME/.local/state/agenteiamail"
+    local marker rotated
+
+    for marker in $AGENTEIAMAIL_LEGACY_CONFIG_MARKERS; do
+        if [ -e "$config/$marker" ] || [ -L "$config/$marker" ]; then
+            return 0
+        fi
+    done
+    for marker in $AGENTEIAMAIL_LEGACY_STATE_MARKERS; do
+        if [ -e "$state/$marker" ] || [ -L "$state/$marker" ]; then
+            return 0
+        fi
+    done
+    # Rotated logs are durable too, and are the one marker the lists above
+    # cannot spell: mail.log.1 through mail.log.5.
+    if [ -d "$state" ]; then
+        for rotated in "$state"/*.log.*; do
+            if [ -e "$rotated" ] || [ -L "$rotated" ]; then
+                return 0
+            fi
+        done
     fi
-    if [ -e "$config/install.manifest" ]; then
-        return 0
-    fi
-    if [ -f "$HOME/.openclaw/workspace/.env" ]; then
-        return 0
-    fi
-    if [ -e "$HOME/.local/state/agenteiamail/idle.json" ]; then
+    if [ -f "$HOME/.openclaw/workspace/.env" ] || [ -L "$HOME/.openclaw/workspace/.env" ]; then
         return 0
     fi
     return 1

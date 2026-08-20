@@ -690,8 +690,10 @@ print_managed_inventory() {
 # clean" and "could not check" stays visible.
 check_git_hygiene() {
     local relative tracked=() exposed=()
+    git_hygiene=violated
 
     if ! git -C "$install_root" rev-parse --git-dir >/dev/null 2>&1; then
+        git_hygiene=unverifiable
         printf 'inventory git-hygiene=unverifiable reason=not-a-git-checkout root=%s\n' \
             "$install_root"
         return 0
@@ -724,6 +726,7 @@ check_git_hygiene() {
         inventory_blocked=1
     fi
     if ((${#tracked[@]} == 0 && ${#exposed[@]} == 0)); then
+        git_hygiene=clean
         printf 'inventory git-hygiene=clean root=%s\n' "$install_root"
     fi
 }
@@ -803,33 +806,259 @@ plan_legacy_migration() {
     return 0
 }
 
-perform_legacy_migration() {
-    local entry source destination
+# The migration transaction.
+#
+# The first version moved each artifact with its own `mv` and, on a failure
+# partway, exited saying the install was now split and had to be repaired by
+# hand. On a live host that is credentials in one place and the UID baseline in
+# another — the state that makes a mailbox go quiet without erroring anywhere.
+#
+# A reverse-`mv` rollback does not fix it: if the forward move failed because
+# the filesystem was full or the rename crossed devices, the rollback fails for
+# the same reason, at the same moment, with less of the install left.
+#
+# So nothing is moved. Everything is *copied* into a staging directory on the
+# destination filesystem, validated there, and recorded in a durable manifest
+# before anything is committed. The sources stay intact throughout, which makes
+# the rollback a delete rather than a move — an operation that does not need
+# space, and does not cross devices.
+#
+# There are exactly two states this can be interrupted in, and both are
+# recoverable by rerunning --migrate:
+#
+#   before the first commit  the complete legacy install is still there; the
+#                            transaction rolls back by deleting staging
+#   after the first commit   every artifact exists in staging, so the remaining
+#                            commits are replayed forward
+#
+# There is deliberately no third state, and no state in which a human is told to
+# repair it themselves.
+migration_staging() { printf '%s/.migrate-staging' "$install_root"; }
+migration_transaction() { printf '%s/.migrate-transaction' "$install_root"; }
 
-    ((${#migration_moves[@]})) || return 0
+# A test hook, in the same shape as AGENTEIAMAIL_TEST_INTERRUPT_AFTER. Failure
+# has to be injectable at every commit boundary or the recovery paths are
+# assertions about code nobody has run.
+migration_fail_here() {
+    [[ "${AGENTEIAMAIL_TEST_MIGRATE_FAIL_AT:-}" == "$1" ]] || return 1
+    printf 'migrate test-injected-failure=%s\n' "$1" >&2
+    return 0
+}
 
-    # Stop first. The listener holds its state file open and the dispatcher
-    # holds the journal lock; moving either underneath a running process leaves
-    # it writing into an unlinked inode nobody will ever read.
-    if [[ -n "$discovered_systemctl" ]]; then
-        "$discovered_systemctl" --user stop agenteiamail-idle.service \
-            agenteiamail-dispatch.service >/dev/null 2>&1 || true
-    fi
+# Slugs, so a staging directory holding `env` from the config dir and `env` from
+# somewhere else cannot collide.
+migration_slug() {
+    printf '%s' "$1" | sed 's|^/||; s|/|__|g'
+}
+
+stage_legacy_migration() {
+    local entry source destination staging slug staged index=0
+    staging=$(migration_staging)
+
+    rm -rf -- "$staging"
+    mkdir -p -- "$staging"
+    chmod 700 -- "$staging"
 
     for entry in "${migration_moves[@]}"; do
         IFS=$'\t' read -r source destination <<<"$entry"
-        mv -- "$source" "$destination" || \
-            die_config "migration failed moving $source to $destination; the install is now split and must be repaired by hand"
-        printf 'migrate moved=%s to=%s\n' "$source" "$destination"
+        slug=$(migration_slug "$source")
+        staged="$staging/$slug"
+
+        if migration_fail_here "stage:$index"; then
+            rm -rf -- "$staging"
+            die_config "staging failed for $source; nothing was moved and the install is unchanged"
+        fi
+
+        # -a keeps mode, times and links. The copy lands on the destination
+        # filesystem, so the commit below is a rename within one filesystem
+        # rather than a copy that can run out of space halfway.
+        if ! cp -a -- "$source" "$staged"; then
+            rm -rf -- "$staging"
+            die_config "could not stage $source; nothing was moved and the install is unchanged"
+        fi
+
+        # Validated before it is trusted. A short read or a truncated copy that
+        # nobody compared is exactly the silent loss this is meant to prevent.
+        if ! diff -r --no-dereference -- "$source" "$staged" >/dev/null 2>&1; then
+            rm -rf -- "$staging"
+            die_config "staged copy of $source does not match the original; nothing was moved"
+        fi
+
+        printf 'migrate staged=%s at=%s\n' "$source" "$staged"
+        migration_staged+=("$source"$'\t'"$staged"$'\t'"$destination")
+        index=$((index + 1))
+    done
+}
+
+write_migration_transaction() {
+    local phase=$1 entry transaction
+    transaction=$(migration_transaction)
+    {
+        printf 'version\t1\n'
+        printf 'phase\t%s\n' "$phase"
+        printf 'root\t%s\n' "$install_root"
+        for entry in "${migration_staged[@]}"; do
+            printf 'entry\t%s\n' "$entry"
+        done
+    } >"$transaction.tmp"
+    chmod 600 -- "$transaction.tmp"
+    # Durable before it is authoritative: a manifest that describes a commit
+    # which has already started, and which did not survive the power cut that
+    # interrupted it, is worse than no manifest.
+    python3 -c 'import os,sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+os.fsync(fd)
+os.close(fd)' "$transaction.tmp"
+    mv -- "$transaction.tmp" "$transaction"
+}
+
+read_migration_transaction() {
+    local transaction line kind rest
+    transaction=$(migration_transaction)
+    migration_staged=()
+    migration_phase=""
+    [[ -f "$transaction" ]] || return 1
+    while IFS= read -r line; do
+        kind=${line%%$'\t'*}
+        rest=${line#*$'\t'}
+        case "$kind" in
+            phase) migration_phase=$rest ;;
+            entry) migration_staged+=("$rest") ;;
+        esac
+    done <"$transaction"
+    return 0
+}
+
+stop_services_for_migration() {
+    local unit attempt active
+    [[ -n "$discovered_systemctl" ]] || {
+        printf 'migrate services=not-managed reason=no-systemctl\n'
+        return 0
+    }
+
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
+        "$discovered_systemctl" --user stop "$unit" >/dev/null 2>&1 || true
     done
 
-    # Leave nothing behind that the resolver would read as a legacy install.
-    # rmdir, not rm -rf: if something else is in there it is not ours.
+    # The stop used to be `|| true` with nothing after it, under a comment
+    # claiming the stop was what protected the move. It did not: a stop that
+    # failed was indistinguishable from one that worked, and state was then
+    # moved out from under a running listener holding it open. Ask.
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
+        active=yes
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if ! "$discovered_systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+                active=no
+                break
+            fi
+            sleep 1
+        done
+        if [[ "$active" == yes ]]; then
+            die_config "refusing to migrate: $unit is still active after stop; nothing was moved and the install is unchanged"
+        fi
+        printf 'migrate stopped=%s state=inactive\n' "$unit"
+    done
+}
+
+restart_services_after_migration() {
+    local unit
+    [[ -n "$discovered_systemctl" ]] || return 0
+    "$discovered_systemctl" --user daemon-reload >/dev/null 2>&1 || true
+    for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
+        "$discovered_systemctl" --user start "$unit" >/dev/null 2>&1 || true
+    done
+}
+
+commit_legacy_migration() {
+    local entry source staged destination index=0
+
+    for entry in "${migration_staged[@]}"; do
+        IFS=$'\t' read -r source staged destination <<<"$entry"
+
+        if [[ -e "$destination" || -L "$destination" ]]; then
+            # Already committed by an interrupted run. Replaying forward is the
+            # whole point of the manifest.
+            printf 'migrate already-committed=%s\n' "$destination"
+        else
+            if migration_fail_here "commit:$index"; then
+                die_config "commit interrupted at $destination; rerun --migrate to finish, every artifact is still staged"
+            fi
+            mv -- "$staged" "$destination" || \
+                die_config "commit failed at $destination; rerun --migrate to finish, every artifact is still staged"
+            printf 'migrate committed=%s\n' "$destination"
+        fi
+        index=$((index + 1))
+    done
+
+    # Sources go last, and only once every destination exists. Until this loop
+    # the host has two complete copies, which is the state that makes both
+    # recovery directions possible.
+    index=0
+    for entry in "${migration_staged[@]}"; do
+        IFS=$'\t' read -r source staged destination <<<"$entry"
+        if migration_fail_here "cleanup:$index"; then
+            die_config "cleanup interrupted at $source; rerun --migrate to finish, the new install is complete"
+        fi
+        rm -rf -- "$source"
+        index=$((index + 1))
+    done
+
     rmdir -- "$HOME/.config/agenteiamail" 2>/dev/null || true
     rmdir -- "$HOME/.local/state/agenteiamail" 2>/dev/null || true
+    rm -rf -- "$(migration_staging)"
+    rm -f -- "$(migration_transaction)"
+}
+
+rollback_legacy_migration() {
+    # Only ever called before the first commit, where the sources are untouched
+    # and staging is a copy. Deleting a copy needs no space and crosses no
+    # device, which is why the transaction is built this way round.
+    rm -rf -- "$(migration_staging)"
+    rm -f -- "$(migration_transaction)"
+    printf 'migrate result=rolled-back reason=no-artifact-was-committed\n'
+}
+
+# Rerunning --migrate on a host with a transaction manifest. Decides forward or
+# back by looking at what is actually on disk, not at what the manifest hoped.
+resume_legacy_migration() {
+    local entry source staged destination committed=0
+
+    for entry in "${migration_staged[@]}"; do
+        IFS=$'\t' read -r source staged destination <<<"$entry"
+        if [[ -e "$destination" || -L "$destination" ]]; then
+            committed=1
+            break
+        fi
+    done
+
+    if ((committed == 0)); then
+        printf 'migrate resume=rollback reason=nothing-committed\n'
+        rollback_legacy_migration
+        return 1
+    fi
+
+    printf 'migrate resume=forward reason=partially-committed\n'
+    for entry in "${migration_staged[@]}"; do
+        IFS=$'\t' read -r source staged destination <<<"$entry"
+        if [[ ! -e "$destination" && ! -L "$destination" && ! -e "$staged" ]]; then
+            die_config "cannot resume: $destination is missing and its staged copy is gone; restore from $source by hand"
+        fi
+    done
+    stop_services_for_migration
+    commit_legacy_migration
+    return 0
+}
+
+perform_legacy_migration() {
+    ((${#migration_staged[@]})) || return 0
+
+    write_migration_transaction staged
+    stop_services_for_migration
+    write_migration_transaction committing
+    commit_legacy_migration
 
     if agenteiamail_legacy_layout; then
-        die_config 'migration moved every artifact but the host still resolves as a legacy install; refusing to converge a split install'
+        die_config 'migration committed every artifact but the host still resolves as a legacy install; refusing to converge a split install'
     fi
 
     # The resolver answers differently now, so every derived path is stale.
@@ -1154,7 +1383,24 @@ print_final_verification_report() {
         printf 'verification_secret=not-applicable runtime=openclaw\n'
         printf 'verification_smoke=openclaw-service-environment result=accepted\n'
     fi
-    printf 'verification_report_end result=passed\n'
+    # The hygiene state reaches the final report, not only the inventory stream.
+    # It used to be printed once, mid-inventory, while the report still ended
+    # `result=passed` — so "could not check" and "checked and clean" were
+    # distinguishable to a human reading every line and to nothing else: not the
+    # caller, not the exit status, not the report. A control nobody verified is
+    # not a control that passed.
+    printf 'verification_git_hygiene=%s root=%s\n' "$git_hygiene" "$install_root"
+    case "$git_hygiene" in
+        clean)
+            printf 'verification_report_end result=passed\n'
+            ;;
+        unverifiable)
+            printf 'verification_report_end result=passed-with-unverified-control control=git-hygiene\n'
+            ;;
+        *)
+            die_config 'final verification reached an install whose git hygiene was never established'
+            ;;
+    esac
 }
 
 converge_required_services() {
@@ -1195,6 +1441,10 @@ profile=""
 notify_secret_file=""
 roster_secret_file=""
 mode="install"
+# Tri-state, defaulting to the pessimistic end: `violated` until something
+# actually checks. An unset-or-empty variable read as "fine" is the failure this
+# whole tri-state exists to remove.
+git_hygiene=violated
 upgrade=0
 uninstall=0
 migrate=0
@@ -1316,23 +1566,60 @@ fi
 # that inventory resolves to. Placed ahead of the dry-run branch so
 # `--migrate --dry-run` reports the moves rather than the convergence plan.
 changes_made=0
+migration_moves=()
+migration_staged=()
+migration_phase=""
+
+set_managed_paths
+# An outstanding transaction means the host is mid-migration. Every path this
+# installer would resolve is a guess until it finishes, so nothing else runs:
+# converging units against a half-committed layout is how the units and the
+# session hook end up disagreeing, which reads as a quiet mailbox.
+if [[ -f "$(migration_transaction)" && "$mode" != migrate ]]; then
+    printf 'install: an unfinished migration transaction exists at %s\n' \
+        "$(migration_transaction)" >&2
+    printf 'install: rerun with --migrate to finish or roll it back; no other mode is safe until then\n' >&2
+    exit "$EX_CONFIG"
+fi
+
 if [[ "$mode" == migrate ]]; then
-    set_managed_paths
-    if ! plan_legacy_migration; then
-        die_config 'migration refused; nothing was moved'
-    fi
-    if ((dry_run)); then
-        if ((${#migration_moves[@]})); then
-            printf 'dry-run: migration plan contains move actions; no changes made.\n'
+    if read_migration_transaction; then
+        printf 'migrate transaction=found phase=%s entries=%d\n' \
+            "$migration_phase" "${#migration_staged[@]}"
+        if ((dry_run)); then
+            printf 'dry-run: an unfinished migration transaction exists; rerun without --dry-run to resolve it.\n'
             exit "$EX_CHANGED"
         fi
-        printf 'dry-run: nothing to migrate.\n'
-        exit "$EX_OK"
+        if resume_legacy_migration; then
+            set_managed_paths
+            changes_made=1
+            mode=upgrade
+        else
+            printf 'install: migration rolled back; the install is unchanged.\n'
+            exit "$EX_CHANGED"
+        fi
+    else
+        if ! plan_legacy_migration; then
+            die_config 'migration refused; nothing was moved'
+        fi
+        if ((dry_run)); then
+            if ((${#migration_moves[@]})); then
+                printf 'dry-run: migration plan contains move actions; no changes made.\n'
+                exit "$EX_CHANGED"
+            fi
+            printf 'dry-run: nothing to migrate.\n'
+            exit "$EX_OK"
+        fi
+        if ((${#migration_moves[@]})); then
+            stage_legacy_migration
+            perform_legacy_migration
+            restart_services_after_migration
+        fi
+        # Converge from here on as an upgrade: the artifacts exist and are
+        # owned, they are just in a new place and the units still name the old
+        # one.
+        mode=upgrade
     fi
-    perform_legacy_migration
-    # Converge from here on as an upgrade: the artifacts exist and are owned,
-    # they are just in a new place and the units still name the old one.
-    mode=upgrade
 fi
 
 if ((dry_run)); then

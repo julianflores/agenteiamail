@@ -23,12 +23,15 @@ The rule is deliberately boring, and it is the whole rule:
 
 1. `AGENTEIAMAIL_ENV` and `AGENTEIAMAIL_STATE`, when set, win for the one file
    or tree they name. An install that said where its credentials or its state
-   live meant it, and nothing here second-guesses that.
+   live meant it, and nothing here second-guesses that. Setting only one of them
+   deliberately splits the paths, so the "cannot disagree" property below holds
+   only when neither is set.
 2. An install that predates the single root keeps the split layout, *entirely*.
    Half a migration is worse than none: units writing logs to one directory
    while the session hook reads another looks exactly like a quiet mailbox.
-   `legacy_layout()` is the single predicate that decides this, so credentials,
-   state and secrets cannot disagree about which layout they are in.
+   `legacy_layout()` is the single predicate that decides this, so — absent a
+   per-path override — credentials, state and secrets cannot disagree about
+   which layout they are in.
 3. Otherwise everything hangs off the clone.
 
 Nothing here creates, moves, or reads a file. It answers questions.
@@ -45,6 +48,41 @@ LEGACY_STATE = "~/.local/state/agenteiamail"
 # Where an OpenClaw install put its credentials before this repository knew
 # about other runtimes. Kept for detection only.
 LEGACY_OPENCLAW_ENV = "~/.openclaw/workspace/.env"
+
+# Every file the old layout could durably own, by directory.
+#
+# This is an inventory, not a sample. The first version of this probe listed
+# only `idle.json`, on the reasoning that the UID baseline is what causes a
+# replay or a skip. That was the file which motivated the fix, not the set of
+# files that matter: a legacy state tree holding an undelivered `events.jsonl`
+# and no `idle.json` resolved into the clone and abandoned the journal — mail
+# that had arrived and had never been delivered, dropped silently.
+#
+# So: when adding a file to either directory, add it here. Anything left out is
+# something a migration can walk away from without saying so.
+LEGACY_CONFIG_MARKERS = (
+    "env",
+    "install.manifest",
+    "runtime.env",
+    "logrotate.conf",
+    "hermes/notify.secret",
+    "hermes/roster.secret",
+)
+LEGACY_STATE_MARKERS = (
+    "idle.json",          # the UID baseline: losing it replays or skips the mailbox
+    "events.jsonl",       # the queue: undelivered mail that already arrived
+    "dispatch.offset",    # how far delivery is confirmed
+    "delivery.json",
+    "rotate-state.json",
+    "version.check",
+    "setup.token",
+    "mail.log",
+    "idle.err.log",
+    "dispatch.log",
+    "dispatch.err.log",
+    "watch.err.log",
+    "setup-web.log",
+)
 
 
 def _under(relative, home=None):
@@ -87,32 +125,33 @@ def legacy_layout(home=None):
 
     Each probe is deliberately narrow: an empty directory somebody created and
     abandoned is not an install, and adopting one would drag a fresh clone into
-    the split layout. Only files this project has actually written count.
+    the split layout. Only files this project has actually written count, and
+    every one of them counts — see LEGACY_CONFIG_MARKERS and
+    LEGACY_STATE_MARKERS for why that is an inventory rather than a sample.
 
-      - `~/.config/agenteiamail/env`, asked about as a link as well as a file.
-        Older OpenClaw installs left a symlink pointing into their workspace,
-        and a link to a file nobody has created yet still says where that file
-        belongs.
-      - `~/.config/agenteiamail/install.manifest`, which only the installer
-        writes.
-      - `~/.openclaw/workspace/.env` — an OpenClaw install from before any of
-        this existed, with nothing under ~/.config at all.
-      - `~/.local/state/agenteiamail/idle.json` — the UID baseline. This is the
-        safety net: a host whose credentials moved but whose baseline did not
-        would still be legacy, and resolving it to a fresh state tree would
-        replay the mailbox or silently skip everything already delivered.
+    Each marker is asked about as a link as well as a file. Older OpenClaw
+    installs left a symlink pointing into their workspace, and a link to a file
+    nobody has created yet still says where that file belongs.
     """
     config = _under(LEGACY_CONFIG, home)
-    env = config / "env"
-    if env.exists() or env.is_symlink():
-        return True
-    if (config / "install.manifest").exists():
-        return True
-    if _under(LEGACY_OPENCLAW_ENV, home).is_file():
-        return True
-    if (_under(LEGACY_STATE, home) / "idle.json").exists():
-        return True
-    return False
+    state = _under(LEGACY_STATE, home)
+
+    for directory, markers in ((config, LEGACY_CONFIG_MARKERS),
+                               (state, LEGACY_STATE_MARKERS)):
+        for marker in markers:
+            candidate = directory / marker
+            if candidate.exists() or candidate.is_symlink():
+                return True
+
+    # Rotated logs are durable too, and they are the one marker with a name this
+    # cannot list: mail.log.1 through mail.log.5.
+    if state.is_dir():
+        for rotated in state.glob("*.log.*"):
+            if rotated.exists() or rotated.is_symlink():
+                return True
+
+    openclaw = _under(LEGACY_OPENCLAW_ENV, home)
+    return openclaw.is_file() or openclaw.is_symlink()
 
 
 def config_dir(environ=None, home=None):
@@ -176,6 +215,18 @@ def hermes_dir(environ=None, home=None):
     return config_dir(environ, home) / "hermes"
 
 
+def migration_transaction(environ=None, home=None):
+    """
+    The manifest an unfinished `install.sh --migrate` leaves behind.
+
+    Its presence means the host is mid-migration and every path here is a guess
+    until it finishes. Callers should say so rather than resolve past it: an
+    installer converging units against a half-committed layout is how the units
+    and the session hook end up disagreeing, which reads as a quiet mailbox.
+    """
+    return install_root(environ, home) / ".migrate-transaction"
+
+
 def roster(environ=None, home=None):
     """
     Who this agent may write to unattended.
@@ -199,6 +250,7 @@ if __name__ == "__main__":
         "manifest": manifest,
         "hermes": hermes_dir,
         "roster": roster,
+        "migration-transaction": migration_transaction,
     }
     if what not in answers:
         print(f"unknown path: {what}", file=sys.stderr)

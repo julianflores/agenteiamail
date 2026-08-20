@@ -158,8 +158,24 @@ scripts/install.sh --runtime openclaw --migrate --dry-run   # review the moves
 scripts/install.sh --runtime openclaw --migrate             # then do them
 ```
 
-It refuses rather than half-moving: an occupied destination, a symlinked source,
-or a file owned by somebody else stops the whole thing before the first rename.
+Nothing is moved. Every artifact is copied into a staging directory inside the
+clone, validated there, and recorded in a durable transaction manifest before
+anything is committed — so the sources stay intact throughout and a rollback is a
+delete rather than a move, which needs no space and crosses no device. The
+services are stopped and **verified inactive** before the switch; if one will not
+stop, the migration refuses and nothing has moved.
+
+It also refuses on an occupied destination, a symlinked source, or a file owned
+by somebody else, before the first copy.
+
+**If it is interrupted, rerun the same command.** There are exactly two states it
+can be interrupted in, and both recover: before the first commit the complete
+legacy install is still there and the transaction rolls back, and after it every
+artifact is staged so the remaining commits replay forward. While a transaction
+is outstanding, `scripts/install.sh` refuses every other mode and
+`scripts/healthcheck.py` reports the install as between layouts — both on
+purpose, because every path either would resolve is a guess until it finishes.
+
 After it runs, confirm the resolver agrees the move finished, because a host that
 still reads as legacy means the units and the session hook are about to disagree:
 

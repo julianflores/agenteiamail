@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "harness"))
 import event as ev            # noqa: E402
 import dispatch as dsp        # noqa: E402
 from adapters import ACCEPTED, CONFIG   # noqa: E402
-from paths import env_file, install_root, repo_root, state_dir   # noqa: E402
+from paths import (env_file, install_root, migration_transaction,   # noqa: E402
+                   repo_root, state_dir)
 
 STATE_DIR = state_dir()
 LISTENER_STATE = STATE_DIR / "idle.json"
@@ -170,7 +171,13 @@ def runtime_facts():
 
 def config_facts():
     out = {"env": None, "env_mode": None, "env_present": False,
-           "repo": str(repo_root()), "version": None}
+           "repo": str(repo_root()), "version": None,
+           "migration_unfinished": False,
+           "migration_transaction": str(migration_transaction())}
+    try:
+        out["migration_unfinished"] = migration_transaction().is_file()
+    except OSError:
+        pass
     path = env_file()
     out["env"] = str(path)
     try:
@@ -225,6 +232,18 @@ def assess(facts):
             and queue["oldest_age_seconds"] > STALE_QUEUE:
         problems.append(f"{queue['pending']} event(s) queued, the oldest for "
                         f"{queue['oldest_age_seconds'] // 60} minutes: it is not moving")
+
+    # First, because it explains every other answer here. Mid-migration, half
+    # the facts above were resolved against a layout that is no longer the whole
+    # truth, and reporting them as if they were is the failure this check
+    # exists to prevent.
+    if config.get("migration_unfinished"):
+        problems.append(
+            "an unfinished migration transaction exists at "
+            f"{config['migration_transaction']}: this install is between "
+            "layouts, so every path below is unreliable. Rerun "
+            "'scripts/install.sh --runtime RUNTIME --migrate' to finish it or "
+            "roll it back")
 
     if not config["env_present"]:
         problems.append(f"no credentials at {config['env']}")
