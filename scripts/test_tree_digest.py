@@ -46,18 +46,40 @@ def digest(path):
     return result.stdout.strip()
 
 
+def canaries(*roots):
+    """Any file a payload would have created, wherever it might have landed."""
+    found = []
+    for root in roots:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        found.extend(sorted(str(p) for p in root.glob("PWNED*")))
+    return found
+
+
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
-    canary = tmp / "PWNED"
 
     # --- filenames are never executed ------------------------------------
+    #
+    # The payload names are single components on purpose. An earlier version of
+    # this test embedded an absolute canary path inside each filename; that
+    # contains "/", so write_text raised OSError, a broad `except OSError: pass`
+    # swallowed it, and every command-bearing fixture was silently skipped. The
+    # assertion below then passed over benign names and proved nothing.
+    #
+    # The old pipeline ran with the tree as its working directory, so a relative
+    # `touch` inside a filename lands in the tree itself — which is where the
+    # canaries are looked for, along with the cwd this test runs from.
     hostile = tmp / "hostile"
     hostile.mkdir()
-    names = [
-        f'"; touch {canary}; #',
-        f"$(touch {canary})",
-        f"`touch {canary}`",
-        "; rm -rf /; #",
+    executing = [
+        '"; touch PWNED; #',
+        "$(touch PWNED2)",
+        "`touch PWNED3`",
+        "; touch PWNED4; #",
+    ]
+    awkward = [
         "--not-an-option",
         "with a space.log",
         "with'quote.json",
@@ -65,19 +87,23 @@ with tempfile.TemporaryDirectory() as tmp:
         "with\nnewline.json",
         "with|pipe&and;semicolon",
     ]
-    created = []
-    for name in names:
-        try:
-            target = hostile / name
-            target.write_text("contents")
-            created.append(name)
-        except OSError:
-            pass   # a filesystem that refuses the name is fine; skip it
 
-    check("the hostile fixture created several names", True, len(created) >= 6)
+    # Every execution-bearing payload must actually exist. A fixture that failed
+    # to be created is a test that cannot fail, and skipping one silently is how
+    # this test came to prove nothing the first time.
+    for name in executing:
+        (hostile / name).write_text("contents")
+        check(f"the payload [{name}] exists", True, (hostile / name).is_file())
+
+    for name in awkward:
+        try:
+            (hostile / name).write_text("contents")
+        except OSError:
+            pass   # a filesystem that refuses a merely-awkward name is fine
+
     value = digest(hostile)
     check("a tree of hostile filenames still digests", 64, len(value))
-    check("and nothing was executed", False, canary.exists())
+    check("and nothing was executed", [], canaries(hostile, tmp, Path.cwd()))
 
     # --- stability --------------------------------------------------------
     check("the same tree digests the same twice", digest(hostile), digest(hostile))

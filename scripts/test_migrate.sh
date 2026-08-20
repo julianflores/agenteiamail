@@ -72,10 +72,14 @@ case "\$2" in
         ;;
     is-enabled) exit 0 ;;
     enable)
-        # `enable --now` starts the unit, and convergence checks that it did.
+        # 'enable --now' starts the unit, and convergence checks that it did.
         # The fake used to answer 0 and start nothing, so every resume path was
-        # dying in convergence — invisibly, because no test asserted the exit
+        # dying in convergence, invisibly, because no test asserted the exit
         # status of a resume.
+        #
+        # No backticks anywhere in this heredoc: it is unquoted so the fixture
+        # can interpolate paths, which means a backtick in a *comment* is a
+        # command substitution run while the fake is being written.
         for arg in "\$@"; do
             case "\$arg" in agenteiamail-*) : >"$unit_state/\$arg" ;; esac
         done
@@ -667,14 +671,34 @@ check_services "rolled back after a crash, dispatcher deliberately down" active 
 # ---------------------------------------------------------------------------
 build_legacy_install
 hostile="$sandbox/home/.local/state/agenteiamail"
-: >"$hostile/\"; touch $sandbox/PWNED; #"
-: >"$hostile/\$(touch $sandbox/PWNED2)"
+# Single-component names. An earlier version embedded an absolute canary path in
+# the filename, which contains "/" — so the files were never created, every
+# payload was silently skipped, and the assertion below proved nothing. The old
+# digest pipeline ran with the tree as its working directory, so a relative
+# `touch` inside one of these lands in the tree; that is where the canaries are
+# looked for.
+: >"$hostile/\"; touch PWNED; #"
+: >"$hostile/\$(touch PWNED2)"
+: >"$hostile/\`touch PWNED3\`"
 printf 'x\n' >"$hostile/with a space.log"
 printf 'x\n' >"$hostile/with'\''quote.json"
+
+# Assert the execution-bearing fixtures exist before relying on them. A payload
+# that failed to be created is a test that cannot fail.
+for payload in '"; touch PWNED; #' '$(touch PWNED2)' '`touch PWNED3`'; do
+    check "the payload [$payload] was created" yes \
+        "$([ -e "$hostile/$payload" ] && echo yes || echo no)"
+done
+
 output=$(run_migrate); status=$?
 check "a migration over hostile filenames succeeds" 10 "$status"
 check "and executed nothing" no \
-    "$([ -e "$sandbox/PWNED" ] || [ -e "$sandbox/PWNED2" ] && echo yes || echo no)"
+    "$(if find "$clone/state" "$hostile" "$clone" "$sandbox" -maxdepth 1 \
+            -name 'PWNED*' -print -quit 2>/dev/null | grep -q .; then
+           echo yes
+       else
+           echo no
+       fi)"
 check "and moved the awkward names with everything else" yes \
     "$([ -f "$clone/state/with a space.log" ] && echo yes || echo no)"
 check "and the quoted one" yes \
