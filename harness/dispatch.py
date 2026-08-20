@@ -34,9 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import event as ev   # noqa: E402
 from adapters import ACCEPTED, CONFIG, RETRY   # noqa: E402
+from paths import state_dir   # noqa: E402
 
-STATE_DIR = Path(os.environ.get(
-    "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
+STATE_DIR = state_dir()
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
 LOCK = STATE_DIR / "dispatch.lock"

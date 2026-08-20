@@ -25,7 +25,9 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION_FILE="$REPO/VERSION"
-STATE_DIR="${AGENTEIAMAIL_STATE:-$HOME/.local/state/agenteiamail}"
+# shellcheck source=envpath.sh
+. "$REPO/scripts/envpath.sh"
+STATE_DIR="$(agenteiamail_state_dir)"
 CACHE="$STATE_DIR/version.check"
 
 MAX_AGE=86400       # --line re-checks the remote at most once a day

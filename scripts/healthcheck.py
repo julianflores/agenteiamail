@@ -29,10 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "harness"))
 import event as ev            # noqa: E402
 import dispatch as dsp        # noqa: E402
 from adapters import ACCEPTED, CONFIG   # noqa: E402
-from paths import env_file, repo_root   # noqa: E402
+from paths import env_file, install_root, repo_root, state_dir   # noqa: E402
 
-STATE_DIR = Path(os.environ.get(
-    "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
+STATE_DIR = state_dir()
 LISTENER_STATE = STATE_DIR / "idle.json"
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"

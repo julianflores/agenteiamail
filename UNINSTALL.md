@@ -84,6 +84,16 @@ pgrep -af idle_listener.py                           # expect nothing
 
 ## 2. Remove the credentials
 
+Run these from inside the clone.
+
+```bash
+rm -f .env runtime.env install.manifest
+rm -rf hermes
+```
+
+An install that predates the single-root layout keeps them elsewhere, and this is
+the one place it matters:
+
 ```bash
 rm -f ~/.config/agenteiamail/env
 rm -f ~/.config/agenteiamail/logrotate.conf
@@ -95,14 +105,15 @@ behind makes the `rmdir` fail silently and the final check at the bottom of this
 page report a directory that should be gone, found by a real uninstall, not by
 reading.
 
-If your credentials live in a shared file instead, commonly
-`~/.config/agenteiamail/env`, **do not delete it.** Other things use it. Remove
-only the keys this tool added, if you added any.
+If your credentials live in a shared file instead — a symlink at either path
+pointing somewhere else — **do not delete what it points at.** Other things use
+it. Remove only the keys this tool added, if you added any.
 
 ## 3. Remove state and logs
 
 ```bash
-rm -rf ~/.local/state/agenteiamail/
+rm -rf state/                          # single-root install
+rm -rf ~/.local/state/agenteiamail/    # or the pre-single-root layout
 ```
 
 This holds the event log, the error log, the last-seen UID and the byte offset.
@@ -200,6 +211,7 @@ systemctl --user list-unit-files 'agenteiamail-*'   # no rows
 pgrep -af "[i]dle_listener.py"                      # nothing; brackets stop
                                                     # pgrep matching its own
                                                     # command line
+ls .env state hermes 2>&1                           # no such file or directory
 ls ~/.config/agenteiamail 2>&1                      # no such file or directory
 ls ~/.local/state/agenteiamail 2>&1                 # no such file or directory
 himalaya account list                               # agenteiamail absent, others intact

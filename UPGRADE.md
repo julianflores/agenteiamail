@@ -34,7 +34,7 @@ an ownership manifest.
 ## 1. Find out where you are
 
 ```bash
-cd "$(git -C . rev-parse --show-toplevel 2>/dev/null || echo ~/.local/share/agenteiamail)"
+cd "$(git -C . rev-parse --show-toplevel 2>/dev/null || echo ~/.openclaw/workspace/agenteiamail)"
 scripts/version.sh
 ```
 
@@ -132,11 +132,41 @@ rather than assuming:
 
 - **`roster.txt` is untracked**, so a pull cannot change who you may write to.
   It survives the upgrade unchanged, which is the point of it being untracked.
-- **Credentials live outside the repository**, at `~/.config/agenteiamail/env`
-  or the file it links to. Untouched.
-- **Log and state files** under `~/.local/state/agenteiamail/` are untouched,
-  including `dispatch.offset`, the event journal and the last-seen UID, which is why an upgrade does
-  not replay your mailbox.
+- **Credentials are untracked**, at `.env` in the clone or the file it links to
+  — or, on an install that predates the single-root layout, at
+  `~/.config/agenteiamail/env`. Untouched either way.
+- **Log and state files** under `state/` in the clone are untouched, including
+  `dispatch.offset`, the event journal and the last-seen UID, which is why an
+  upgrade does not replay your mailbox.
+- **A pull cannot reach any of them.** They are ignored, and `scripts/install.sh`
+  refuses to write if any of them is tracked or unignored. What a pull cannot
+  protect you from is `git clean -xdf`, which deletes ignored files: on a live
+  install that is the mailbox password, both route secrets, the roster and the
+  UID baseline. Use `git clean -df`.
+
+## 7a. If this install still uses the old split layout
+
+An install made before the single-root layout keeps credentials under
+`~/.config/agenteiamail` and state under `~/.local/state/agenteiamail`. **That is
+a supported state, and an upgrade will never move it.** Staying there costs
+nothing; every tool resolves it correctly.
+
+Moving is opt-in, and it stops the services while it works:
+
+```bash
+scripts/install.sh --runtime openclaw --migrate --dry-run   # review the moves
+scripts/install.sh --runtime openclaw --migrate             # then do them
+```
+
+It refuses rather than half-moving: an occupied destination, a symlinked source,
+or a file owned by somebody else stops the whole thing before the first rename.
+After it runs, confirm the resolver agrees the move finished, because a host that
+still reads as legacy means the units and the session hook are about to disagree:
+
+```bash
+python3 harness/paths.py env      # expect <clone>/.env
+python3 harness/paths.py state    # expect <clone>/state
+```
 
 ## 8. Verify, with the checks that can actually fail
 
@@ -149,10 +179,10 @@ systemctl --user is-active agenteiamail-idle.service
 systemctl --user is-active agenteiamail-dispatch.service
 
 # The one that proves state survived: "resuming from uid N", not "baseline uid N"
-tail -2 ~/.local/state/agenteiamail/idle.err.log
+tail -2 state/idle.err.log
 
 # The watcher can still reach openclaw: silence is the pass
-grep -iE "openclaw not found|injection failed" ~/.local/state/agenteiamail/watch.err.log
+grep -iE "openclaw not found|injection failed" state/watch.err.log
 
 # The allowlist still behaves, on both the send and the receive side
 scripts/test_roster.sh

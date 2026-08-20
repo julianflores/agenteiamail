@@ -9,13 +9,13 @@ import pathlib
 import re
 import subprocess
 import sys
+import shutil
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-INSTALL = ROOT / "scripts" / "install.sh"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -66,6 +66,22 @@ class HermesInstallerTest(unittest.TestCase):
         self.home.mkdir(mode=0o700)
         self.bin.mkdir(mode=0o700)
         self.state.mkdir(mode=0o700)
+
+        # The clone is the install, so the installer under test has to be a
+        # clone inside the sandbox. Running ROOT/scripts/install.sh against a
+        # fake HOME converges into the real repository instead — and because the
+        # ignore rules keep those artifacts out of `git status`, that leak is
+        # invisible until something reads them back.
+        self.clone = self.home / "workspace" / "agenteiamail"
+        self.clone.parent.mkdir(parents=True)
+        shutil.copytree(ROOT, self.clone, symlinks=True)
+        for leftover in ("state", ".env", "runtime.env", "install.manifest", "hermes"):
+            target = self.clone / leftover
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            elif target.exists() or target.is_symlink():
+                target.unlink()
+        self.install = self.clone / "scripts" / "install.sh"
         self.systemd_log = self.root / "systemd.log"
         self.runtime_log = self.root / "runtime.log"
         self._write_fakes()
@@ -158,7 +174,7 @@ printf 'Hermes webhook support\\n'
         return environment
 
     def _run(self, include_urls=True, external_secrets=True, upgrade=False):
-        arguments = [str(INSTALL), "--runtime", "hermes", "--profile", "default"]
+        arguments = [str(self.install), "--runtime", "hermes", "--profile", "default"]
         if upgrade:
             arguments.append("--upgrade")
         if external_secrets:
@@ -173,7 +189,7 @@ printf 'Hermes webhook support\\n'
             )
         return subprocess.run(
             arguments,
-            cwd=ROOT,
+            cwd=self.clone,
             env=self._environment(include_urls),
             text=True,
             capture_output=True,
@@ -182,8 +198,8 @@ printf 'Hermes webhook support\\n'
 
     def test_openclaw_to_hermes_upgrade_restarts_owned_runtime_boundary(self):
         openclaw = subprocess.run(
-            [str(INSTALL), "--runtime", "openclaw"],
-            cwd=ROOT,
+            [str(self.install), "--runtime", "openclaw"],
+            cwd=self.clone,
             env=self._environment(include_urls=False),
             text=True,
             capture_output=True,
@@ -194,8 +210,8 @@ printf 'Hermes webhook support\\n'
 
         migrated = self._run(upgrade=True)
         self.assertEqual(10, migrated.returncode, migrated.stdout + migrated.stderr)
-        manifest = self.home / ".config" / "agenteiamail" / "install.manifest"
-        runtime_env = self.home / ".config" / "agenteiamail" / "runtime.env"
+        manifest = self.clone / "install.manifest"
+        runtime_env = self.clone / "runtime.env"
         self.assertIn("runtime\thermes\n", manifest.read_text(encoding="utf-8"))
         self.assertIn('AGENTEIAMAIL_RUNTIME="hermes"\n', runtime_env.read_text(encoding="utf-8"))
         calls = self.systemd_log.read_text(encoding="utf-8")
@@ -217,6 +233,14 @@ printf 'Hermes webhook support\\n'
         self.assertEqual(78, completed.returncode, completed.stdout + completed.stderr)
         self.assertIn("HERMES_NOTIFY_URL", completed.stderr)
         self.assertFalse((self.home / ".config").exists())
+        # The install root is now inside the working tree, and the ignore rules
+        # keep anything written there out of `git status` — so a refusal that
+        # still wrote would leave no visible trace. Say it out loud instead.
+        for leftover in ("install.manifest", "runtime.env", "hermes", "state"):
+            self.assertFalse(
+                (self.clone / leftover).exists(),
+                f"refused install wrote {leftover} into the install root",
+            )
         self.assertFalse(self.runtime_log.exists())
         self.assertEqual([], _HermesFixture.requests)
 
@@ -258,7 +282,7 @@ printf 'Hermes webhook support\\n'
         )
         self.assertIn("verification_report_end result=passed", completed.stdout)
 
-        runtime_env = self.home / ".config" / "agenteiamail" / "runtime.env"
+        runtime_env = self.clone / "runtime.env"
         text = runtime_env.read_text(encoding="utf-8")
         self.assertEqual(0o600, runtime_env.stat().st_mode & 0o777)
         self.assertIn('AGENTEIAMAIL_RUNTIME="hermes"', text)
@@ -351,7 +375,7 @@ printf 'Hermes webhook support\\n'
         self.assertEqual([], _HermesFixture.requests)
         self.assertFalse(any(self.state.glob("*.enabled")))
 
-        default_dir = self.home / ".config" / "agenteiamail" / "hermes"
+        default_dir = self.clone / "hermes"
         notify_path = default_dir / "notify.secret"
         roster_path = default_dir / "roster.secret"
         self.assertEqual(notify_value, notify_path.read_text(encoding="utf-8").strip())

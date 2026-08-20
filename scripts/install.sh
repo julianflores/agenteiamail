@@ -17,15 +17,16 @@ readonly ROOT
 usage() {
     cat <<'EOF'
 Usage:
-  scripts/install.sh --runtime openclaw [--upgrade|--uninstall] [--dry-run]
+  scripts/install.sh --runtime openclaw [--upgrade|--migrate|--uninstall] [--dry-run]
   scripts/install.sh --runtime hermes [--deliver TARGET --chat-id ID | --profile PROFILE]
-                     [--upgrade|--uninstall] [--non-interactive]
+                     [--upgrade|--migrate|--uninstall] [--non-interactive]
                      [--notify-secret-file PATH --roster-secret-file PATH]
                      [--dry-run]
 
 Modes:
   (default)          Install or converge the selected runtime
   --upgrade          Upgrade/converge artifacts owned by this installer
+  --migrate          Move a pre-single-root install into the clone, then converge
   --uninstall        Remove only artifacts owned by this installer
 
 Options:
@@ -258,7 +259,7 @@ discover_prerequisites() {
         printf 'logrotate=absent (managed Python rotation will be used)\n'
     fi
     if [[ -n "${XDG_CONFIG_HOME:-}${XDG_STATE_HOME:-}" ]]; then
-        printf 'xdg_overrides=ignored (application paths are fixed under HOME)\n'
+        printf 'xdg_overrides=ignored (the install root is the clone)\n'
     fi
 
     if ((${#prerequisite_errors[@]})); then
@@ -274,41 +275,42 @@ discover_prerequisites() {
     discovered_runtime_cli=$runtime_cli
 }
 
+# One rule, and it is not written here. harness/paths.py has it, scripts/
+# envpath.sh is the shell half, and scripts/test_paths.sh asserts the two agree.
+# A fourth copy in the installer is how the units end up pointing at a file the
+# listener never reads.
+# shellcheck source=envpath.sh
+. "$ROOT/scripts/envpath.sh"
+
 resolve_credentials_path() {
-    local neutral legacy
-    if [[ -n "${AGENTEIAMAIL_ENV:-}" ]]; then
-        printf '%s' "$AGENTEIAMAIL_ENV"
-        return
-    fi
-    neutral="$HOME/.config/agenteiamail/env"
-    if [[ -e "$neutral" || -L "$neutral" ]]; then
-        printf '%s' "$neutral"
-        return
-    fi
-    # Legacy-migration probe only: this path is read-only discovery input.
-    # It is never a write target, a new-install default, or an owned artifact.
-    legacy="$HOME/.openclaw/workspace/.env"
-    if [[ -e "$legacy" || -L "$legacy" ]]; then
-        printf '%s' "$legacy"
-        return
-    fi
-    printf '%s' "$neutral"
+    agenteiamail_env_file
 }
 
 validate_container_chain() {
-    local target=$1 current relative component owner mode mode_value
+    local target=$1 anchor current relative component owner mode mode_value
     local -a components=()
 
-    [[ "$target" == "$HOME"/* ]] || {
-        printf 'inventory conflict-container=%s reason=outside-home\n' "$target"
+    # Two anchors, because the install root is wherever the clone is and that is
+    # not necessarily under $HOME. Whichever anchor is used, it is validated
+    # itself before anything beneath it: the loop's first iteration checks
+    # `current` before appending a component.
+    if [[ "$target" == "$HOME" || "$target" == "$HOME"/* ]]; then
+        anchor=$HOME
+    elif [[ "$target" == "$install_root" || "$target" == "$install_root"/* ]]; then
+        anchor=$install_root
+    else
+        printf 'inventory conflict-container=%s reason=outside-home-and-install-root\n' "$target"
         inventory_conflicts=1
-        inventory_blocked_details+=("$target"$'\t'outside-home)
+        inventory_blocked_details+=("$target"$'\t'outside-home-and-install-root)
         return 1
-    }
+    fi
 
-    current=$HOME
-    relative=${target#"$HOME"/}
-    IFS='/' read -r -a components <<<"$relative"
+    current=$anchor
+    relative=${target#"$anchor"}
+    relative=${relative#/}
+    if [[ -n "$relative" ]]; then
+        IFS='/' read -r -a components <<<"$relative"
+    fi
     for component in "" "${components[@]}"; do
         if [[ -n "$component" ]]; then
             current="$current/$component"
@@ -353,8 +355,13 @@ validate_container_chain() {
 }
 
 set_managed_paths() {
-    config_dir="$HOME/.config/agenteiamail"
-    state_dir="$HOME/.local/state/agenteiamail"
+    # The clone is the install: config, state, credentials, secrets and roster
+    # all hang off it. A legacy install that was never migrated keeps its split
+    # layout instead, and the resolver — not this function — is what decides
+    # which of those two a host is in.
+    install_root=$(agenteiamail_root)
+    config_dir=$(agenteiamail_config_dir)
+    state_dir=$(agenteiamail_state_dir)
     unit_dir="$HOME/.config/systemd/user"
     hermes_dir="$config_dir/hermes"
     manifest="$config_dir/install.manifest"
@@ -463,13 +470,19 @@ for name, value in values.items():
 PYINNER
         return
     fi
-    python3 - "$source" "$ROOT" "$credentials" <<'PYINNER'
+    python3 - "$source" "$ROOT" "$credentials" "$config_dir" "$state_dir" <<'PYINNER'
 import sys
 from pathlib import Path
 
+# Order matters only in that every placeholder is distinct; none is a prefix of
+# another, so a single pass is enough. config and state are separate from the
+# root because a legacy install keeps them outside the clone, and rendering them
+# from the root would point a still-working install at empty directories.
 text = Path(sys.argv[1]).read_text()
 text = text.replace("/path/to/agenteiamail", sys.argv[2])
 text = text.replace("/path/to/env", sys.argv[3])
+text = text.replace("/path/to/config", sys.argv[4])
+text = text.replace("/path/to/state", sys.argv[5])
 sys.stdout.write(text)
 PYINNER
 }
@@ -575,10 +588,10 @@ classify_planned_secret() {
 print_managed_inventory() {
     local unit
     local unit_container_safe=1 config_container_safe=1 hermes_container_safe=1
-    # These paths deliberately follow the runtime and systemd contracts rather
-    # than XDG overrides: the Hermes adapter defaults state via expanduser(),
-    # while the shipped units read %h paths. Honoring XDG_CONFIG_HOME here would
-    # place secrets where the unit never reads them and surface later as a 401.
+    # These paths deliberately follow the resolver rather than XDG overrides.
+    # Everything the install owns hangs off the clone, and the units are
+    # rendered with the same answers; honoring XDG_CONFIG_HOME here would place
+    # secrets where the unit never reads them and surface later as a 401.
     set_managed_paths
     inventory_conflicts=0
     inventory_unproven_conflicts=0
@@ -659,9 +672,170 @@ print_managed_inventory() {
             fi
         fi
     fi
+    check_git_hygiene
     if ((inventory_blocked)); then
         printf 'inventory result=blocked configuration-refusal=true\n'
     fi
+}
+
+# Every runtime-owned path is ignored by git, and none of them is tracked.
+#
+# The install lives inside the working tree now, so an ignore rule is all that
+# stands between a mail password and `git add -A`. This runs in the inventory
+# phase, before anything is written: refusing to write a secret beats writing it
+# and printing a warning nobody reads.
+#
+# A deployment with no .git — a tarball, an export — cannot be checked and is
+# not refused for it. It is reported, so the difference between "checked and
+# clean" and "could not check" stays visible.
+check_git_hygiene() {
+    local relative tracked=() exposed=()
+
+    if ! git -C "$install_root" rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'inventory git-hygiene=unverifiable reason=not-a-git-checkout root=%s\n' \
+            "$install_root"
+        return 0
+    fi
+
+    # `state/` and `hermes/` keep their trailing slash: .gitignore matches them
+    # as directories, and `git check-ignore state` answers "not ignored" for a
+    # directory that does not exist yet — which is exactly when this runs.
+    for relative in .env runtime.env install.manifest roster.txt \
+        hermes/notify.secret hermes/roster.secret hermes/ state/; do
+        if git -C "$install_root" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
+            tracked+=("$relative")
+        elif ! git -C "$install_root" check-ignore -q -- "$relative"; then
+            exposed+=("$relative")
+        fi
+    done
+
+    if ((${#tracked[@]})); then
+        for relative in "${tracked[@]}"; do
+            printf 'inventory conflict-git-tracked=%s reason=runtime-path-is-tracked\n' "$relative"
+        done
+        inventory_conflicts=1
+        inventory_blocked=1
+    fi
+    if ((${#exposed[@]})); then
+        for relative in "${exposed[@]}"; do
+            printf 'inventory conflict-git-exposed=%s reason=not-ignored\n' "$relative"
+        done
+        inventory_conflicts=1
+        inventory_blocked=1
+    fi
+    if ((${#tracked[@]} == 0 && ${#exposed[@]} == 0)); then
+        printf 'inventory git-hygiene=clean root=%s\n' "$install_root"
+    fi
+}
+
+# Move a pre-single-root install into the clone.
+#
+# Explicit and opt-in, because an upgrade that moved a running install on its
+# own would be exactly the half-migration the resolver exists to prevent. What
+# makes this safe is that it refuses far more readily than it acts: anything it
+# cannot move cleanly stops the whole thing before the first rename, so a
+# refusal leaves a working install rather than half of one.
+#
+# The UID baseline is the reason the state tree moves in one piece. Lose it and
+# the listener either replays the mailbox or skips everything already delivered,
+# and neither is visible from the outside.
+plan_legacy_migration() {
+    local legacy_config="$HOME/.config/agenteiamail"
+    local legacy_state="$HOME/.local/state/agenteiamail"
+    local source destination owner refusals=0
+
+    migration_moves=()
+
+    if ! agenteiamail_legacy_layout; then
+        printf 'migrate result=nothing-to-do reason=already-single-root root=%s\n' "$install_root"
+        return 0
+    fi
+
+    # Credentials first, and by their resolved name: an OpenClaw install from
+    # before ~/.config existed keeps its file in the workspace, and it still has
+    # to land at <clone>/.env.
+    source=$(agenteiamail_env_file)
+    [[ -e "$source" || -L "$source" ]] && migration_moves+=("$source"$'\t'"$install_root/.env")
+
+    for source in "$legacy_config/runtime.env" "$legacy_config/install.manifest" \
+        "$legacy_config/hermes"; do
+        [[ -e "$source" || -L "$source" ]] || continue
+        migration_moves+=("$source"$'\t'"$install_root/${source##*/}")
+    done
+
+    [[ -e "$legacy_state" || -L "$legacy_state" ]] && \
+        migration_moves+=("$legacy_state"$'\t'"$install_root/state")
+
+    if ((${#migration_moves[@]} == 0)); then
+        printf 'migrate result=nothing-to-do reason=no-legacy-artifacts\n'
+        return 0
+    fi
+
+    local entry
+    for entry in "${migration_moves[@]}"; do
+        IFS=$'\t' read -r source destination <<<"$entry"
+
+        # A symlink is somebody's deliberate arrangement, and moving the link
+        # rather than the file it points at silently changes what the install
+        # reads. The operator resolves it; this does not guess.
+        if [[ -L "$source" ]]; then
+            printf 'migrate conflict-source=%s reason=symlink\n' "$source" >&2
+            refusals=1
+            continue
+        fi
+        owner=$(stat -Lc '%u' -- "$source" 2>/dev/null || true)
+        if [[ "$owner" != "$EUID" ]]; then
+            printf 'migrate conflict-source=%s reason=not-owned-by-caller\n' "$source" >&2
+            refusals=1
+            continue
+        fi
+        if [[ -e "$destination" || -L "$destination" ]]; then
+            printf 'migrate conflict-destination=%s reason=already-exists\n' "$destination" >&2
+            refusals=1
+            continue
+        fi
+        printf 'migrate planned-move=%s to=%s\n' "$source" "$destination"
+    done
+
+    if ((refusals)); then
+        return 1
+    fi
+    return 0
+}
+
+perform_legacy_migration() {
+    local entry source destination
+
+    ((${#migration_moves[@]})) || return 0
+
+    # Stop first. The listener holds its state file open and the dispatcher
+    # holds the journal lock; moving either underneath a running process leaves
+    # it writing into an unlinked inode nobody will ever read.
+    if [[ -n "$discovered_systemctl" ]]; then
+        "$discovered_systemctl" --user stop agenteiamail-idle.service \
+            agenteiamail-dispatch.service >/dev/null 2>&1 || true
+    fi
+
+    for entry in "${migration_moves[@]}"; do
+        IFS=$'\t' read -r source destination <<<"$entry"
+        mv -- "$source" "$destination" || \
+            die_config "migration failed moving $source to $destination; the install is now split and must be repaired by hand"
+        printf 'migrate moved=%s to=%s\n' "$source" "$destination"
+    done
+
+    # Leave nothing behind that the resolver would read as a legacy install.
+    # rmdir, not rm -rf: if something else is in there it is not ours.
+    rmdir -- "$HOME/.config/agenteiamail" 2>/dev/null || true
+    rmdir -- "$HOME/.local/state/agenteiamail" 2>/dev/null || true
+
+    if agenteiamail_legacy_layout; then
+        die_config 'migration moved every artifact but the host still resolves as a legacy install; refusing to converge a split install'
+    fi
+
+    # The resolver answers differently now, so every derived path is stale.
+    set_managed_paths
+    printf 'migrate result=moved root=%s\n' "$install_root"
+    changes_made=1
 }
 
 plan_has_changes() {
@@ -674,9 +848,14 @@ plan_has_changes() {
 
 create_secure_containers() {
     umask 077
-    mkdir -p -- "$unit_dir" "$config_dir"
+    # The state tree is created here rather than left to the services. systemd
+    # does not create the parent of a StandardOutput=append: path — it fails the
+    # unit — so an install that converged the units and enabled them would leave
+    # both services dead on a host where nobody had run mkdir by hand.
+    mkdir -p -- "$unit_dir" "$config_dir" "$state_dir"
     validate_container_chain "$unit_dir" >/dev/null || die_config "unsafe unit container after creation: $unit_dir"
     validate_container_chain "$config_dir" >/dev/null || die_config "unsafe config container after creation: $config_dir"
+    validate_container_chain "$state_dir" >/dev/null || die_config "unsafe state container after creation: $state_dir"
     if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
         mkdir -p -- "$hermes_dir"
         validate_container_chain "$hermes_dir" >/dev/null || \
@@ -1018,6 +1197,7 @@ roster_secret_file=""
 mode="install"
 upgrade=0
 uninstall=0
+migrate=0
 non_interactive=0
 dry_run=0
 declare -A seen_options=()
@@ -1055,6 +1235,11 @@ while (($#)); do
             uninstall=1
             shift
             ;;
+        --migrate)
+            mark_option_once "$1"
+            migrate=1
+            shift
+            ;;
         --non-interactive)
             mark_option_once "$1"
             non_interactive=1
@@ -1081,12 +1266,14 @@ case "$runtime" in
     *) die_usage "unsupported runtime: $runtime" ;;
 esac
 
-if ((upgrade && uninstall)); then
-    die_usage '--upgrade and --uninstall are mutually exclusive'
+if ((upgrade + uninstall + migrate > 1)); then
+    die_usage '--upgrade, --migrate and --uninstall are mutually exclusive'
 elif ((upgrade)); then
     mode="upgrade"
 elif ((uninstall)); then
     mode="uninstall"
+elif ((migrate)); then
+    mode="migrate"
 fi
 
 if [[ "$runtime" != hermes ]]; then
@@ -1123,6 +1310,29 @@ fi
 
 if ! discover_prerequisites; then
     exit "$EX_CONFIG"
+fi
+
+# Before the ordinary inventory, because a migration changes what every path in
+# that inventory resolves to. Placed ahead of the dry-run branch so
+# `--migrate --dry-run` reports the moves rather than the convergence plan.
+changes_made=0
+if [[ "$mode" == migrate ]]; then
+    set_managed_paths
+    if ! plan_legacy_migration; then
+        die_config 'migration refused; nothing was moved'
+    fi
+    if ((dry_run)); then
+        if ((${#migration_moves[@]})); then
+            printf 'dry-run: migration plan contains move actions; no changes made.\n'
+            exit "$EX_CHANGED"
+        fi
+        printf 'dry-run: nothing to migrate.\n'
+        exit "$EX_OK"
+    fi
+    perform_legacy_migration
+    # Converge from here on as an upgrade: the artifacts exist and are owned,
+    # they are just in a new place and the units still name the old one.
+    mode=upgrade
 fi
 
 if ((dry_run)); then
@@ -1183,7 +1393,6 @@ print_managed_inventory
 if ((inventory_conflicts || inventory_blocked)); then
     die_config 'filesystem convergence refused because managed inventory is unsafe or unowned'
 fi
-changes_made=0
 mutation_count=0
 write_count=0
 runtime_filesystem_changed=0

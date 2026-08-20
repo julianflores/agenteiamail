@@ -46,10 +46,13 @@ done
 git -C "$seed" tag "not-a-version"       # must be ignored, not parsed as 0
 git -C "$seed" push -q "$remote" --tags
 
-# A clone of this repository's scripts, pointed at that remote.
+# A clone of this repository's scripts, pointed at that remote. envpath.sh comes
+# along because version.sh resolves its cache location through it rather than
+# hard-coding a state directory, and a clone missing it is not a clone.
 clone="$tmp/clone"
 mkdir -p "$clone/scripts"
 cp "$VERSION_SH" "$clone/scripts/version.sh"
+cp "$(dirname "$VERSION_SH")/envpath.sh" "$clone/scripts/envpath.sh"
 git init -q "$clone"
 git -C "$clone" remote add origin "$remote"
 

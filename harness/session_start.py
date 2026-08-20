@@ -21,10 +21,9 @@ import json, os, pathlib, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import event as ev
-from paths import repo_root
+from paths import repo_root, state_dir
 
-STATE_DIR = pathlib.Path(os.environ.get(
-    "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail")).expanduser()
+STATE_DIR = state_dir()
 JOURNAL = STATE_DIR / "events.jsonl"
 CURSOR = STATE_DIR / "dispatch.offset"
 DISPATCH_ERR = STATE_DIR / "dispatch.err.log"

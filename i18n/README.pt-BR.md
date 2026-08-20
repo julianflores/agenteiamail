@@ -23,7 +23,7 @@ dois minutos conferindo que funciona de verdade.
 ### Passo 1: Dê uma caixa de e-mail a ele
 
 O agente precisa de uma conta de e-mail própria, e dos dados de conexão dessa
-conta escritos em `~/.config/agenteiamail/env`.
+conta escritos em `.env` dentro do clone.
 
 **O [MAILBOX_SETUP.pt-BR.md](MAILBOX_SETUP.pt-BR.md) explica passo a passo**: qual conta usar,
 onde encontrar o nome do servidor (a única parte que sempre dá errado), e como
@@ -37,7 +37,7 @@ passar por um chat.
 Cole isto para o seu agente:
 
 ```text
-Sua conta de e-mail já está configurada em ~/.config/agenteiamail/env
+Sua conta de e-mail já está configurada em <clone>/.env
 
 Instale este repositório para poder usá-la:
 https://github.com/julianflores/agenteiamail
@@ -106,8 +106,8 @@ terminar, e você pode cobrar a lista:
 
 - Um serviço de usuário do systemd que roda continuamente e reinicia sozinho em
   caso de falha
-- Um arquivo de credenciais em `~/.config/agenteiamail/env`, com permissão `600`
-- Arquivos de log e estado em `~/.local/state/agenteiamail/`
+- Um arquivo de credenciais em `.env` dentro do clone, com permissão `600`
+- Arquivos de log e estado em `state/` dentro do clone
 - *Lingering* ativado para o usuário, para o serviço sobreviver ao logout
 - Uma regra permanente adicionada às instruções do próprio agente
 
@@ -181,7 +181,7 @@ scripts/idle_listener.py  Serviço systemd --user. Mantém uma conexão IMAP IDL
   │                       aberta; o servidor avisa assim que chega mensagem.
   │  uma linha por mensagem
   ▼
-~/.local/state/agenteiamail/
+<clone>/state/
   mail.log                o fluxo de eventos
   idle.err.log            diagnóstico, monitorado à parte
   events.jsonl            a fila: um envelope canônico por linha
@@ -207,10 +207,26 @@ webapp/ + setup_web.sh    um formulário local que escreve o arquivo de credenci
 
 ## Caminhos nesta máquina
 
-- Repositório: em qualquer lugar; `~/.local/share/agenteiamail` se não houver preferência
-- Credenciais: `~/.config/agenteiamail/env`: permissão `600`, nunca versionado
-- Estado e eventos: `~/.local/state/agenteiamail/`
-- Serviço de usuário: `~/.config/systemd/user/agenteiamail-idle.service`
+O clone *é* a instalação: tudo o que pertence a ela vive dentro dele, então
+escolher onde clonar é como você escolhe onde instalar.
+
+- Repositório: em qualquer lugar; `~/.openclaw/workspace/agenteiamail` no OpenClaw
+  ou `~/.hermes/workspace/agenteiamail` no Hermes Agent se não houver preferência
+- Credenciais: `<clone>/.env`: permissão `600`, ignorado pelo git, nunca versionado
+- Estado e eventos: `<clone>/state/`
+- Segredos de rota: `<clone>/hermes/`, permissão `600`
+- Serviço de usuário: `~/.config/systemd/user/agenteiamail-idle.service`: a única
+  coisa fora do clone, porque o systemd não lê units de outro lugar
+
+O `.gitignore` mantém os segredos fora do `git status`, e o `scripts/install.sh`
+se recusa a escrever se algum deles estiver versionado ou não ignorado. O que isso
+não evita é `git clean -xdf`, que apaga arquivos ignorados: numa instalação viva
+isso é a senha da caixa, os dois segredos de rota, a lista de destinatários e o
+último UID. Use `git clean -df`.
+
+Uma instalação anterior a este layout mantém as credenciais em
+`~/.config/agenteiamail` e o estado em `~/.local/state/agenteiamail`, inteira e
+indefinidamente. `scripts/install.sh --migrate` só a move quando você pede.
 
 ## A propriedade que todo o resto serve
 

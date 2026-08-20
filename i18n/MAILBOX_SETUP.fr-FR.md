@@ -84,9 +84,9 @@ figure.
 ## Créez le fichier
 
 ```bash
-mkdir -p ~/.config/agenteiamail
-touch ~/.config/agenteiamail/env
-chmod 600 ~/.config/agenteiamail/env
+cd /chemin/vers/votre/clone
+touch .env
+chmod 600 .env
 ```
 
 `chmod 600` signifie que seul votre utilisateur peut le lire. Faites-le **avant**

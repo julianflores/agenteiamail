@@ -255,6 +255,56 @@ the seam to look at first; the rest is harness-independent.
 
 ---
 
+## Why the install lives inside the clone
+
+The install used to be spread over three directories: credentials and secrets in
+`~/.config/agenteiamail`, queue state and logs in `~/.local/state/agenteiamail`,
+the roster in the clone. Nothing was wrong with any one of them. What was wrong
+was that "where is this install?" had three answers, so backing it up, inspecting
+it, or removing it meant remembering all three.
+
+It is one directory now, and that directory is the clone. That answers "install
+it wherever you want" without a flag: you clone where you want, and the install
+is there. Nothing has to be told where anything is, because every consumer lives
+inside the clone and can find itself from `__file__`.
+
+**The layout is one predicate, not one decision per file.** `legacy_layout()` in
+[`harness/paths.py`](harness/paths.py) decides for the whole install, and this is
+the load-bearing part. Deciding credentials and state separately produces a
+split-brain install — the listener reading a password from one layout and writing
+its UID baseline into the other — and that failure is invisible. Nothing errors.
+The mailbox simply appears to go quiet, which is the one failure this codebase
+exists to prevent.
+
+The predicate also probes `~/.local/state/agenteiamail/idle.json`, which looks
+redundant next to the credentials probes and is not. An OpenClaw install with
+only `~/.openclaw/workspace/.env` would otherwise resolve credentials to the
+legacy path and state into the clone, abandoning the UID baseline: the listener
+then either replays the entire mailbox or skips everything already delivered.
+Both are silent.
+
+**A legacy install stays legacy, indefinitely.** Half a migration is worse than
+none, so `scripts/install.sh --migrate` is opt-in, stops the services before it
+moves anything, and refuses on an occupied destination, a symlinked source, or a
+file owned by somebody else. It refuses far more readily than it acts, because a
+refusal leaves a working install and a partial move leaves a quiet one.
+
+**The cost of this layout is that secrets live in a git working tree.** Three
+things hold that line: anchored `.gitignore` rules, a fail-closed check in the
+installer that refuses to write when a runtime-owned path is tracked or
+unignored, and assertions in `scripts/test_paths.sh` so a rule cannot be dropped
+without CI noticing. One thing does not: **`git clean -xdf` deletes ignored
+files**, and on a live install that is the mailbox password, both route secrets,
+the roster and the UID baseline, in one command. That is documented rather than
+prevented, because the alternative — leaving them untracked but unignored — trades
+a destructive command for a `git add -A` that publishes the password, and that is
+the worse failure.
+
+The units are the one thing still outside, in `~/.config/systemd/user`, because
+systemd will not read them from anywhere else. They carry absolute paths rendered
+by the installer rather than `%h`, since `%h` cannot express "wherever the clone
+is".
+
 ## Why the roster is the whole model
 
 This agent reads untrusted content all day (emails, web pages, documents) and it

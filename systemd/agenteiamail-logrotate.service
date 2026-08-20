@@ -1,4 +1,6 @@
-# Template. Replace /path/to/agenteiamail with your clone's absolute path.
+# Template. Replace /path/to/agenteiamail with your clone's absolute path, which
+# is also the install root. The rotator resolves the state tree itself, through
+# harness/paths.py, so there is no state placeholder here.
 [Unit]
 Description=Rotate agenteiamail logs
 

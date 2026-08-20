@@ -24,7 +24,7 @@ vraiment.
 ### Étape 1 : Donnez-lui une boîte aux lettres
 
 L'agent a besoin de son propre compte de messagerie, et des paramètres de
-connexion de ce compte écrits dans `~/.config/agenteiamail/env`.
+connexion de ce compte écrits dans `.env` au sein du clone.
 
 **[MAILBOX_SETUP.fr-FR.md](MAILBOX_SETUP.fr-FR.md) vous guide** : quel compte utiliser, où
 trouver le nom du serveur (la seule partie qui échoue systématiquement), et le
@@ -38,7 +38,7 @@ et un mot de passe ne doit pas transiter par une conversation.
 Collez ceci à votre agent :
 
 ```text
-Votre compte de messagerie est déjà configuré dans ~/.config/agenteiamail/env
+Votre compte de messagerie est déjà configuré dans <clone>/.env
 
 Installez ce dépôt pour pouvoir l'utiliser :
 https://github.com/julianflores/agenteiamail
@@ -113,8 +113,8 @@ tout ceci en terminant, et vous pouvez lui en demander la liste :
 
 - Un service utilisateur systemd qui tourne en continu et redémarre en cas
   d'échec
-- Un fichier d'identifiants dans `~/.config/agenteiamail/env`, en `600`
-- Des fichiers de journal et d'état sous `~/.local/state/agenteiamail/`
+- Un fichier d'identifiants dans `.env` au sein du clone, en `600`
+- Des fichiers de journal et d'état sous `state/` au sein du clone
 - Le *lingering* activé pour l'utilisateur, afin que le service survive à la
   déconnexion
 - Une règle permanente ajoutée aux instructions de l'agent lui-même
@@ -190,7 +190,7 @@ scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
   │                       IDLE ouverte ; le serveur signale l'arrivée du courrier.
   │  une ligne par message
   ▼
-~/.local/state/agenteiamail/
+<clone>/state/
   mail.log                le flux d'événements
   idle.err.log            diagnostics, surveillés séparément
   events.jsonl            la file : une enveloppe canonique par ligne
@@ -216,10 +216,27 @@ webapp/ + setup_web.sh    un formulaire local qui écrit le fichier d'identifian
 
 ## Chemins sur cette machine
 
-- Dépôt : n'importe où ; `~/.local/share/agenteiamail` à défaut de préférence
-- Identifiants : `~/.config/agenteiamail/env` : en `600`, jamais versionné
-- État et événements : `~/.local/state/agenteiamail/`
-- Service utilisateur : `~/.config/systemd/user/agenteiamail-idle.service`
+Le clone *est* l'installation : tout ce qui lui appartient vit à l'intérieur, donc
+choisir où cloner, c'est choisir où installer.
+
+- Dépôt : n'importe où ; `~/.openclaw/workspace/agenteiamail` sur OpenClaw ou
+  `~/.hermes/workspace/agenteiamail` sur Hermes Agent à défaut de préférence
+- Identifiants : `<clone>/.env` : en `600`, ignoré par git, jamais versionné
+- État et événements : `<clone>/state/`
+- Secrets de route : `<clone>/hermes/`, en `600`
+- Service utilisateur : `~/.config/systemd/user/agenteiamail-idle.service` : la
+  seule chose hors du clone, car systemd ne lit les unités de nulle part ailleurs
+
+`.gitignore` garde les secrets hors de `git status`, et `scripts/install.sh`
+refuse d'écrire si l'un d'eux est versionné ou non ignoré. Ce que cela n'empêche
+pas : `git clean -xdf` supprime les fichiers ignorés — sur une installation vivante,
+c'est le mot de passe de la boîte, les deux secrets de route, la liste des
+destinataires et le dernier UID. Utilisez `git clean -df`.
+
+Une installation antérieure à cette disposition garde ses identifiants dans
+`~/.config/agenteiamail` et son état dans `~/.local/state/agenteiamail`, entièrement
+et indéfiniment. `scripts/install.sh --migrate` ne la déplace que si vous le
+demandez.
 
 ## La propriété que tout le reste sert
 

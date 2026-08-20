@@ -2,12 +2,12 @@
 
 A form that collects the seven mailbox settings, signs in to the mail server to
 confirm they work, and, only if the server accepts the account, writes
-`~/.config/agenteiamail/env`.
+`.env` at the top of the clone.
 
 That is the same file a power user writes by hand before running the install
 prompt, and its absence is what tells the agent no mailbox has been configured
 yet. Both routes end at one file, so "is this set up?" has one answer.
-`~/.config/agenteiamail/env`, where the listener and `scripts/send.sh` look by
+`.env` at the top of the clone, where the listener and `scripts/send.sh` look by
 default, is symlinked at it afterwards.
 
 **Nothing is written unless the account authenticates.** A configuration that

@@ -13,7 +13,12 @@ set -euo pipefail
 
 PORT="${1:-8765}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STATE="$HOME/.local/state/agenteiamail"
+# The paths are resolved here and handed to the server below, so the form and
+# the tools it is configuring cannot disagree about which files matter. The rule
+# lives in harness/paths.py; envpath.sh is the shell half of it.
+# shellcheck source=envpath.sh
+. "$ROOT/scripts/envpath.sh"
+STATE="$(agenteiamail_state_dir)"
 TOKEN_FILE="$STATE/setup.token"
 LOG="$STATE/setup-web.log"
 
@@ -69,15 +74,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Resolve the credentials path here and hand it to the server, so the form and
-# the tools it is configuring cannot disagree about which file matters. The rule
-# lives in harness/paths.py; envpath.sh is the shell half of it.
-# shellcheck source=envpath.sh
-. "$ROOT/scripts/envpath.sh"
 AGENTEIAMAIL_ENV="${AGENTEIAMAIL_ENV:-$(agenteiamail_env_file)}"
 export AGENTEIAMAIL_ENV
+# The form writes its own token check against this tree, so it must be told the
+# same answer rather than resolving it again from a different working directory.
+AGENTEIAMAIL_STATE="${AGENTEIAMAIL_STATE:-$STATE}"
+export AGENTEIAMAIL_STATE
 
-AGENTEIAMAIL_ENV="$AGENTEIAMAIL_ENV" "$php_bin" -S "127.0.0.1:$PORT" -t "$ROOT/webapp" >>"$LOG" 2>&1 &
+"$php_bin" -S "127.0.0.1:$PORT" -t "$ROOT/webapp" >>"$LOG" 2>&1 &
 server_pid=$!
 
 sleep 1

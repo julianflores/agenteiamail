@@ -17,7 +17,72 @@ declare(strict_types=1);
  *      URL, never echoed back into the HTML, and never written to a log.
  */
 
-const TOKEN_FILE = '.local/state/agenteiamail/setup.token';
+const LEGACY_CONFIG_RELATIVE = '.config/agenteiamail';
+const LEGACY_STATE_RELATIVE  = '.local/state/agenteiamail';
+const ENV_LEGACY_OPENCLAW    = '.openclaw/workspace/.env';
+const TOKEN_BASENAME         = 'setup.token';
+
+/**
+ * The clone, which is also the install root.
+ *
+ * Found from this file, not from $PWD or $HOME, so serving this directory from
+ * anywhere still resolves to the install it belongs to. The rule is written
+ * down in harness/paths.py and the three languages are asserted to agree in
+ * scripts/test_paths.sh; change all of them or none.
+ */
+function install_root(): string
+{
+    return dirname(__DIR__, 2);
+}
+
+/** ~/.config/agenteiamail, whether or not anything is in it. */
+function legacy_config_dir(): string
+{
+    return rtrim(home_dir(), '/') . '/' . LEGACY_CONFIG_RELATIVE;
+}
+
+/**
+ * True when this host has a pre-single-root install that must stay put.
+ *
+ * One predicate for the whole layout. Deciding credentials and state separately
+ * is how you get a split-brain install, and that presents as a quiet mailbox.
+ * Each probe is narrow on purpose: an empty leftover directory is not an
+ * install. file_exists() follows a symlink and is false for a dangling one, so
+ * the link is asked about separately. The idle.json probe is the safety net —
+ * it is the UID baseline, and resolving past it would replay the mailbox or
+ * skip it.
+ */
+function legacy_layout(): bool
+{
+    $config = legacy_config_dir();
+    clearstatcache(true, $config . '/env');
+    if (file_exists($config . '/env') || is_link($config . '/env')) {
+        return true;
+    }
+    if (file_exists($config . '/install.manifest')) {
+        return true;
+    }
+    if (is_file(rtrim(home_dir(), '/') . '/' . ENV_LEGACY_OPENCLAW)) {
+        return true;
+    }
+    if (file_exists(rtrim(home_dir(), '/') . '/' . LEGACY_STATE_RELATIVE . '/idle.json')) {
+        return true;
+    }
+    return false;
+}
+
+/** The queue state, cursors and logs — one tree, whichever layout this is. */
+function state_dir(): string
+{
+    $override = getenv('AGENTEIAMAIL_STATE');
+    if (is_string($override) && trim($override) !== '') {
+        return rtrim(trim($override), '/');
+    }
+    if (legacy_layout()) {
+        return rtrim(home_dir(), '/') . '/' . LEGACY_STATE_RELATIVE;
+    }
+    return install_root() . '/state';
+}
 
 /** Loopback only. A password form has no business answering the network. */
 function require_loopback(): void
@@ -35,7 +100,7 @@ function require_loopback(): void
 
 function token_path(): string
 {
-    return rtrim(home_dir(), '/') . '/' . TOKEN_FILE;
+    return state_dir() . '/' . TOKEN_BASENAME;
 }
 
 function home_dir(): string

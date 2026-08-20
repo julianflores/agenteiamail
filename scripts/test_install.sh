@@ -6,9 +6,16 @@ set -uo pipefail
 umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-INSTALL="$ROOT/scripts/install.sh"
 pass=0
 fail=0
+
+# The clone is the install, so the installer under test has to be a clone inside
+# the sandbox — not this working copy. Running $ROOT/scripts/install.sh against
+# a fake HOME would have it converge into the real repository.
+#
+# It is a genuine git checkout because the installer refuses to write when a
+# runtime-owned path is tracked or unignored, and that guard is worth
+# exercising rather than skipping.
 
 check_status() {
     local description=$1 expected=$2
@@ -47,6 +54,23 @@ fixture_root=$(mktemp -d)
 fixture_bin="$fixture_root/bin"
 mkdir -p "$fixture_bin"
 trap 'rm -rf "$sandbox" "$fixture_root"' EXIT
+
+# Removes everything the installer owns, in both containers, without deleting
+# the installer itself — the clone is now the config directory, so the old
+# `rm -rf "$sandbox/.config"` would take scripts/install.sh with it.
+reset_install() {
+    rm -rf "$sandbox/.config" "$sandbox/.local"
+    rm -rf "$clone/hermes" "$clone/state"
+    rm -f "$clone/install.manifest" "$clone/runtime.env" "$clone/.env" "$clone/roster.txt"
+}
+
+clone="$sandbox/workspace/agenteiamail"
+mkdir -p "$(dirname "$clone")"
+cp -a "$ROOT" "$clone"
+rm -rf "$clone/state" "$clone/.env" "$clone/runtime.env" "$clone/install.manifest" \
+    "$clone/hermes" "$clone/roster.txt"
+INSTALL="$clone/scripts/install.sh"
+state_tree="$clone/state"
 before=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path("'$sandbox'").rglob("*")))')
 
 cat >"$fixture_bin/systemctl" <<'EOF'
@@ -178,7 +202,7 @@ check_status 'Hermes delivery CLI shape parses' 78 \
 # Interactive Hermes parsing now creates one-time route secrets before stopping
 # for operator route configuration. Keep the alternative profile shape isolated
 # so it tests its own first-run boundary rather than reusing the prior fixture.
-rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'Hermes profile CLI shape parses' 78 \
     --runtime hermes --profile default
@@ -208,10 +232,10 @@ check_status 'profile and delivery configuration are alternatives' 64 \
 # Parser-shape checks above may leave a valid first-stage Hermes manifest and
 # generated secrets. Upgrade convergence needs a fresh OpenClaw fixture rather
 # than an intentionally incompatible manifest from another runtime.
-rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'upgrade mode converges the same owned filesystem boundary' 10 --runtime openclaw --upgrade
-rm -rf "$sandbox/.config"
+reset_install
 check_status 'uninstall without ownership is idempotent' 0 --runtime openclaw --uninstall
 check_status 'upgrade and uninstall are mutually exclusive' 64 \
     --runtime hermes --upgrade --uninstall
@@ -231,20 +255,20 @@ check_status 'non-interactive Hermes secret-file shape parses' 78 \
 # its generated secrets even before route configuration; switching to OpenClaw
 # must preserve those secrets and shared mail state while converging the common
 # unit/config boundary under the new runtime.
-rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 check_status 'Hermes migration fixture creates owned route secrets' 78 \
     --runtime hermes --profile default
-generated_notify="$sandbox/.config/agenteiamail/hermes/notify.secret"
-generated_roster="$sandbox/.config/agenteiamail/hermes/roster.secret"
+generated_notify="$clone/hermes/notify.secret"
+generated_roster="$clone/hermes/roster.secret"
 notify_before=$(sha256sum "$generated_notify")
 roster_before=$(sha256sum "$generated_roster")
 check_status 'runtime migration requires explicit upgrade mode' 78 \
     --runtime openclaw
 check_status 'Hermes to OpenClaw upgrade preserves owned secrets and state' 10 \
     --runtime openclaw --upgrade
-manifest="$sandbox/.config/agenteiamail/install.manifest"
-runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+manifest="$clone/install.manifest"
+runtime_env="$clone/runtime.env"
 if grep -Fxq $'runtime\topenclaw' "$manifest" &&
    [[ "$(<"$runtime_env")" == 'AGENTEIAMAIL_RUNTIME=openclaw' &&
       "$(sha256sum "$generated_notify")" == "$notify_before" &&
@@ -257,7 +281,7 @@ else
 fi
 check_status 'migrated OpenClaw upgrade is idempotent' 0 \
     --runtime openclaw --upgrade
-rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 
 
@@ -266,14 +290,21 @@ mkdir -p "$FAKE_SYSTEMD_STATE"
 # runtime through the user manager, and converges only required service state.
 check_status 'fresh OpenClaw convergence creates managed artifacts' 10 \
     --runtime openclaw
-manifest="$sandbox/.config/agenteiamail/install.manifest"
-runtime_env="$sandbox/.config/agenteiamail/runtime.env"
+manifest="$clone/install.manifest"
+runtime_env="$clone/runtime.env"
 [[ -f "$manifest" && ! -L "$manifest" && "$(stat -c %a "$manifest")" == 600 ]] || {
     printf 'FAIL ownership manifest is not a mode-0600 regular file\n'
     fail=$((fail + 1))
 }
 [[ "$(stat -c %a "$runtime_env")" == 600 ]] || {
     printf 'FAIL generated runtime configuration is not mode 0600\n'
+    fail=$((fail + 1))
+}
+# systemd does not create the parent of a StandardOutput=append: path, it fails
+# the unit. An install that converged the units and enabled them without this
+# directory leaves both services dead, and the only symptom is a quiet mailbox.
+[[ -d "$state_tree" && ! -L "$state_tree" && "$(stat -c %a "$state_tree")" == 700 ]] || {
+    printf 'FAIL convergence did not create the state tree as a mode-0700 directory\n'
     fail=$((fail + 1))
 }
 [[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
@@ -299,7 +330,7 @@ for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
 done
 installed_dispatch="$sandbox/.config/systemd/user/agenteiamail-dispatch.service"
 dispatch_unit="$(<"$installed_dispatch")"
-[[ "$dispatch_unit" == *'EnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+[[ "$dispatch_unit" == *"EnvironmentFile=-$clone/runtime.env"* ]] || {
     printf 'FAIL dispatcher unit does not optionally load the installer-generated runtime configuration\n'
     fail=$((fail + 1))
 }
@@ -307,7 +338,7 @@ dispatch_unit="$(<"$installed_dispatch")"
     printf 'FAIL dispatcher unit does not retain the manual-install runtime default\n'
     fail=$((fail + 1))
 }
-[[ "$dispatch_unit" == *$'Environment=AGENTEIAMAIL_RUNTIME=auto\nEnvironmentFile=-%h/.config/agenteiamail/runtime.env'* ]] || {
+[[ "$dispatch_unit" == *"Environment=AGENTEIAMAIL_RUNTIME=auto"$'\n'"EnvironmentFile=-$clone/runtime.env"* ]] || {
     printf 'FAIL dispatcher runtime configuration does not override the inline default\n'
     fail=$((fail + 1))
 }
@@ -332,7 +363,7 @@ check_status 'second OpenClaw convergence is idempotent' 0 --runtime openclaw
 }
 check_status 'owned converged artifacts are accepted by dry-run' 0 \
     --runtime openclaw --dry-run
-rm -rf "$sandbox/.config"
+reset_install
 
 # A successful `enable --now` subprocess is not enough: the required unit must
 # actually converge to both enabled and active before installation reports green.
@@ -345,19 +376,19 @@ FAKE_START_INACTIVE_UNIT=agenteiamail-dispatch.service check_status \
     printf 'FAIL activation postcondition refusal is not actionable\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config" "$FAKE_SYSTEMD_STATE"
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"
 mkdir -p "$FAKE_SYSTEMD_STATE"
 
 # Deliberately terminate after artifact N. The durable manifest must authorize
 # exactly successful artifacts 1..N, not later planned paths.
 AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
     'interrupted convergence exposes a partial-run status' 99 --runtime openclaw
-manifest="$sandbox/.config/agenteiamail/install.manifest"
+manifest="$clone/install.manifest"
 manifest_count=$(grep -c '^artifact[[:space:]]' "$manifest")
 created_count=0
 for path in "$sandbox/.config/systemd/user"/agenteiamail-*.service \
     "$sandbox/.config/systemd/user"/agenteiamail-*.timer \
-    "$sandbox/.config/agenteiamail/runtime.env"; do
+    "$clone/runtime.env"; do
     [[ -e "$path" ]] && created_count=$((created_count + 1))
 done
 [[ "$manifest_count" == 2 && "$created_count" == 2 ]] || {
@@ -374,14 +405,14 @@ while IFS=$'\t' read -r marker kind path digest extra; do
 done <"$manifest"
 check_status 'partial convergence resumes to completion' 10 --runtime openclaw
 check_status 'resumed convergence is idempotent' 0 --runtime openclaw
-rm -rf "$sandbox/.config"
+reset_install
 
 # A stop after artifact creation but before manifest recording must self-heal:
 # byte-identical generated content is adopted, while differing content remains
 # unproven and fail-closed.
 AGENTEIAMAIL_TEST_INTERRUPT_AFTER_WRITE=1 check_status \
     'post-create pre-record interruption exposes crash window' 99 --runtime openclaw
-manifest="$sandbox/.config/agenteiamail/install.manifest"
+manifest="$clone/install.manifest"
 crash_window_artifact="$sandbox/.config/systemd/user/agenteiamail-idle.service"
 [[ -f "$crash_window_artifact" && "$(grep -c '^artifact[[:space:]]' "$manifest")" == 0 ]] || {
     printf 'FAIL crash-window fixture did not leave one created, unrecorded artifact\n'
@@ -393,7 +424,7 @@ check_status 'matching crash-window artifact is adopted on resume' 10 --runtime 
     fail=$((fail + 1))
 }
 check_status 'adopted crash-window convergence is idempotent' 0 --runtime openclaw
-rm -rf "$sandbox/.config"
+reset_install
 
 # Uninstall consumes only durable ownership records from a partial run. A file
 # at a later planned destination, plus credentials/state, must survive.
@@ -402,28 +433,28 @@ AGENTEIAMAIL_TEST_INTERRUPT_AFTER=2 check_status \
     --runtime openclaw
 unowned_later="$sandbox/.config/systemd/user/agenteiamail-logrotate.service"
 printf 'operator-managed later artifact\n' >"$unowned_later"
-printf 'mail-password=preserve\n' >"$sandbox/.config/agenteiamail/env"
-mkdir -p "$sandbox/.local/state/agenteiamail"
-printf 'uid-state\n' >"$sandbox/.local/state/agenteiamail/uid.json"
+printf 'mail-password=preserve\n' >"$clone/.env"
+mkdir -p "$clone/state"
+printf 'uid-state\n' >"$clone/state/uid.json"
 check_status 'partial-run uninstall removes exactly recorded artifacts' 10 \
     --runtime openclaw --uninstall
 [[ ! -e "$sandbox/.config/systemd/user/agenteiamail-idle.service" &&
    ! -e "$sandbox/.config/systemd/user/agenteiamail-dispatch.service" &&
    -f "$unowned_later" &&
-   -f "$sandbox/.config/agenteiamail/env" &&
-   -f "$sandbox/.local/state/agenteiamail/uid.json" &&
-   ! -e "$sandbox/.config/agenteiamail/install.manifest" ]] || {
+   -f "$clone/.env" &&
+   -f "$clone/state/uid.json" &&
+   ! -e "$clone/install.manifest" ]] || {
     printf 'FAIL partial uninstall removed an unowned artifact or preserved owned state\n'
     fail=$((fail + 1))
 }
 check_status 'second partial-run uninstall is idempotent' 0 \
     --runtime openclaw --uninstall
-rm -rf "$sandbox/.config" "$sandbox/.local"
+reset_install
 
 # Modified owned artifacts are preserved, and the refusal names a safe recovery
 # path that transfers ownership back to the operator without deleting edits.
 check_status 'modified-artifact recovery fixture converges' 10 --runtime openclaw
-modified="$sandbox/.config/agenteiamail/runtime.env"
+modified="$clone/runtime.env"
 printf 'AGENTEIAMAIL_RUNTIME=openclaw\n# operator edit\n' >"$modified"
 check_status 'modified owned artifact is preserved with actionable recovery' 78 \
     --runtime openclaw --uninstall
@@ -444,7 +475,7 @@ mv -- "$modified" "$modified_backup"
 check_status 'uninstall forgets a preserved modified artifact after move-aside' 10 \
     --runtime openclaw --uninstall
 [[ -f "$modified_backup" &&
-   ! -e "$sandbox/.config/agenteiamail/install.manifest" &&
+   ! -e "$clone/install.manifest" &&
    ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.enabled" &&
    ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-idle.service.active" &&
    ! -e "$FAKE_SYSTEMD_STATE/agenteiamail-dispatch.service.enabled" &&
@@ -454,47 +485,47 @@ check_status 'uninstall forgets a preserved modified artifact after move-aside' 
     printf 'FAIL move-aside recovery did not preserve the edit, stop services, and clear ownership\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config" "$sandbox/.local"
+reset_install
 
 # The ownership reader fails closed on metadata and syntax before trusting any
 # path. An attacker-controlled/symlinked record is never followed.
-mkdir -p "$sandbox/.config/agenteiamail"
-printf 'version\t1\nruntime\topenclaw\n' >"$sandbox/.config/agenteiamail/install.manifest"
-chmod 0644 "$sandbox/.config/agenteiamail/install.manifest"
+mkdir -p "$clone"
+printf 'version\t1\nruntime\topenclaw\n' >"$clone/install.manifest"
+chmod 0644 "$clone/install.manifest"
 check_status 'insecure ownership manifest metadata fails closed' 78 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
     printf 'FAIL insecure manifest refusal is not actionable\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
-mkdir -p "$sandbox/.config/agenteiamail"
+mkdir -p "$clone"
 manifest_target="$fixture_root/attacker.manifest"
 printf 'version\t1\nruntime\topenclaw\n' >"$manifest_target"
 chmod 0600 "$manifest_target"
-ln -s "$manifest_target" "$sandbox/.config/agenteiamail/install.manifest"
+ln -s "$manifest_target" "$clone/install.manifest"
 check_status 'symlinked ownership manifest is never followed' 78 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'ownership manifest must be a user-owned mode-0600 regular file'* ]] || {
     printf 'FAIL symlinked manifest refusal is not explicit\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
-mkdir -p "$sandbox/.config/agenteiamail"
+mkdir -p "$clone"
 printf 'version\t1\nruntime\topenclaw\nartifact\tfile\t%s\t%s\n' \
     "$fixture_root/outside-artifact" \
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
-    >"$sandbox/.config/agenteiamail/install.manifest"
-chmod 0600 "$sandbox/.config/agenteiamail/install.manifest"
+    >"$clone/install.manifest"
+chmod 0600 "$clone/install.manifest"
 check_status 'manifest cannot authorize paths outside the managed allowlist' 78 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *'unauthorized artifact record'* ]] || {
     printf 'FAIL unauthorized manifest path refusal is not explicit\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
 check_status 'dry-run reports planned OpenClaw changes' 10 \
     --runtime openclaw --dry-run
@@ -518,22 +549,22 @@ for unit in agenteiamail-idle.service agenteiamail-dispatch.service \
         fail=$((fail + 1))
     }
 done
-[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$sandbox/.config/agenteiamail/runtime.env"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory planned-managed-file=$clone/runtime.env"* ]] || {
     printf 'FAIL inventory omits planned runtime configuration\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory planned-ownership-manifest=$sandbox/.config/agenteiamail/install.manifest"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory planned-ownership-manifest=$clone/install.manifest"* ]] || {
     printf 'FAIL inventory omits planned ownership manifest\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *"inventory container-directory=$sandbox/.config/systemd/user policy=never-own-directory"* ]] || {
     printf 'FAIL inventory claims the shared systemd directory\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory preserve-file=$sandbox/.config/agenteiamail/env role=mailbox-credentials"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$clone/.env role=mailbox-credentials"* ]] || {
     printf 'FAIL inventory does not preserve mailbox credentials\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory preserve-tree=$sandbox/.local/state/agenteiamail"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory preserve-tree=$clone/state"* ]] || {
     printf 'FAIL inventory does not preserve event and UID state\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory preserve-file=$ROOT/roster.txt role=recipient-roster"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$clone/roster.txt role=recipient-roster"* ]] || {
     printf 'FAIL inventory does not preserve the roster\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *'plan contains create, modify, or remove actions'* ]] || {
@@ -550,7 +581,7 @@ check_status 'dry-run preserves an unowned pre-existing unit and fails closed' 7
     printf 'FAIL unowned unit was not classified as a preserve conflict\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
 # A blocked managed artifact is a configuration refusal, never a change plan.
 mkdir -p "$sandbox/.config/systemd/user"
@@ -577,28 +608,39 @@ check_status 'blocked unit container is a configuration refusal, not plan status
     printf 'FAIL unsafe-container refusal used the unrelated ownership-manifest explanation\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
 outside_systemd="$fixture_root/outside-systemd"
-outside_config="$fixture_root/outside-config"
-mkdir -p "$outside_systemd" "$outside_config" "$sandbox/.config/systemd"
+mkdir -p "$outside_systemd" "$sandbox/.config/systemd"
 ln -s "$outside_systemd" "$sandbox/.config/systemd/user"
-ln -s "$outside_config" "$sandbox/.config/agenteiamail"
-check_status 'symlinked managed containers fail closed' 78 \
+check_status 'symlinked managed container fails closed' 78 \
     --runtime openclaw --dry-run
 [[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/systemd/user reason=symlink"* ]] || {
     printf 'FAIL symlinked systemd container was not rejected\n'
     fail=$((fail + 1))
 }
-[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail reason=symlink"* ]] || {
-    printf 'FAIL symlinked configuration container was not rejected\n'
-    fail=$((fail + 1))
-}
-[[ -z "$(find "$outside_systemd" "$outside_config" -mindepth 1 -print -quit)" ]] || {
+[[ -z "$(find "$outside_systemd" -mindepth 1 -print -quit)" ]] || {
     printf 'FAIL dry-run wrote through a symlinked container\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
+rm -rf "$sandbox/.config/systemd"
+
+# The configuration container is the clone, and the clone is resolved with
+# `pwd -P`. Reaching the installer through a symlinked path therefore converges
+# on the physical directory rather than being refused: there is no symlink left
+# in the chain to refuse. The symlink branch of validate_container_chain is
+# still exercised, on the Hermes secret container, further down.
+ln -s "$clone" "$sandbox/linked-clone"
+output=$(env -u AGENTEIAMAIL_ENV HOME="$sandbox" \
+    PATH="$fixture_bin:/usr/bin:/bin" FAKE_SERVICE_PATH="$fixture_bin:/usr/bin:/bin" \
+    "$sandbox/linked-clone/scripts/install.sh" --runtime openclaw --dry-run 2>&1)
+[[ "$output" == *"inventory root=$clone "* && "$output" != *"linked-clone"* ]] || {
+    printf 'FAIL a clone reached through a symlink did not resolve to its physical path\n'
+    fail=$((fail + 1))
+}
+rm -f "$sandbox/linked-clone"
+reset_install
 
 # The OpenClaw workspace path is a read-only legacy-migration probe. A symlink
 # must be preserved and must never appear in the managed inventory.
@@ -650,22 +692,26 @@ check_status 'Hermes dry-run rejects equal route secrets after line-ending trim'
 printf 'notify-test-secret\n' >"$notify_secret"
 printf 'roster-test-secret\n' >"$roster_secret"
 
-mkdir -p "$sandbox/.config/agenteiamail/hermes"
-printf 'operator-secret\n' >"$sandbox/.config/agenteiamail/hermes/notify.secret"
-chmod 600 "$sandbox/.config/agenteiamail/hermes/notify.secret"
+mkdir -p "$clone/hermes"
+printf 'operator-secret\n' >"$clone/hermes/notify.secret"
+chmod 600 "$clone/hermes/notify.secret"
 check_status 'existing default-path Hermes secret is never claimed without provenance' 78 \
     --runtime hermes --profile default --dry-run
-[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-secret=$sandbox/.config/agenteiamail/hermes/notify.secret reason=unproven-ownership"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory conflict-preserve-secret=$clone/hermes/notify.secret reason=unproven-ownership"* ]] || {
     printf 'FAIL existing default secret was claimed as installer-managed\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
-mkdir -p "$sandbox/.config/agenteiamail"
-ln -s "$outside_config" "$sandbox/.config/agenteiamail/hermes"
+# This is where the symlink branch of validate_container_chain is exercised: the
+# configuration container is the clone itself and resolves physically, but a
+# nested container the installer would create is still a real symlink check.
+outside_config="$fixture_root/outside-config"
+mkdir -p "$outside_config" "$clone"
+ln -s "$outside_config" "$clone/hermes"
 check_status 'symlinked nested Hermes secret container fails closed' 78 \
     --runtime hermes --profile default --dry-run
-[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=symlink"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$clone/hermes reason=symlink"* ]] || {
     printf 'FAIL symlinked nested Hermes container was not rejected\n'
     fail=$((fail + 1))
 }
@@ -673,16 +719,16 @@ check_status 'symlinked nested Hermes secret container fails closed' 78 \
     printf 'FAIL dry-run wrote through the nested Hermes symlink\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
-mkdir -p "$sandbox/.config/agenteiamail/hermes"
-chmod 0770 "$sandbox/.config/agenteiamail/hermes"
+reset_install
+mkdir -p "$clone/hermes"
+chmod 0770 "$clone/hermes"
 check_status 'writable nested Hermes secret container fails closed' 78 \
     --runtime hermes --profile default --dry-run
-[[ "$LAST_OUTPUT" == *"inventory conflict-container=$sandbox/.config/agenteiamail/hermes reason=group-or-world-writable"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory conflict-container=$clone/hermes reason=group-or-world-writable"* ]] || {
     printf 'FAIL writable nested Hermes container was not rejected\n'
     fail=$((fail + 1))
 }
-rm -rf "$sandbox/.config"
+reset_install
 
 mv "$fixture_bin/openclaw" "$fixture_bin/openclaw.off"
 check_status 'uninstall discovery does not require a removed runtime CLI' 0 \
