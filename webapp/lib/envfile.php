@@ -15,17 +15,18 @@ declare(strict_types=1);
  * fallback below repeats that rule for anyone serving this directory directly,
  * and the rule itself is written down once, in harness/paths.py.
  *
- * A new install of either harness gets ~/.config/agenteiamail/env. An install
- * that already keeps its credentials somewhere else keeps them there: an
- * existing file, or the symlink older OpenClaw installs left behind, is written
- * through rather than replaced. Credentials are never copied to a second
- * location to satisfy a convention.
+ * A new install keeps everything in one directory, and that directory is the
+ * clone, so the credentials are `.env` at the top of it. An install that already
+ * keeps its credentials somewhere else keeps them there: an existing file, or
+ * the symlink older OpenClaw installs left behind, is written through rather
+ * than replaced. Credentials are never copied to a second location to satisfy a
+ * convention.
  */
 
 require_once __DIR__ . '/guard.php';
 
+const ENV_BASENAME      = '.env';
 const ENV_RELATIVE      = '.config/agenteiamail/env';
-const ENV_LEGACY_OPENCLAW = '.openclaw/workspace/.env';
 const ENV_LINK_RELATIVE = '.config/agenteiamail/env';
 
 /** The keys this form owns, in the order they are written. */
@@ -46,21 +47,19 @@ function env_path(): string
         return trim($override);
     }
 
-    $home    = rtrim(home_dir(), '/');
-    $neutral = $home . '/' . ENV_RELATIVE;
+    if (!legacy_layout()) {
+        return install_root() . '/' . ENV_BASENAME;
+    }
 
-    // file_exists() follows a symlink and is false for a dangling one, so the
-    // link is asked about separately: one pointing at a file nobody has created
-    // yet still says where that file belongs, and writing to the link path
-    // instead would silently replace the link.
+    $neutral = legacy_config_dir() . '/env';
     clearstatcache(true, $neutral);
     if (file_exists($neutral) || is_link($neutral)) {
         return $neutral;
     }
 
-    $legacy = $home . '/' . ENV_LEGACY_OPENCLAW;
-    if (is_file($legacy)) {
-        return $legacy;
+    $openclaw = rtrim(home_dir(), '/') . '/' . ENV_LEGACY_OPENCLAW;
+    if (is_file($openclaw)) {
+        return $openclaw;
     }
 
     return $neutral;
