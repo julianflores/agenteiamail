@@ -71,6 +71,22 @@ case "\$2" in
         [ -e "$unit_state/\$unit" ] && exit 0 || exit 1
         ;;
     is-enabled) exit 0 ;;
+    enable)
+        # `enable --now` starts the unit, and convergence checks that it did.
+        # The fake used to answer 0 and start nothing, so every resume path was
+        # dying in convergence — invisibly, because no test asserted the exit
+        # status of a resume.
+        for arg in "\$@"; do
+            case "\$arg" in agenteiamail-*) : >"$unit_state/\$arg" ;; esac
+        done
+        exit 0
+        ;;
+    restart)
+        for arg in "\$@"; do
+            case "\$arg" in agenteiamail-*) : >"$unit_state/\$arg" ;; esac
+        done
+        exit 0
+        ;;
 esac
 exit 0
 EOF
@@ -348,6 +364,7 @@ for index in 1 2 3 4; do
         "$([ -f "$clone/.migrate-transaction" ] && echo yes || echo no)"
 
     FAIL_AT="" output=$(run_migrate); status=$?
+    check "commit:$index resume converges cleanly" 10 "$status"
     check "commit:$index resumes forward" yes \
         "$(case "$output" in *"resume=forward"*) echo yes ;; *) echo no ;; esac)"
     check_complete_new "commit:$index after resume"
@@ -369,7 +386,8 @@ for index in 0 3; do
     check "cleanup:$index says the new install is complete" yes \
         "$(case "$output" in *"the new install is complete"*) echo yes ;; *) echo no ;; esac)"
 
-    FAIL_AT="" output=$(run_migrate) || true
+    FAIL_AT="" output=$(run_migrate); status=$?
+    check "cleanup:$index resume converges cleanly" 10 "$status"
     check_complete_new "cleanup:$index after resume"
     check_services "cleanup:$index after resume" active active
     check "cleanup:$index cleared the transaction" no \
@@ -561,6 +579,107 @@ else
     check "and it comes after every source-parent sync" ordered \
         "out of order (last sync=${last_sync:-missing} last source=${last_source:-missing})"
 fi
+
+
+# ---------------------------------------------------------------------------
+# A crash after the stops, where the EXIT trap never ran.
+#
+# This is the case the trap cannot cover: power loss, SIGKILL, the machine going
+# away. The resuming process finds both units already stopped, so asking the host
+# what is running returns nothing — and if the resume re-records that answer, the
+# set to restore becomes empty, the commit completes, and the migration reports
+# success over a silent mailbox. The transaction is the only surviving witness to
+# what was running, so it is the one that must be believed.
+# ---------------------------------------------------------------------------
+build_legacy_install
+FAIL_AT="commit:1" run_migrate >/dev/null 2>&1
+FAIL_AT=""
+
+# Simulate the crash: the transaction says both were active, the host says
+# neither is, and no trap ever ran.
+rm -f "$unit_state/agenteiamail-idle.service" "$unit_state/agenteiamail-dispatch.service"
+check "the transaction still records the listener as active before the stop" yes \
+    "$(grep -qxF "active	agenteiamail-idle.service" "$clone/.migrate-transaction" && echo yes || echo no)"
+check "and the dispatcher too" yes \
+    "$(grep -qxF "active	agenteiamail-dispatch.service" "$clone/.migrate-transaction" && echo yes || echo no)"
+check_services "after a simulated crash" stopped stopped
+
+output=$(run_migrate); status=$?
+check "resuming after a crash completes" 10 "$status"
+check "and takes the pre-stop set from the transaction, not the host" yes \
+    "$(case "$output" in *"active-before-stop=agenteiamail-idle.service source=transaction"*) echo yes ;; *) echo no ;; esac)"
+# The assertion this whole case exists for. Both units were running before the
+# migration; both must be running after it, however the migration was
+# interrupted in between.
+check_services "resumed after a crash" active active
+check_complete_new "resumed after a crash"
+
+# The harm blocker 1 actually does is to the transaction's memory rather than to
+# this run: a resume that re-recorded from a host whose services it had already
+# stopped would persist an *empty* active set, and the next interruption would
+# then have nothing to restore from. Convergence hides that on the success path
+# by starting the required units anyway, so it is asserted directly.
+build_legacy_install
+FAIL_AT="commit:1" run_migrate >/dev/null 2>&1
+rm -f "$unit_state/agenteiamail-idle.service" "$unit_state/agenteiamail-dispatch.service"
+FAIL_AT="commit:2" run_migrate >/dev/null 2>&1
+FAIL_AT=""
+check "a resume rewrites the transaction keeping the listener in the active set" yes \
+    "$(grep -qxF "active	agenteiamail-idle.service" "$clone/.migrate-transaction" && echo yes || echo no)"
+check "and the dispatcher" yes \
+    "$(grep -qxF "active	agenteiamail-dispatch.service" "$clone/.migrate-transaction" && echo yes || echo no)"
+
+# The same crash where one unit was deliberately down beforehand — and the one
+# place the two promises differ, which is worth stating rather than discovering.
+#
+# The *restore* promises to put back exactly what was running and nothing more,
+# and that governs every rollback and refusal. But a migration that succeeds
+# hands over to ordinary convergence, and convergence's contract is that the
+# required units are enabled and active. So a completed migration starts the
+# dispatcher even if the operator had stopped it, exactly as any other run of
+# the installer would. The restore is not being overridden; it is finished, and
+# something else with its own contract is running.
+build_legacy_install
+rm -f "$unit_state/agenteiamail-dispatch.service"
+FAIL_AT="commit:1" run_migrate >/dev/null 2>&1
+FAIL_AT=""
+rm -f "$unit_state/agenteiamail-idle.service"
+output=$(run_migrate); status=$?
+check "a completed migration converges cleanly" 10 "$status"
+check_services "resumed after a crash, then converged" active active
+
+# Whereas on a rollback nothing converges, so the deliberate decision stands.
+# This is the assertion that pins the difference.
+build_legacy_install
+rm -f "$unit_state/agenteiamail-dispatch.service"
+FAIL_AT="commit:0" run_migrate >/dev/null 2>&1
+FAIL_AT=""
+rm -f "$unit_state/agenteiamail-idle.service"
+output=$(run_migrate) >/dev/null 2>&1
+check_services "rolled back after a crash, dispatcher deliberately down" active stopped
+
+# ---------------------------------------------------------------------------
+# Filenames inside the state tree are data.
+#
+# The digest was a `find | xargs -I{} sh -c` pipeline, which substitutes each
+# pathname into shell program text. A file named `"; touch PWNED; #` executed a
+# command — and the state tree is a directory this migration copies wholesale.
+# ---------------------------------------------------------------------------
+build_legacy_install
+hostile="$sandbox/home/.local/state/agenteiamail"
+: >"$hostile/\"; touch $sandbox/PWNED; #"
+: >"$hostile/\$(touch $sandbox/PWNED2)"
+printf 'x\n' >"$hostile/with a space.log"
+printf 'x\n' >"$hostile/with'\''quote.json"
+output=$(run_migrate); status=$?
+check "a migration over hostile filenames succeeds" 10 "$status"
+check "and executed nothing" no \
+    "$([ -e "$sandbox/PWNED" ] || [ -e "$sandbox/PWNED2" ] && echo yes || echo no)"
+check "and moved the awkward names with everything else" yes \
+    "$([ -f "$clone/state/with a space.log" ] && echo yes || echo no)"
+check "and the quoted one" yes \
+    "$([ -f "$clone/state/with'\''quote.json" ] && echo yes || echo no)"
+check_complete_new "hostile filenames"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

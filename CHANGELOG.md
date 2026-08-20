@@ -25,6 +25,17 @@ before implementation rather than discovered during review of it.
   surviving staged copies are checked against digests recorded in the
   transaction. A mismatch preserves every copy and the manifest and refuses to
   clean up.
+- **Filenames inside the state tree are data again.** The digest that resume
+  checks artifacts against was a `find | xargs -I{} sh -c` pipeline, which
+  substitutes each pathname into shell program text — a file named
+  `"; touch PWNED; #` in the state tree executed a command, and the state tree
+  is a directory the migration copies wholesale.
+  [`scripts/tree_digest.py`](scripts/tree_digest.py) computes it without a
+  shell, and pins quote, newline and metacharacter names.
+- **A resume keeps the pre-stop service set recorded in the transaction**
+  instead of re-reading it from a host whose services it has already stopped.
+  Re-reading returned an empty set and persisted it, destroying the only record
+  of what had been running before the migration started.
 - **Every migration failure-path test now asserts service state**, not only
   files — the check that would have caught the two defects above. `DESIGN.md`
   records the rule, along with its limit: `is-active` proves service state, not

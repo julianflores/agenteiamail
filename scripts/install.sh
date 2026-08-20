@@ -906,25 +906,20 @@ stage_legacy_migration() {
 
 # Evidence, so a resume can revalidate rather than infer.
 #
-# Existence used to be treated as proof that a destination was the artifact that
-# had been committed there. It is not: it does not catch a truncated copy, a
-# stale staging tree, or a destination that merely exists. This is a consistency
-# check and not an authentication boundary — an attacker who can rewrite the
-# destination can rewrite the digest beside it — but accidental corruption is
-# the case that actually happens.
+# Existence used to be treated as proof that a destination held the artifact
+# committed there. It is not: a truncated copy, a stale staging tree, or a
+# destination that merely exists all pass an existence check. This is a
+# consistency check and not an authentication boundary — whoever can rewrite the
+# destination can rewrite the digest beside it — but accidental corruption is the
+# case that actually happens.
+#
+# Computed by scripts/tree_digest.py rather than here. The first version was a
+# `find | xargs -I{} sh -c` pipeline, which substitutes each pathname into shell
+# program text: a file named `"; touch PWNED; #` inside the state tree executed a
+# command, and the state tree is a directory this migration copies wholesale.
+# Filenames are data.
 migration_digest() {
-    local target=$1
-    if [[ -d "$target" && ! -L "$target" ]]; then
-        # Names and contents both: a tree that lost a file has the same
-        # concatenated content as one that never had it.
-        ( cd "$target" && find . -print0 | LC_ALL=C sort -z | \
-            xargs -0 -I{} sh -c 'printf "%s\n" "{}"; [ -f "{}" ] && cat "{}" || true' ) \
-            2>/dev/null | sha256sum | cut -d' ' -f1
-    elif [[ -e "$target" ]]; then
-        sha256sum -- "$target" | cut -d' ' -f1
-    else
-        printf 'absent'
-    fi
+    python3 "$ROOT/scripts/tree_digest.py" "$1"
 }
 
 write_migration_transaction() {
@@ -984,6 +979,23 @@ read_migration_transaction() {
 # stopped afterwards, and "start everything" would quietly undo their decision.
 record_active_units_before_stop() {
     local unit
+
+    # Only ever recorded once, by the run that stops the services first.
+    #
+    # A resume reads this set back out of the transaction, and re-recording it
+    # would ask a host whose services are *already stopped* what is running and
+    # get the honest answer: nothing. The set would become empty, the resumed
+    # commit would complete without restarting anything, and the migration would
+    # report success over a silent mailbox — which is the state the whole
+    # transaction exists to make unreachable. The EXIT trap cannot save this
+    # either: after a real crash or power loss there was no trap to run.
+    if ((${#migration_active_before[@]})); then
+        for unit in "${migration_active_before[@]}"; do
+            printf 'migrate active-before-stop=%s source=transaction\n' "$unit"
+        done
+        return 0
+    fi
+
     migration_active_before=()
     [[ -n "$discovered_systemctl" ]] || return 0
     for unit in agenteiamail-idle.service agenteiamail-dispatch.service; do
@@ -1234,6 +1246,9 @@ resume_legacy_migration() {
     printf 'migrate resume=forward reason=partially-committed\n'
     # Before the stop, so a refusal here does not have to put services back.
     validate_migration_evidence
+    # read_migration_transaction already populated migration_active_before from
+    # the manifest. record_active_units_before_stop keeps it rather than asking
+    # a host whose services this migration already stopped.
     record_active_units_before_stop
     write_migration_transaction committing
     stop_services_for_migration
@@ -1787,6 +1802,15 @@ if [[ "$mode" == migrate ]]; then
     if read_migration_transaction; then
         printf 'migrate transaction=found phase=%s entries=%d\n' \
             "$migration_phase" "${#migration_staged[@]}"
+        # A transaction recording an active set means an earlier run stopped
+        # those units. That run may have died without its trap running — power
+        # loss, SIGKILL — so this one owes the restore, on the rollback path as
+        # much as the forward one. Starting a unit that is already running is a
+        # no-op, so arming this unconditionally is safe and forgetting to arm it
+        # is not.
+        if ((${#migration_active_before[@]})); then
+            migration_services_stopped=1
+        fi
         if ((dry_run)); then
             printf 'dry-run: an unfinished migration transaction exists; rerun without --dry-run to resolve it.\n'
             exit "$EX_CHANGED"
