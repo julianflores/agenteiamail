@@ -20,7 +20,7 @@ minutes of checking that it really works.
 ### Step 1: Give it a mailbox
 
 The agent needs an email account of its own and the connection details for it,
-written into `~/.config/agenteiamail/env`.
+written into `.env` inside the clone.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it**: which account to use,
 where to find the server hostname (the one part that reliably goes wrong), and the
@@ -34,7 +34,7 @@ password should not travel through a chat.
 Paste this to your agent:
 
 ```text
-Your email account is already configured at ~/.config/agenteiamail/env
+Your email account is already configured at <clone>/.env
 
 Install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
@@ -46,7 +46,7 @@ Follow AGENTS.md. Ask me anything you need.
 <summary>En español</summary>
 
 ```text
-Tu cuenta de correo ya está configurada en ~/.config/agenteiamail/env
+Tu cuenta de correo ya está configurada en <clone>/.env
 
 Instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
@@ -116,8 +116,8 @@ Worth knowing before you agree to it. The agent is instructed to report all of
 this back when it finishes, and you can hold it to the list:
 
 - A systemd user service that runs continuously and restarts on failure
-- A credentials file at `~/.config/agenteiamail/env`, mode `600`
-- Log and state files under `~/.local/state/agenteiamail/`
+- A credentials file at `.env` inside the clone, mode `600`
+- Log and state files under `state/` inside the clone
 - Lingering enabled for the user, so the service survives logout
 - A standing rule added to the agent's own instructions
 
@@ -189,7 +189,7 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
   │                       open; the server pushes the moment mail lands.
   │  one line per message
   ▼
-~/.local/state/agenteiamail/
+<clone>/state/
   mail.log                the event stream
   idle.err.log            diagnostics, watched separately
   events.jsonl            the queue: one canonical envelope per line
@@ -215,14 +215,28 @@ webapp/ + setup_web.sh    a local form that writes the credentials file, for
 
 ## Runtime paths
 
-- Repo: anywhere. `~/.local/share/agenteiamail` if you have no preference; every
-  generated path is resolved from where the scripts are, so an existing clone
-  needs no move.
-- Secret env: `~/.config/agenteiamail/env`: mode `600`, never committed. An
+The clone is the install. Everything it owns lives inside it, so choosing where
+to clone is how you choose where to install.
+
+- Repo: anywhere. `~/.openclaw/workspace/agenteiamail` on OpenClaw,
+  `~/.hermes/workspace/agenteiamail` on Hermes Agent, if you have no preference;
+  every generated path is resolved from where the scripts are, so an existing
+  clone needs no move.
+- Secret env: `<clone>/.env`: mode `600`, ignored by git, never committed. An
   install that already keeps credentials elsewhere keeps them there.
-- Event state: `~/.local/state/agenteiamail/`
+- Event state: `<clone>/state/`
+- Route secrets: `<clone>/hermes/`, mode `600`
 - User services: `~/.config/systemd/user/agenteiamail-idle.service` and
-  `agenteiamail-dispatch.service`
+  `agenteiamail-dispatch.service` — the only thing outside the clone, because
+  systemd will not read units from anywhere else
+
+Secrets inside a git working tree are kept out of `git status` by `.gitignore`,
+and `scripts/install.sh` refuses to write if any of them is tracked or unignored.
+`git clean -xdf` still deletes them all — use `git clean -df` on a live install.
+
+An install made before this layout keeps credentials under
+`~/.config/agenteiamail` and state under `~/.local/state/agenteiamail`, entirely
+and indefinitely. `scripts/install.sh --migrate` moves it only when asked.
 
 ## The property everything serves
 

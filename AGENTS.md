@@ -33,7 +33,7 @@ env=$(. scripts/envpath.sh && agenteiamail_env_file)
 ```
 
 Ask rather than assume where they are. A new install of either harness keeps
-them at `~/.config/agenteiamail/env`; an OpenClaw install made before this
+them at `.env` inside the clone; an OpenClaw install made before this
 repository knew about other runtimes has them somewhere else and keeps them
 there.
 

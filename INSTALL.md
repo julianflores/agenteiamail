@@ -112,7 +112,7 @@ like style and are not.
 > # ExecStart=... /idle_listener.py        ->  .../scripts/idle_listener.py
 > systemctl --user daemon-reload
 > systemctl --user restart agenteiamail-idle.service
-> tail -2 ~/.local/state/agenteiamail/idle.err.log   # expect "resuming from uid N"
+> tail -2 state/idle.err.log   # expect "resuming from uid N"
 > ```
 >
 > Check any wrapper of your own that calls `send.sh` or `preflight.py` too.
@@ -213,9 +213,9 @@ Everything below is the manual route, for a host where somebody writes the file
 by hand.
 
 ```bash
-mkdir -p ~/.config/agenteiamail
-touch ~/.config/agenteiamail/env
-chmod 600 ~/.config/agenteiamail/env
+cd /path/to/your/clone      # every path below is relative to it
+touch .env
+chmod 600 .env
 ```
 
 Keys are listed in [`.env.example`](.env.example).
@@ -250,7 +250,7 @@ succeeds while the service dies at startup with `no env file at ...`. Put the fl
 in the unit even when the path is the default.
 
 **`scripts/send.sh` needs the same file, and has no unit to carry a flag.** It
-reads `~/.config/agenteiamail/env` unless `ENV_FILE` says otherwise, so on a host
+reads `.env` in the clone unless `ENV_FILE` says otherwise, so on a host
 whose credentials live elsewhere it will find nothing and refuse to send, at the
 moment it first tries to answer somebody, which is the worst time to discover it.
 
@@ -259,7 +259,7 @@ once, here, rather than exporting `ENV_FILE` from whatever shell happens to invo
 the script:
 
 ```bash
-ln -s /path/to/your/.env ~/.config/agenteiamail/env
+ln -s /path/to/your/.env .env
 ```
 
 A symlink survives every session, every restart, and every agent that forgets.
@@ -287,7 +287,7 @@ mail server's TLS certificate does not cover, which surfaces as an endless
 reconnect loop rather than an error, because a certificate failure arrives as a
 network error. Split them into `_HOST` and `_PORT` and it will start.
 
-**Parse it, do not source it.** `. ~/.config/agenteiamail/env` breaks on any value
+**Parse it, do not source it.** `. .env` breaks on any value
 containing shell metacharacters, and passwords routinely have them. Read it as
 `KEY=VALUE` data, which is what `idle_listener.py` and `preflight.py` both do.
 
@@ -363,6 +363,10 @@ Both schemas below were verified against a running binary, not read from docs.
 Backends are named sections, the host and port are one URL, and TLS is implied by
 the scheme. Auth is SASL.
 
+Himalaya's own config lives outside the clone and is read by Himalaya, not by
+anything here, so the credentials path in it has to be written out in full. The
+example below uses the recommended OpenClaw location; substitute your own clone.
+
 ```toml
 [accounts.agenteiamail]
 email = "agent@example.com"
@@ -372,13 +376,13 @@ default = true
 server = "imaps://mail.example.com:993"
 [accounts.agenteiamail.imap.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
 
 [accounts.agenteiamail.smtp]
 server = "smtps://mail.example.com:465"
 [accounts.agenteiamail.smtp.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
 ```
 
 Confirm both backends registered; an empty `BACKENDS` column means the config
@@ -404,7 +408,7 @@ imap-port = 993
 imap-ssl = true
 imap-login = "agent@example.com"
 imap-auth = "passwd"
-imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.config/agenteiamail/env"
+imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
 ```
 
 Field names moved between 1.x releases too, so if a key is rejected, the error
@@ -462,7 +466,7 @@ because it is what the templates are for:
   the wrong file tags nobody, and the agent then reports mail it should be acting on
 
 ```bash
-mkdir -p ~/.local/state/agenteiamail
+mkdir -p state
 systemctl --user daemon-reload
 systemctl --user enable --now agenteiamail-idle.service
 systemctl --user enable --now agenteiamail-dispatch.service
@@ -502,18 +506,52 @@ It says explicitly that reaching a runtime is not proof a delivered event lands
 in front of anybody, because "health: ok" is the phrase people stop reading
 after.
 
-**Where to put the clone.** `~/.local/share/agenteiamail` if you have no reason
-to prefer somewhere else. Nothing requires it: every path this tool generates is
-resolved from where the scripts actually are, so an existing clone anywhere keeps
-working and needs no move. What is no longer true is the old assumption that it
-sits under `~/.openclaw/workspace`, which was only ever right on one harness.
+**Where to put the clone.** The clone *is* the install: credentials, generated
+config, route secrets, the roster and the whole state tree live inside it, so
+choosing where to clone is how you choose where to install.
 
-**Where the credentials go.** `~/.config/agenteiamail/env`, for either harness.
-An install that already keeps them elsewhere keeps them there: an existing file,
-or the symlink older OpenClaw installs left at that path, is used where it lies.
-Credentials are never copied to a second location to satisfy a convention, and
-nothing is ever written into a harness's own `.env`. The rule is in
-[`harness/paths.py`](harness/paths.py), with the shell half in
+| Runtime | Clone at |
+| --- | --- |
+| OpenClaw | `~/.openclaw/workspace/agenteiamail` |
+| Hermes Agent | `~/.hermes/workspace/agenteiamail` |
+
+Nothing requires those paths — every path this tool generates is resolved from
+where the scripts actually are, so a clone anywhere works and an existing one
+needs no move. They are the recommended locations, not a check.
+
+```
+<clone>/
+  .env              mailbox credentials, 0600
+  runtime.env       generated, installer-owned
+  install.manifest  what the installer may remove
+  roster.txt        who this agent may write to unattended
+  hermes/           the two route secrets, 0600
+  state/            UID baseline, journal, cursor, delivery status, logs
+```
+
+Only the four unit files live outside it, in `~/.config/systemd/user`, because
+systemd will not read them from anywhere else.
+
+**This puts secrets inside a git working tree.** `.gitignore` keeps them out of
+`git status`, `scripts/install.sh` refuses to write if any of them is tracked or
+unignored, and `scripts/test_paths.sh` asserts the rules in CI. What none of that
+prevents is **`git clean -xdf`, which deletes ignored files** — here that means
+the mailbox password, both route secrets, the roster and the UID baseline, in one
+command. On a live install, use `git clean -df`.
+
+**Where the credentials go.** `.env` at the top of the clone. An install that
+already keeps them elsewhere keeps them there: an existing file, or the symlink
+older OpenClaw installs left behind, is used where it lies. Credentials are never
+copied to a second location to satisfy a convention, and nothing is ever written
+into a harness's own `.env`.
+
+**An install made before this layout keeps its own**, entirely — credentials
+under `~/.config/agenteiamail`, state under `~/.local/state/agenteiamail`. That
+is a supported state, not a bug, and an upgrade will not move it. See
+[`UPGRADE.md`](UPGRADE.md) for `scripts/install.sh --migrate`, which moves it
+only when you ask.
+
+The rule is in [`harness/paths.py`](harness/paths.py), with the shell half in
 [`scripts/envpath.sh`](scripts/envpath.sh), and
 [`scripts/test_paths.sh`](scripts/test_paths.sh) asserts the two agree with the
 setup form's PHP.
@@ -586,7 +624,7 @@ journal if the unit has no `StandardError=`, and nowhere else.
 So check it explicitly after enabling the watcher:
 
 ```bash
-grep -iE "openclaw not found|injection failed" ~/.local/state/agenteiamail/watch.err.log
+grep -iE "openclaw not found|injection failed" state/watch.err.log
 journalctl --user -u agenteiamail-dispatch.service | grep -iE "openclaw not found|injection failed"
 ```
 
@@ -610,7 +648,7 @@ systemctl --user is-active agenteiamail-idle.service
 systemctl --user show agenteiamail-idle.service -p ActiveEnterTimestamp
 
 # 2. Healthy start: expect "listening on INBOX, baseline uid N"
-tail -3 ~/.local/state/agenteiamail/idle.err.log
+tail -3 state/idle.err.log
 
 # 3. Lingering on
 loginctl show-user "$USER" -p Linger
@@ -619,12 +657,12 @@ loginctl show-user "$USER" -p Linger
 himalaya envelope list -a agenteiamail -s 3
 
 # 4b. The watcher found openclaw: silence here is the pass
-grep -i "openclaw not found" ~/.local/state/agenteiamail/watch.err.log 2>/dev/null \
+grep -i "openclaw not found" state/watch.err.log 2>/dev/null \
   || journalctl --user -u agenteiamail-dispatch.service 2>/dev/null | grep -i "openclaw not found" \
   || echo "watcher: openclaw resolved"
 
 # 5. End to end: have someone external send you mail
-tail -f ~/.local/state/agenteiamail/mail.log       # a line within ~2s
+tail -f state/mail.log       # a line within ~2s
 
 # 6. Sending behaves: who it will write to, and what Himalaya is handed.
 #    Includes substring/prefix attacks on the allowlist and the From: header
@@ -641,13 +679,13 @@ echo hi > /tmp/b.txt; ./scripts/send.sh nobody@nowhere.invalid "test" /tmp/b.txt
 scripts/send.sh --check jjulianfe@gmail.com "check" /tmp/b.txt | head -6
 
 # 6d. Your own mail is tagged. Send yourself one, then:
-grep ", roster]" ~/.local/state/agenteiamail/mail.log | tail -1
+grep ", roster]" state/mail.log | tail -1
 # No output means the agent will not act on your mail. Check that the address in
 # roster.txt matches the From address your mail actually arrives with.
 
 # 7. Survives restart without replaying or losing anything
 systemctl --user restart agenteiamail-idle.service
-tail -2 ~/.local/state/agenteiamail/idle.err.log  # expect "resuming from uid N"
+tail -2 state/idle.err.log  # expect "resuming from uid N"
 ```
 
 **A restart can take up to 30 seconds.** The listener is usually blocked waiting
@@ -677,6 +715,6 @@ invisible to a single ASCII test.
 | `login rejected` but the password is right | Himalaya reaching for a keyring that does not exist under systemd. Use the command-based secret. Also check for a trailing `\r` if the env file was ever edited on Windows. |
 | Connects, retries forever, no clear error | Certificate hostname mismatch. The listener treats it as a network error and backs off rather than failing loudly. See §1.2. |
 | Silence, and you assume no mail | You are not watching the error log. A dead listener looks exactly like a quiet mailbox. |
-| Every message replays on restart | State file not writable. Check `~/.local/state/agenteiamail/`. |
+| Every message replays on restart | State file not writable. Check `state/`. |
 | Hundreds replay once, then normal | `UIDVALIDITY` changed: the mailbox was recreated. Working as designed. |
 | Subject shows `=?utf-8?q?...?=` | Header decoding broken. Fixed in this repo; if you see it, you are on an old commit. |

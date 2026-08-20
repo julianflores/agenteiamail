@@ -1,5 +1,68 @@
 # Changelog
 
+## 1.7.0 — 2026-08-20
+
+**One install, one directory, and that directory is the clone.** An install used
+to spread itself over three places — credentials and route secrets in
+`~/.config/agenteiamail`, queue state and logs in `~/.local/state/agenteiamail`,
+the roster in the clone — so backing it up, inspecting it or removing it meant
+remembering all three. Everything it owns now lives inside the clone, which also
+answers "install it wherever you want" without a flag: you clone where you want,
+and the install is there.
+[#53](https://github.com/julianflores/agenteiamail/issues/53).
+
+Recommended clone locations, recommendations rather than checks:
+
+| Runtime | Clone at |
+| --- | --- |
+| OpenClaw | `~/.openclaw/workspace/agenteiamail` |
+| Hermes Agent | `~/.hermes/workspace/agenteiamail` |
+
+- **The credentials file is `.env`**, at the top of the clone, mode `600`. State,
+  logs, the journal and the cursor are in `state/`; `runtime.env`,
+  `install.manifest` and `hermes/` sit beside them. The four unit files stay in
+  `~/.config/systemd/user`, because systemd will not read them anywhere else.
+- **The layout is decided by one predicate**, `legacy_layout()` in
+  [`harness/paths.py`](harness/paths.py), rather than one decision per file.
+  Deciding credentials and state separately produces a split-brain install — the
+  listener reading a password from one layout and writing its UID baseline into
+  the other — and that failure presents as a mailbox that has simply gone quiet.
+- **`harness/rotate_logs.py` was the only consumer that could not be
+  redirected.** Pointed at a directory the units no longer write to, it recreated
+  that directory empty, matched no logs, printed nothing and exited 0 — so the
+  weekly timer would have reported success indefinitely while the real logs grew
+  without bound. It asks the resolver now, and
+  [`scripts/test_rotate_logs.py`](scripts/test_rotate_logs.py) asserts both that
+  it rotates in the right place and that it never creates the old one.
+- **The units carry rendered absolute paths instead of `%h`**, which cannot
+  express "wherever the clone is". `runtime.env` and the route secrets render
+  from a separate placeholder, so a legacy install still renders correctly.
+- **The installer refuses to write when git would expose the install.** Every
+  runtime-owned path must be untracked and ignored before anything is written; a
+  deployment with no `.git` is reported as unverifiable rather than refused.
+
+### Upgrade actions
+
+**Existing installs need no action.** An install made before this release keeps
+its split layout, entirely and indefinitely — every tool resolves it correctly,
+and an upgrade will never move it.
+
+To move one into the clone, opt in. It stops the services while it works, and
+refuses rather than half-moving on an occupied destination, a symlinked source,
+or a file owned by somebody else:
+
+```bash
+scripts/install.sh --runtime openclaw --migrate --dry-run   # review the moves
+scripts/install.sh --runtime openclaw --migrate             # then do them
+
+python3 harness/paths.py env      # expect <clone>/.env
+python3 harness/paths.py state    # expect <clone>/state
+```
+
+**`git clean -xdf` is now destructive on a live install.** It deletes ignored
+files, which here means the mailbox password, both route secrets, `roster.txt`
+and the UID baseline, in one command. Use `git clean -df`.
+
 ## 1.6.0 — 2026-08-19
 
 Adds the supported, idempotent installer for OpenClaw and Hermes Agent runtimes,

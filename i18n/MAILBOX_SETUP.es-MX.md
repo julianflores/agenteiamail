@@ -80,9 +80,9 @@ Si el nombre que escribiste no aparece en esa salida, usa uno que sí aparezca.
 ## Crea el archivo
 
 ```bash
-mkdir -p ~/.config/agenteiamail
-touch ~/.config/agenteiamail/env
-chmod 600 ~/.config/agenteiamail/env
+cd /ruta/a/tu/clon
+touch .env
+chmod 600 .env
 ```
 
 `chmod 600` significa que solo tu usuario puede leerlo. Hazlo **antes** de poner la

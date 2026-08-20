@@ -76,14 +76,14 @@ non-regular files, files owned by another user, and every mode other than 0600.
 Do not put either secret in a command argument, unit file, journal event, or URL.
 
 ```bash
-install -d -m 700 ~/.config/agenteiamail/hermes
-install -m 600 /dev/null ~/.config/agenteiamail/hermes/notify.secret
-install -m 600 /dev/null ~/.config/agenteiamail/hermes/roster.secret
+install -d -m 700 hermes    # from inside the clone
+install -m 600 /dev/null hermes/notify.secret
+install -m 600 /dev/null hermes/roster.secret
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))' \
-  > ~/.config/agenteiamail/hermes/notify.secret
+  > hermes/notify.secret
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))' \
-  > ~/.config/agenteiamail/hermes/roster.secret
-chmod 600 ~/.config/agenteiamail/hermes/*.secret
+  > hermes/roster.secret
+chmod 600 hermes/*.secret
 ```
 
 Copy each generated value into only its matching static route. Keep the Hermes
@@ -99,9 +99,9 @@ profile prefix.
 ```ini
 Environment=AGENTEIAMAIL_RUNTIME=hermes
 Environment=HERMES_NOTIFY_URL=http://127.0.0.1:8644/webhooks/agenteiamail-notify
-Environment=HERMES_NOTIFY_SECRET_FILE=%h/.config/agenteiamail/hermes/notify.secret
+Environment=HERMES_NOTIFY_SECRET_FILE=/path/to/agenteiamail/hermes/notify.secret
 Environment=HERMES_ROSTER_URL=http://127.0.0.1:8644/webhooks/agenteiamail-roster
-Environment=HERMES_ROSTER_SECRET_FILE=%h/.config/agenteiamail/hermes/roster.secret
+Environment=HERMES_ROSTER_SECRET_FILE=/path/to/agenteiamail/hermes/roster.secret
 Environment=HERMES_HEALTH_URL=http://127.0.0.1:8644/health
 Environment=HERMES_SIGNATURE_MODE=v2
 ```
