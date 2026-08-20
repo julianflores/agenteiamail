@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 import stat
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -16,6 +17,17 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import accepted, config, retry
+
+# This module is imported under two different package names — `adapters.hermes`
+# by the dispatcher, which puts harness/ on the path, and `harness.adapters.
+# hermes` by scripts/hermes_smoke.py, which puts the repo root there instead. A
+# relative import works for exactly one of them, so harness/ is put on the path
+# here and `paths` imported by its bare name, which works for both.
+_HARNESS = Path(__file__).resolve().parent.parent
+if str(_HARNESS) not in sys.path:
+    sys.path.insert(0, str(_HARNESS))
+
+from paths import state_dir   # noqa: E402
 
 NAME = "hermes"
 TIMEOUT = 30
@@ -108,10 +120,10 @@ def _attempt_path(envelope, url):
     material = (
         f"{envelope.get('account', '')}\0{envelope.get('event_id', '')}\0{url}"
     ).encode("utf-8")
-    state = Path(os.environ.get(
-        "AGENTEIAMAIL_STATE", "~/.local/state/agenteiamail"
-    )).expanduser()
-    return state / "hermes-attempts" / (hashlib.sha256(material).hexdigest() + ".json")
+    return (
+        state_dir() / "hermes-attempts"
+        / (hashlib.sha256(material).hexdigest() + ".json")
+    )
 
 
 def _attempt_read(path):

@@ -26,11 +26,11 @@ from roster import DEFAULT_ROSTER, roster_addresses, sender_is_listed
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "harness"))
 import event as ev
-from paths import env_file
+from paths import env_file, state_dir
 
 DEFAULT_ENV   = None   # resolved by harness/paths.py, see main()
-DEFAULT_STATE = "~/.local/state/agenteiamail/idle.json"
-DEFAULT_JOURNAL = "~/.local/state/agenteiamail/events.jsonl"
+DEFAULT_STATE = str(state_dir() / "idle.json")
+DEFAULT_JOURNAL = str(state_dir() / "events.jsonl")
 
 # RFC 2177: a client must re-issue IDLE at least every 29 minutes.
 IDLE_REFRESH = 25 * 60

@@ -5,10 +5,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".local/state/agenteiamail"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from paths import state_dir   # noqa: E402
+
+# Asked for, not assumed. This was a hard-coded ~/.local/state/agenteiamail, the
+# only consumer with no way to redirect it, and the failure that made it worth
+# fixing is silent in both directions: main() would recreate that directory
+# empty, glob no logs, print nothing and exit 0 — so the timer reported success
+# every week while the real logs grew without bound, and the recreated directory
+# made a completed migration look half-finished.
+STATE_DIR = state_dir()
 STATE_FILE = STATE_DIR / "rotate-state.json"
 MAX_ROTATIONS = 4
 MIN_INTERVAL = 7 * 24 * 60 * 60
