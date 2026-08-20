@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+Closes [#57](https://github.com/julianflores/agenteiamail/issues/57) — the last of
+the migration follow-ups, against acceptance criteria agreed with @apollohermesfl
+before implementation rather than discovered during review of it.
+
+- **Durability is an ordering now, and the ordering is pinned.** The previous
+  version fsynced one temporary file beneath a comment claiming power-loss
+  durability. `scripts/durable.py` owns the sequence — staged data before the
+  manifest names it, the manifest rename before any service stops, each
+  destination before its source is unlinked, each source's parent after, and the
+  install root last so a reboot cannot resurrect a deleted legacy entry or a
+  finished transaction. Each of those syncs was removed to confirm its own
+  assertion fails.
+- **Any exit after a service is stopped restores it.** A rollback used to leave
+  the listener and dispatcher stopped while printing that the install was
+  unchanged: the files were unchanged and the mail had stopped. The set to
+  restore is recorded before the first stop and written into the transaction, so
+  a unit the operator had deliberately stopped stays stopped and a resume in a
+  different process still knows what to put back. A restore that fails names the
+  unit, keeps the transaction for a retry, and exits nonzero.
+- **Resume revalidates instead of inferring.** Committed destinations and
+  surviving staged copies are checked against digests recorded in the
+  transaction. A mismatch preserves every copy and the manifest and refuses to
+  clean up.
+- **Filenames inside the state tree are data again.** The digest that resume
+  checks artifacts against was a `find | xargs -I{} sh -c` pipeline, which
+  substitutes each pathname into shell program text — a file named
+  `"; touch PWNED; #` in the state tree executed a command, and the state tree
+  is a directory the migration copies wholesale.
+  [`scripts/tree_digest.py`](scripts/tree_digest.py) computes it without a
+  shell, and pins quote, newline and metacharacter names.
+- **A resume keeps the pre-stop service set recorded in the transaction**
+  instead of re-reading it from a host whose services it has already stopped.
+  Re-reading returned an empty set and persisted it, destroying the only record
+  of what had been running before the migration started.
+- **Every migration failure-path test now asserts service state**, not only
+  files — the check that would have caught the two defects above. `DESIGN.md`
+  records the rule, along with its limit: `is-active` proves service state, not
+  mail detection.
+
 Follow-up to [#53](https://github.com/julianflores/agenteiamail/issues/53),
 fixing three defects @apollohermesfl found reviewing
 [#54](https://github.com/julianflores/agenteiamail/pull/54) after merge.
