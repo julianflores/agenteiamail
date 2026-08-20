@@ -300,6 +300,13 @@ runtime_env="$clone/runtime.env"
     printf 'FAIL generated runtime configuration is not mode 0600\n'
     fail=$((fail + 1))
 }
+# systemd does not create the parent of a StandardOutput=append: path, it fails
+# the unit. An install that converged the units and enabled them without this
+# directory leaves both services dead, and the only symptom is a quiet mailbox.
+[[ -d "$state_tree" && ! -L "$state_tree" && "$(stat -c %a "$state_tree")" == 700 ]] || {
+    printf 'FAIL convergence did not create the state tree as a mode-0700 directory\n'
+    fail=$((fail + 1))
+}
 [[ "$(grep -c '^artifact[[:space:]]' "$manifest")" == 5 ]] || {
     printf 'FAIL manifest does not record exactly five created artifacts\n'
     fail=$((fail + 1))

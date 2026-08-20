@@ -848,9 +848,14 @@ plan_has_changes() {
 
 create_secure_containers() {
     umask 077
-    mkdir -p -- "$unit_dir" "$config_dir"
+    # The state tree is created here rather than left to the services. systemd
+    # does not create the parent of a StandardOutput=append: path — it fails the
+    # unit — so an install that converged the units and enabled them would leave
+    # both services dead on a host where nobody had run mkdir by hand.
+    mkdir -p -- "$unit_dir" "$config_dir" "$state_dir"
     validate_container_chain "$unit_dir" >/dev/null || die_config "unsafe unit container after creation: $unit_dir"
     validate_container_chain "$config_dir" >/dev/null || die_config "unsafe config container after creation: $config_dir"
+    validate_container_chain "$state_dir" >/dev/null || die_config "unsafe state container after creation: $state_dir"
     if [[ "$runtime" == hermes && -z "$notify_secret_file" ]]; then
         mkdir -p -- "$hermes_dir"
         validate_container_chain "$hermes_dir" >/dev/null || \
