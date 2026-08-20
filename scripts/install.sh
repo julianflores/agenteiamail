@@ -17,15 +17,16 @@ readonly ROOT
 usage() {
     cat <<'EOF'
 Usage:
-  scripts/install.sh --runtime openclaw [--upgrade|--uninstall] [--dry-run]
+  scripts/install.sh --runtime openclaw [--upgrade|--migrate|--uninstall] [--dry-run]
   scripts/install.sh --runtime hermes [--deliver TARGET --chat-id ID | --profile PROFILE]
-                     [--upgrade|--uninstall] [--non-interactive]
+                     [--upgrade|--migrate|--uninstall] [--non-interactive]
                      [--notify-secret-file PATH --roster-secret-file PATH]
                      [--dry-run]
 
 Modes:
   (default)          Install or converge the selected runtime
   --upgrade          Upgrade/converge artifacts owned by this installer
+  --migrate          Move a pre-single-root install into the clone, then converge
   --uninstall        Remove only artifacts owned by this installer
 
 Options:
@@ -727,6 +728,116 @@ check_git_hygiene() {
     fi
 }
 
+# Move a pre-single-root install into the clone.
+#
+# Explicit and opt-in, because an upgrade that moved a running install on its
+# own would be exactly the half-migration the resolver exists to prevent. What
+# makes this safe is that it refuses far more readily than it acts: anything it
+# cannot move cleanly stops the whole thing before the first rename, so a
+# refusal leaves a working install rather than half of one.
+#
+# The UID baseline is the reason the state tree moves in one piece. Lose it and
+# the listener either replays the mailbox or skips everything already delivered,
+# and neither is visible from the outside.
+plan_legacy_migration() {
+    local legacy_config="$HOME/.config/agenteiamail"
+    local legacy_state="$HOME/.local/state/agenteiamail"
+    local source destination owner refusals=0
+
+    migration_moves=()
+
+    if ! agenteiamail_legacy_layout; then
+        printf 'migrate result=nothing-to-do reason=already-single-root root=%s\n' "$install_root"
+        return 0
+    fi
+
+    # Credentials first, and by their resolved name: an OpenClaw install from
+    # before ~/.config existed keeps its file in the workspace, and it still has
+    # to land at <clone>/.env.
+    source=$(agenteiamail_env_file)
+    [[ -e "$source" || -L "$source" ]] && migration_moves+=("$source"$'\t'"$install_root/.env")
+
+    for source in "$legacy_config/runtime.env" "$legacy_config/install.manifest" \
+        "$legacy_config/hermes"; do
+        [[ -e "$source" || -L "$source" ]] || continue
+        migration_moves+=("$source"$'\t'"$install_root/${source##*/}")
+    done
+
+    [[ -e "$legacy_state" || -L "$legacy_state" ]] && \
+        migration_moves+=("$legacy_state"$'\t'"$install_root/state")
+
+    if ((${#migration_moves[@]} == 0)); then
+        printf 'migrate result=nothing-to-do reason=no-legacy-artifacts\n'
+        return 0
+    fi
+
+    local entry
+    for entry in "${migration_moves[@]}"; do
+        IFS=$'\t' read -r source destination <<<"$entry"
+
+        # A symlink is somebody's deliberate arrangement, and moving the link
+        # rather than the file it points at silently changes what the install
+        # reads. The operator resolves it; this does not guess.
+        if [[ -L "$source" ]]; then
+            printf 'migrate conflict-source=%s reason=symlink\n' "$source" >&2
+            refusals=1
+            continue
+        fi
+        owner=$(stat -Lc '%u' -- "$source" 2>/dev/null || true)
+        if [[ "$owner" != "$EUID" ]]; then
+            printf 'migrate conflict-source=%s reason=not-owned-by-caller\n' "$source" >&2
+            refusals=1
+            continue
+        fi
+        if [[ -e "$destination" || -L "$destination" ]]; then
+            printf 'migrate conflict-destination=%s reason=already-exists\n' "$destination" >&2
+            refusals=1
+            continue
+        fi
+        printf 'migrate planned-move=%s to=%s\n' "$source" "$destination"
+    done
+
+    if ((refusals)); then
+        return 1
+    fi
+    return 0
+}
+
+perform_legacy_migration() {
+    local entry source destination
+
+    ((${#migration_moves[@]})) || return 0
+
+    # Stop first. The listener holds its state file open and the dispatcher
+    # holds the journal lock; moving either underneath a running process leaves
+    # it writing into an unlinked inode nobody will ever read.
+    if [[ -n "$discovered_systemctl" ]]; then
+        "$discovered_systemctl" --user stop agenteiamail-idle.service \
+            agenteiamail-dispatch.service >/dev/null 2>&1 || true
+    fi
+
+    for entry in "${migration_moves[@]}"; do
+        IFS=$'\t' read -r source destination <<<"$entry"
+        mv -- "$source" "$destination" || \
+            die_config "migration failed moving $source to $destination; the install is now split and must be repaired by hand"
+        printf 'migrate moved=%s to=%s\n' "$source" "$destination"
+    done
+
+    # Leave nothing behind that the resolver would read as a legacy install.
+    # rmdir, not rm -rf: if something else is in there it is not ours.
+    rmdir -- "$HOME/.config/agenteiamail" 2>/dev/null || true
+    rmdir -- "$HOME/.local/state/agenteiamail" 2>/dev/null || true
+
+    if agenteiamail_legacy_layout; then
+        die_config 'migration moved every artifact but the host still resolves as a legacy install; refusing to converge a split install'
+    fi
+
+    # The resolver answers differently now, so every derived path is stale.
+    set_managed_paths
+    printf 'migrate result=moved root=%s\n' "$install_root"
+    changes_made=1
+}
+
 plan_has_changes() {
     if [[ "$mode" == uninstall ]]; then
         [[ -e "$manifest" || -L "$manifest" ]]
@@ -1081,6 +1192,7 @@ roster_secret_file=""
 mode="install"
 upgrade=0
 uninstall=0
+migrate=0
 non_interactive=0
 dry_run=0
 declare -A seen_options=()
@@ -1118,6 +1230,11 @@ while (($#)); do
             uninstall=1
             shift
             ;;
+        --migrate)
+            mark_option_once "$1"
+            migrate=1
+            shift
+            ;;
         --non-interactive)
             mark_option_once "$1"
             non_interactive=1
@@ -1144,12 +1261,14 @@ case "$runtime" in
     *) die_usage "unsupported runtime: $runtime" ;;
 esac
 
-if ((upgrade && uninstall)); then
-    die_usage '--upgrade and --uninstall are mutually exclusive'
+if ((upgrade + uninstall + migrate > 1)); then
+    die_usage '--upgrade, --migrate and --uninstall are mutually exclusive'
 elif ((upgrade)); then
     mode="upgrade"
 elif ((uninstall)); then
     mode="uninstall"
+elif ((migrate)); then
+    mode="migrate"
 fi
 
 if [[ "$runtime" != hermes ]]; then
@@ -1186,6 +1305,29 @@ fi
 
 if ! discover_prerequisites; then
     exit "$EX_CONFIG"
+fi
+
+# Before the ordinary inventory, because a migration changes what every path in
+# that inventory resolves to. Placed ahead of the dry-run branch so
+# `--migrate --dry-run` reports the moves rather than the convergence plan.
+changes_made=0
+if [[ "$mode" == migrate ]]; then
+    set_managed_paths
+    if ! plan_legacy_migration; then
+        die_config 'migration refused; nothing was moved'
+    fi
+    if ((dry_run)); then
+        if ((${#migration_moves[@]})); then
+            printf 'dry-run: migration plan contains move actions; no changes made.\n'
+            exit "$EX_CHANGED"
+        fi
+        printf 'dry-run: nothing to migrate.\n'
+        exit "$EX_OK"
+    fi
+    perform_legacy_migration
+    # Converge from here on as an upgrade: the artifacts exist and are owned,
+    # they are just in a new place and the units still name the old one.
+    mode=upgrade
 fi
 
 if ((dry_run)); then
@@ -1246,7 +1388,6 @@ print_managed_inventory
 if ((inventory_conflicts || inventory_blocked)); then
     die_config 'filesystem convergence refused because managed inventory is unsafe or unowned'
 fi
-changes_made=0
 mutation_count=0
 write_count=0
 runtime_filesystem_changed=0
