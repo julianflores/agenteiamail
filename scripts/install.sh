@@ -14,6 +14,19 @@ readonly EX_CONFIG=78
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly ROOT
 
+# The installer must not write into the tree it is converging.
+#
+# Several helpers here are Python that imports repository-local modules, and the
+# install root is now the clone — so CPython dropped __pycache__/*.pyc into
+# harness/ and harness/adapters/ as a side effect of running the installer. The
+# ownership model says the repository is preserved, not managed, and an install
+# that quietly modifies it contradicts that.
+#
+# It also hid itself: the caches are gitignored, so `git status` stayed clean,
+# and once they existed a rerun looked inert. Only a clean clone shows it, which
+# is why the regression test builds one.
+export PYTHONDONTWRITEBYTECODE=1
+
 usage() {
     cat <<'EOF'
 Usage:

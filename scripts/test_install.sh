@@ -69,6 +69,11 @@ mkdir -p "$(dirname "$clone")"
 cp -a "$ROOT" "$clone"
 rm -rf "$clone/state" "$clone/.env" "$clone/runtime.env" "$clone/install.manifest" \
     "$clone/hermes" "$clone/roster.txt"
+# A genuinely clean clone. Leaving pre-existing bytecode caches here made the
+# "leaves HOME untouched" check order-dependent: with a matching __pycache__
+# already present when the tree is snapshotted, an installer that writes
+# bytecode into the repository it is converging looks inert.
+find "$clone" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 INSTALL="$clone/scripts/install.sh"
 state_tree="$clone/state"
 before=$(python3 -c 'from pathlib import Path; print(sorted(str(p) for p in Path("'$sandbox'").rglob("*")))')
