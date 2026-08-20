@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Follow-up to [#53](https://github.com/julianflores/agenteiamail/issues/53),
+fixing three defects @apollohermesfl found reviewing
+[#54](https://github.com/julianflores/agenteiamail/pull/54) after merge.
+[#55](https://github.com/julianflores/agenteiamail/issues/55).
+
+- **The layout predicate abandoned undelivered mail.** It probed four files; a
+  legacy state tree holding an `events.jsonl` and no `idle.json` resolved into
+  the clone and left the journal behind — mail that had arrived and had never
+  been delivered, dropped with no error anywhere. It now inventories every file
+  either legacy directory can durably own, with a one-marker-only test per
+  entry. The "credentials and state cannot disagree" property is also restated
+  as conditional on neither `AGENTEIAMAIL_ENV` nor `AGENTEIAMAIL_STATE` being
+  set, which is what it always meant.
+- **`--migrate` is a recoverable transaction.** It used to move each artifact
+  with its own `mv` and, on a failure partway, tell the operator the install was
+  split and had to be repaired by hand. Artifacts are now copied into staging on
+  the destination filesystem, validated, and recorded in a durable manifest
+  before anything is committed; the sources stay intact, so a rollback is a
+  delete rather than a move that can fail for the same reason the move did.
+  Interruption has exactly two recoverable states and rerunning `--migrate`
+  resolves either. The services are stopped and **verified inactive** first —
+  the previous `|| true` meant a failed stop was indistinguishable from a
+  successful one, under a comment claiming the stop protected the move.
+- **While a migration is unfinished, nothing pretends otherwise.**
+  `scripts/install.sh` refuses every mode except `--migrate`, and
+  `scripts/healthcheck.py` reports the install as between layouts and its other
+  facts as unreliable.
+- **An unverifiable git-hygiene check no longer reports as a pass.** On a
+  deployment with no `.git` the installer could not check, said so once
+  mid-inventory, and still finished `result=passed`. Hygiene is now a tri-state
+  carried into the final report: a non-`.git` tree finishes
+  `result=passed-with-unverified-control`.
+
 ## 1.7.0 — 2026-08-20
 
 **One install, one directory, and that directory is the clone.** An install used

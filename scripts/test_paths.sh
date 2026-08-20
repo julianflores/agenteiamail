@@ -154,6 +154,73 @@ check "orphaned uid baseline: credentials stay in the same layout" \
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
+# Every durable legacy marker, one at a time.
+#
+# This block exists because the first version of the predicate probed only
+# `idle.json`, reasoning that the UID baseline is what causes a replay or a
+# skip. That was the file which motivated the fix, not the set of files that
+# matter. A legacy state tree holding an undelivered `events.jsonl` and no
+# `idle.json` resolved into the clone and abandoned the journal.
+#
+# The journal case is load-bearing: `events.jsonl` is mail that arrived and was
+# never delivered, so walking away from it drops real mail, silently. Every
+# other marker is here so that nobody has to decide again which ones count.
+# ---------------------------------------------------------------------------
+one_marker() {   # description, relative-directory, marker
+    local desc=$1 directory=$2 marker=$3
+    home=$(mktemp -d)
+    mkdir -p "$home/$directory/$(dirname "$marker")"
+    printf 'durable\n' >"$home/$directory/$marker"
+    agree "only $desc" "$home" "" state
+    check "only $desc: the whole install stays legacy" \
+        "$home/.local/state/agenteiamail" "$(py "$home" "" state)"
+    check "only $desc: credentials stay in the same layout" \
+        "$home/.config/agenteiamail/env" "$(py "$home" "" env)"
+    rm -rf "$home"
+}
+
+for marker in env install.manifest runtime.env logrotate.conf \
+    hermes/notify.secret hermes/roster.secret; do
+    one_marker "$marker" .config/agenteiamail "$marker"
+done
+
+for marker in idle.json events.jsonl dispatch.offset delivery.json \
+    rotate-state.json version.check setup.token mail.log idle.err.log \
+    dispatch.log dispatch.err.log watch.err.log setup-web.log; do
+    one_marker "$marker" .local/state/agenteiamail "$marker"
+done
+
+# Rotated logs are durable and are the one marker the lists cannot spell.
+one_marker "a rotated log" .local/state/agenteiamail mail.log.1
+
+# ---------------------------------------------------------------------------
+# The journal, said out loud. An undelivered queue is mail that arrived and was
+# never reported; resolving past it drops it with no error anywhere.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.local/state/agenteiamail"
+printf '{"event_id": "queued-and-undelivered"}\n' \
+    >"$home/.local/state/agenteiamail/events.jsonl"
+check "an undelivered journal is never abandoned" \
+    "$home/.local/state/agenteiamail" "$(py "$home" "" state)"
+check "and the journal is still where the dispatcher will look" \
+    '{"event_id": "queued-and-undelivered"}' \
+    "$(cat "$(py "$home" "" state)/events.jsonl")"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
+# Setting one per-path override splits the paths on purpose. The "cannot
+# disagree" property is conditional on neither being set, and this pins that
+# reading rather than leaving the docstring to carry it.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+check "AGENTEIAMAIL_STATE alone moves state and leaves credentials" "$ROOT/.env" \
+    "$(HOME="$home" AGENTEIAMAIL_STATE=/srv/state python3 "$ROOT/harness/paths.py" env)"
+check "AGENTEIAMAIL_STATE alone is honoured for state" "/srv/state" \
+    "$(HOME="$home" AGENTEIAMAIL_STATE=/srv/state python3 "$ROOT/harness/paths.py" state)"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
 # The arrangement the old setup form created: real file under .openclaw, with
 # the neutral path symlinked at it. Writing through the link keeps the file
 # where it is; writing to the link path would replace the link with a file and

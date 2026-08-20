@@ -284,10 +284,35 @@ then either replays the entire mailbox or skips everything already delivered.
 Both are silent.
 
 **A legacy install stays legacy, indefinitely.** Half a migration is worse than
-none, so `scripts/install.sh --migrate` is opt-in, stops the services before it
-moves anything, and refuses on an occupied destination, a symlinked source, or a
-file owned by somebody else. It refuses far more readily than it acts, because a
-refusal leaves a working install and a partial move leaves a quiet one.
+none, so `scripts/install.sh --migrate` is opt-in.
+
+**And it is a transaction, because "refuses readily" was not enough.** The first
+version moved each artifact with its own `mv` and, on a failure partway, told the
+operator the install was split and had to be repaired by hand. That is a third
+end state, and it is the quiet one: credentials in one layout, the UID baseline
+in the other. A reverse-`mv` rollback does not fix it either — if the forward
+move failed because the filesystem was full or the rename crossed devices, the
+rollback fails the same way, at the same moment, with less of the install left.
+
+So nothing is moved. Everything is copied into staging **on the destination
+filesystem**, validated there, and recorded in a durable manifest before anything
+is committed. The sources stay intact throughout, which is what makes the
+rollback a delete: an operation that needs no space and crosses no device. There
+are exactly two interruptible states — before the first commit, where the
+complete legacy install is still present, and after it, where every artifact is
+staged and the commits replay forward — and rerunning `--migrate` resolves either.
+
+The services are stopped and **verified inactive** before the switch. The
+previous version stopped them with `|| true` under a comment claiming the stop
+was what protected the move; it did not, because a stop that failed looked
+exactly like one that worked, and state was then moved out from under a listener
+holding it open. A comment asserting a guarantee the code does not provide is
+worse than no comment.
+
+While a transaction manifest exists the host is between layouts, so
+`scripts/install.sh` refuses every mode except `--migrate` and
+`scripts/healthcheck.py` reports the install as unreliable. Resolving past an
+unfinished migration is how the units and the session hook end up disagreeing.
 
 **The cost of this layout is that secrets live in a git working tree.** Three
 things hold that line: anchored `.gitignore` rules, a fail-closed check in the
@@ -299,6 +324,17 @@ the roster and the UID baseline, in one command. That is documented rather than
 prevented, because the alternative — leaving them untracked but unignored — trades
 a destructive command for a `git add -A` that publishes the password, and that is
 the worse failure.
+
+**The layout predicate is an inventory, not a sample.** Its first version probed
+only `idle.json`, reasoning that the UID baseline is what causes a replay or a
+skip. That was the file which motivated the fix rather than the set of files that
+matter: a legacy state tree holding an undelivered `events.jsonl` and no
+`idle.json` resolved into the clone and abandoned the journal — mail that had
+arrived and had never been delivered, dropped with no error anywhere. Every file
+either legacy directory can durably own is now listed in `LEGACY_CONFIG_MARKERS`
+and `LEGACY_STATE_MARKERS`, with a one-marker-only fixture per entry. Add to
+those lists when you add a file, because anything missing from them is something
+a migration can walk away from silently.
 
 The units are the one thing still outside, in `~/.config/systemd/user`, because
 systemd will not read them from anywhere else. They carry absolute paths rendered

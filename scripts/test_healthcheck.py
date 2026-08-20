@@ -232,5 +232,31 @@ _, text = f.exit_code()
 check("reachability is not presented as proof of delivery", True,
       "not that a delivered event reaches anyone" in text)
 
+# --- mid-migration, every other fact below is a guess -------------------------
+#
+# A host between layouts has half its answers resolved against a layout that is
+# no longer the whole truth. Reporting them as if they were is exactly the
+# confident-while-blind failure this check exists to prevent, so the unfinished
+# transaction is a problem in its own right and it is reported first.
+
+f = Fixture()
+transaction = f.dir / ".migrate-transaction"
+transaction.write_text("version\t1\nphase\tcommitting\n")
+original = hc.migration_transaction
+hc.migration_transaction = lambda *a, **k: transaction
+try:
+    code, text = f.exit_code()
+    check("an unfinished migration is a failure, not a warning", 1, code)
+    check("and it names the transaction", True, str(transaction) in text)
+    check("and says the other facts are unreliable", True,
+          "every path below is unreliable" in text)
+    check("and says how to resolve it", True, "--migrate" in text)
+
+    transaction.unlink()
+    code, _ = f.exit_code()
+    check("and a finished migration is not reported", 0, code)
+finally:
+    hc.migration_transaction = original
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
