@@ -96,8 +96,11 @@ function legacy_layout(): bool
         }
     }
 
-    $openclaw = $home . '/' . ENV_LEGACY_OPENCLAW;
-    return is_file($openclaw) || is_link($openclaw);
+    // A credentials file is not evidence of an install. ENV_LEGACY_OPENCLAW used
+    // to count here; it is written by the human or the harness rather than by
+    // this project, and once it became the recommended place to keep credentials
+    // a brand-new agent following the README landed in the split layout. #72.
+    return false;
 }
 
 /** The queue state, cursors and logs — one tree, whichever layout this is. */

@@ -52,8 +52,9 @@ from pathlib import Path
 # `install.sh --migrate`.
 LEGACY_CONFIG = "~/.config/agenteiamail"
 LEGACY_STATE = "~/.local/state/agenteiamail"
-# Where an OpenClaw install put its credentials before this repository knew
-# about other runtimes. Kept for detection only.
+# Where an OpenClaw install put its credentials before this repository knew about
+# other runtimes. Still read there when a host is in the legacy layout; no longer
+# evidence *of* that layout — see legacy_layout() and #72.
 LEGACY_OPENCLAW_ENV = "~/.openclaw/workspace/.env"
 
 # Every harness keeps its agent's mail credentials in the workspace folder of
@@ -157,6 +158,16 @@ def legacy_layout(home=None):
     Each marker is asked about as a link as well as a file. Older OpenClaw
     installs left a symlink pointing into their workspace, and a link to a file
     nobody has created yet still says where that file belongs.
+
+    A credentials file is deliberately not evidence. `~/.openclaw/workspace/.env`
+    used to count here, back when its presence correlated with an install made
+    before this repository knew about other runtimes. It never was a file this
+    project writes — the human writes it, or the harness does — and once the
+    harness workspace became the recommended place to put credentials, a
+    brand-new OpenClaw agent following the README landed in the split layout on a
+    host where nothing had ever been installed (#72). Every marker below is an
+    artifact the installer or the listener produced, which is what "this host has
+    an install" actually means.
     """
     config = _under(LEGACY_CONFIG, home)
     state = _under(LEGACY_STATE, home)
@@ -175,8 +186,7 @@ def legacy_layout(home=None):
             if rotated.exists() or rotated.is_symlink():
                 return True
 
-    openclaw = _under(LEGACY_OPENCLAW_ENV, home)
-    return openclaw.is_file() or openclaw.is_symlink()
+    return False
 
 
 def harness_env_files(home=None):

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+Closes [#72](https://github.com/julianflores/agenteiamail/issues/72).
+
+- **A credentials file is no longer evidence of an install.** A brand-new
+  OpenClaw agent that followed the README — put your mailbox settings in your
+  harness's workspace — landed in the pre-single-root layout, with config and
+  state outside the clone, on a host where nothing had ever been installed.
+  `~/.openclaw/workspace/.env` was doing double duty as both a credential
+  location and the `legacy_layout()` marker, and the documentation change that
+  made the harness workspace the recommended place turned "follow the
+  instructions" into "get the old layout".
+- **The marker was the odd one out all along.** `legacy_layout()` counts files
+  this project has written — `install.manifest`, `runtime.env`, `idle.json`, the
+  journal, the logs. The harness `.env` is written by the human or the harness.
+  It was included because its presence used to correlate with an install made
+  before this repository knew about other runtimes; making it the recommended
+  location for a new one broke the correlation. Removed from the predicate in all
+  three implementations.
+- **A genuine pre-1.7.0 install is still found**, by the artifacts it actually
+  has: the installer writes `install.manifest` and `runtime.env`, and a listener
+  that has ever run leaves `idle.json` and logs. The case that stops being
+  detected is the one that was never an install — a credentials file and nothing
+  else. The legacy-layout test now proves its host with a UID baseline rather
+  than with credentials, which is what made the conflation visible.
+- Credential *resolution* is unchanged: the OpenClaw path stays in
+  `HARNESS_ROOTS`, so those credentials are still read where they lie, in either
+  layout.
+- `DESIGN.md`'s account of why the predicate probes what it probes was written
+  around the old behaviour and is corrected: credentials at a harness path with
+  everything else in the clone is the ordinary arrangement, not a split-brain.
+
 Closes [#70](https://github.com/julianflores/agenteiamail/issues/70).
 
 - **The prompt a human pastes to their agent points at the harness workspace.**
