@@ -37,12 +37,16 @@ debe pasar por un chat.
 Pégale esto a tu agente:
 
 ```text
-Tu cuenta de correo ya está configurada en <clon>/.env
+Revisa la configuración de tu cuenta de correo en la carpeta workspace del
+directorio de instalación de tu Harness.
 
-Instala este repositorio para poder usarla:
+../workspace/.env
+
+Luego instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites.
+Sigue el archivo AGENTS.md dentro del repositorio.
+Pregúntame lo que necesites.
 ```
 
 Todo lo demás que el agente necesita está en el repositorio, así que el texto solo

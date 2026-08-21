@@ -38,12 +38,16 @@ et un mot de passe ne doit pas transiter par une conversation.
 Collez ceci à votre agent :
 
 ```text
-Votre compte de messagerie est déjà configuré dans <clone>/.env
+Vérifiez les paramètres de votre compte de messagerie dans le dossier workspace
+du répertoire d'installation de votre Harness.
 
-Installez ce dépôt pour pouvoir l'utiliser :
+../workspace/.env
+
+Installez ensuite ce dépôt pour pouvoir l'utiliser :
 https://github.com/julianflores/agenteiamail
 
-Suivez AGENTS.md. Demandez-moi tout ce dont vous avez besoin.
+Suivez le fichier AGENTS.md à l'intérieur du dépôt.
+Demandez-moi tout ce dont vous avez besoin.
 ```
 
 Tout le reste dont l'agent a besoin se trouve dans le dépôt : le texte n'a donc

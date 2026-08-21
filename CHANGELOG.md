@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+Closes [#70](https://github.com/julianflores/agenteiamail/issues/70).
+
+- **The prompt a human pastes to their agent points at the harness workspace.**
+  It said the mailbox was "already configured at `<clone>/.env`", which names one
+  runtime's arrangement as though it were the only one and asserts a fact the
+  human may not have established yet. It now tells the agent to *check* its
+  settings in the workspace folder of its harness installation directory, which
+  reads the same to a person and to an agent and stays true as runtimes are
+  added. Changed in `README.md`, its inline Spanish copy, and all four
+  translations together — a prompt that differs by language is four prompts.
+
 Closes [#59](https://github.com/julianflores/agenteiamail/issues/59), the last
 thing the first Hermes Agent install had to work around by hand.
 

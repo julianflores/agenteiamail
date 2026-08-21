@@ -37,12 +37,16 @@ passar por um chat.
 Cole isto para o seu agente:
 
 ```text
-Sua conta de e-mail já está configurada em <clone>/.env
+Verifique as configurações da sua conta de e-mail na pasta workspace do
+diretório de instalação do seu Harness.
 
-Instale este repositório para poder usá-la:
+../workspace/.env
+
+Depois instale este repositório para poder usá-la:
 https://github.com/julianflores/agenteiamail
 
-Siga o AGENTS.md. Pergunte o que precisar.
+Siga o arquivo AGENTS.md dentro do repositório.
+Pergunte o que precisar.
 ```
 
 Todo o resto de que o agente precisa está no repositório, então o texto só

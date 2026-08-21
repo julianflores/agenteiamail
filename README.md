@@ -34,24 +34,32 @@ password should not travel through a chat.
 Paste this to your agent:
 
 ```text
-Your email account is already configured at <clone>/.env
+Check your email account settings in the workspace folder of your Harness
+installation directory.
 
-Install this repository so you can use it:
+../workspace/.env
+
+Then install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
 
-Follow AGENTS.md. Ask me anything you need.
+Follow the AGENTS.md file inside the repository.
+Ask me anything you need.
 ```
 
 <details>
 <summary>En español</summary>
 
 ```text
-Tu cuenta de correo ya está configurada en <clone>/.env
+Revisa la configuración de tu cuenta de correo en la carpeta workspace del
+directorio de instalación de tu Harness.
 
-Instala este repositorio para poder usarla:
+../workspace/.env
+
+Luego instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites.
+Sigue el archivo AGENTS.md dentro del repositorio.
+Pregúntame lo que necesites.
 ```
 
 </details>
