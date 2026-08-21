@@ -240,10 +240,19 @@ in the workspace folder of its own installation directory:
 | OpenClaw | `~/.openclaw/workspace/.env` |
 | Hermes Agent | `~/.hermes/workspace/.env` |
 
-The resolver knows the OpenClaw path and does not yet know the others
-([#59](https://github.com/julianflores/agenteiamail/issues/59)). Until it does,
-link the file into the clone — `ln -s "$HOME/.hermes/workspace/.env" .env` — or
-name it with `AGENTEIAMAIL_ENV`. Link rather than copy, for the reason above.
+The resolver reads that file where it lies; nothing needs to be moved, copied or
+linked. Only the credentials resolve to the harness — state, `runtime.env`, the
+manifest and `hermes/` stay in the clone, because the harness owns that one file
+and this project does not.
+
+Adding a runtime means adding its root to `HARNESS_ROOTS`, in
+[`harness/paths.py`](harness/paths.py), [`scripts/envpath.sh`](scripts/envpath.sh)
+and [`webapp/lib/envfile.php`](webapp/lib/envfile.php) together —
+`scripts/test_paths.sh` asserts the three agree.
+
+If two harnesses on one host each have credentials, neither is adopted and the
+answer falls back to the clone's own `.env`. Name the right one with
+`AGENTEIAMAIL_ENV`.
 
 **You do not need to add keys.** The listener reads either schema:
 

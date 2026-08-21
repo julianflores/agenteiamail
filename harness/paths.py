@@ -26,13 +26,20 @@ The rule is deliberately boring, and it is the whole rule:
    live meant it, and nothing here second-guesses that. Setting only one of them
    deliberately splits the paths, so the "cannot disagree" property below holds
    only when neither is set.
-2. An install that predates the single root keeps the split layout, *entirely*.
+2. A harness keeps its agent's mail credentials in the workspace folder of its
+   own installation directory — `~/.openclaw/workspace/.env`,
+   `~/.hermes/workspace/.env` — and this reads that file where it lies. Only the
+   credentials; state, `runtime.env`, the manifest and `hermes/` still hang off
+   the clone. That is a deliberate exception to the "cannot disagree" property in
+   3, and a narrow one: the harness owns that file, this project does not, and a
+   password copied to a second location is a second thing to leak.
+3. An install that predates the single root keeps the split layout, *entirely*.
    Half a migration is worse than none: units writing logs to one directory
    while the session hook reads another looks exactly like a quiet mailbox.
    `legacy_layout()` is the single predicate that decides this, so — absent a
    per-path override — credentials, state and secrets cannot disagree about
    which layout they are in.
-3. Otherwise everything hangs off the clone.
+4. Otherwise everything hangs off the clone.
 
 Nothing here creates, moves, or reads a file. It answers questions.
 """
@@ -48,6 +55,24 @@ LEGACY_STATE = "~/.local/state/agenteiamail"
 # Where an OpenClaw install put its credentials before this repository knew
 # about other runtimes. Kept for detection only.
 LEGACY_OPENCLAW_ENV = "~/.openclaw/workspace/.env"
+
+# Every harness keeps its agent's mail credentials in the workspace folder of
+# its own installation directory. That is the operator-facing rule, it is what
+# the install prompt tells an agent, and it is one pattern rather than a list of
+# special cases — a new runtime is a new root here and nothing else.
+#
+# Matched exactly, and only these names. `~/.hermes/.env` is Hermes' own
+# configuration and holds its gateway token; adopting a file because it is
+# nearby and mail-shaped is how an install reads credentials it was never given.
+# scripts/test_paths.sh pins that one.
+#
+# The OpenClaw entry is listed because it is an instance of the rule, not an
+# exception to it — but it is unreachable through this list, because the same
+# file is also what `legacy_layout()` detects, and a host with it resolves into
+# the legacy branch before the harness paths are consulted. Listing it keeps the
+# rule honest; the test asserts the precedence.
+HARNESS_ROOTS = ("~/.openclaw", "~/.hermes")
+HARNESS_ENV_RELATIVE = "workspace/.env"
 
 # Every file the old layout could durably own, by directory.
 #
@@ -154,6 +179,22 @@ def legacy_layout(home=None):
     return openclaw.is_file() or openclaw.is_symlink()
 
 
+def harness_env_files(home=None):
+    """
+    The harness credential files that exist on this host, in `HARNESS_ROOTS`
+    order.
+
+    A list rather than a single answer, because how many there are is what
+    decides whether one can be used — see `env_file()`.
+    """
+    found = []
+    for root in HARNESS_ROOTS:
+        candidate = _under(root, home) / HARNESS_ENV_RELATIVE
+        if candidate.is_file() or candidate.is_symlink():
+            found.append(candidate)
+    return found
+
+
 def config_dir(environ=None, home=None):
     """Where `runtime.env`, `install.manifest` and `hermes/` live."""
     if legacy_layout(home):
@@ -170,6 +211,18 @@ def env_file(environ=None, home=None):
         return Path(override).expanduser()
 
     if not legacy_layout(home):
+        # Read the harness's file where it lies. Everything else — state,
+        # runtime.env, the manifest, hermes/ — still hangs off the clone, and
+        # that split is deliberate: the harness owns this file, this project
+        # does not, and moving or copying it to satisfy the single-root
+        # convention would put a second copy of a password on the disk.
+        harness = harness_env_files(home)
+        if len(harness) == 1:
+            return harness[0]
+        # Two of them means two agents share this host. Either could be the
+        # wrong mailbox, and a listener on the wrong mailbox is indistinguishable
+        # from a quiet one — so neither is adopted, and the answer falls back to
+        # the file this install owns. Name the right one with AGENTEIAMAIL_ENV.
         return install_root(environ, home) / ".env"
 
     neutral = _under(LEGACY_CONFIG, home) / "env"

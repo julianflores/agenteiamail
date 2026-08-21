@@ -42,21 +42,14 @@ file per harness:
 | Hermes Agent | `~/.hermes/workspace/.env` |
 
 A clone that was set up with its own `.env` inside it keeps that instead; the
-command above answers with whichever this host has.
+command above answers with whichever this host has, and it reads the harness's
+file where it lies rather than asking you to move or copy it. Only the
+credentials resolve there — state, `runtime.env`, the manifest and `hermes/` all
+stay in the clone.
 
-**If the command prints `NO CREDENTIALS` and your harness workspace file exists
-anyway, that is [#59](https://github.com/julianflores/agenteiamail/issues/59),
-not a missing mailbox.** The resolver does not yet know every harness path. Link
-the file into the clone and re-run the check — do not copy it, and do not treat
-this as the missing case below:
-
-```bash
-ln -s "$HOME/.hermes/workspace/.env" .env      # your harness's path, not this one
-```
-
-A symlink is correct here and a copy is not. A second copy of a password is a
-second thing to leak, and two copies of a hostname drift — the one you are not
-looking at is the one that is wrong.
+If two harnesses on this host each have credentials, neither is adopted: either
+could be the wrong mailbox, and a listener on the wrong mailbox looks exactly
+like a quiet one. Set `AGENTEIAMAIL_ENV` to say which is yours.
 
 Present means your human set this up before asking you, so carry on to step 3.
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+Closes [#59](https://github.com/julianflores/agenteiamail/issues/59), the last
+thing the first Hermes Agent install had to work around by hand.
+
+- **A harness's credentials are read where the harness keeps them.** Every
+  runtime keeps its agent's mail credentials in the workspace folder of its own
+  installation directory — `~/.openclaw/workspace/.env`,
+  `~/.hermes/workspace/.env` — and the resolver knew only the OpenClaw one. On a
+  correctly provisioned Hermes host, `AGENTS.md` step 2 answered
+  `NO CREDENTIALS` for a file that was one directory up, and the install was
+  finished with a symlink nobody should have needed. The rule is now written as
+  a **pattern** rather than a second hardcoded path: `HARNESS_ROOTS` plus
+  `workspace/.env`, in `harness/paths.py`, `scripts/envpath.sh` and
+  `webapp/lib/envfile.php`, which `scripts/test_paths.sh` asserts agree. Adding
+  a runtime is adding a root and nothing else.
+- **Only the credentials resolve there.** State, `runtime.env`, the manifest and
+  `hermes/` still hang off the clone. That split is deliberate and is the one
+  exception to "credentials and state cannot disagree": the harness owns that
+  file, this project does not, and copying it to satisfy the single-root
+  convention would put a second copy of a password on the disk.
+- **An OpenClaw host is unchanged.** Its path is listed as an instance of the
+  same rule, but it is also what `legacy_layout()` detects, so such a host still
+  resolves into the split layout entirely — credentials *and* state — as it did
+  before. Pinned by a test, because the failure it prevents is a live OpenClaw
+  install quietly half-moving into the clone.
+- **Two harnesses on one host adopt neither.** Two agents sharing a machine
+  means either file could be the wrong mailbox, and a listener on the wrong
+  mailbox is indistinguishable from a quiet one. The answer falls back to the
+  file this install owns; `AGENTEIAMAIL_ENV` is how an operator says which.
+- **A runtime's own config is still not a mailbox.** The rule matches
+  `<harness-root>/workspace/.env` exactly, so `~/.hermes/.env` — Hermes' gateway
+  token — is not adopted. That was already asserted; it now has its own case
+  saying why, since the two are easy to conflate.
+- `AGENTS.md` and `INSTALL.md` drop the symlink workaround they carried for one
+  release and describe the behaviour instead.
+
 ## 1.7.0 — 2026-08-21
 
 Documentation, from the first Hermes Agent install (#52) and the tester's report
