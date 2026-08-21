@@ -32,10 +32,31 @@ env=$(. scripts/envpath.sh && agenteiamail_env_file)
 [ -f "$env" ] && echo "credentials present at $env" || echo "NO CREDENTIALS ($env)"
 ```
 
-Ask rather than assume where they are. A new install of either harness keeps
-them at `.env` inside the clone; an OpenClaw install made before this
-repository knew about other runtimes has them somewhere else and keeps them
-there.
+Ask rather than assume where they are. **Your harness keeps its agent's mail
+credentials in the workspace folder of its own installation directory**, one
+file per harness:
+
+| Runtime | Credentials |
+|---|---|
+| OpenClaw | `~/.openclaw/workspace/.env` |
+| Hermes Agent | `~/.hermes/workspace/.env` |
+
+A clone that was set up with its own `.env` inside it keeps that instead; the
+command above answers with whichever this host has.
+
+**If the command prints `NO CREDENTIALS` and your harness workspace file exists
+anyway, that is [#59](https://github.com/julianflores/agenteiamail/issues/59),
+not a missing mailbox.** The resolver does not yet know every harness path. Link
+the file into the clone and re-run the check — do not copy it, and do not treat
+this as the missing case below:
+
+```bash
+ln -s "$HOME/.hermes/workspace/.env" .env      # your harness's path, not this one
+```
+
+A symlink is correct here and a copy is not. A second copy of a password is a
+second thing to leak, and two copies of a hostname drift — the one you are not
+looking at is the one that is wrong.
 
 Present means your human set this up before asking you, so carry on to step 3.
 

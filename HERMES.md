@@ -59,6 +59,24 @@ Without each route's matching `profile`, a `/p/mail-agent/...` request fails
 closed with 404. Without multiplexing, Hermes ignores the profile prefix; do
 not present such a URL as profile-bound.
 
+**A route is not live until the gateway restarts, and the restart cannot come
+from inside the gateway.**
+
+```bash
+hermes gateway restart      # from a shell outside the running gateway
+```
+
+Hermes reads its route configuration at start. Until it restarts, the routes you
+just added do not exist: `HERMES_HEALTH_URL` has nothing listening on it, and the
+installer's health probe fails on an otherwise correct configuration.
+
+An agent that is itself running inside that gateway cannot perform this step.
+Hermes refuses it — *"command or referenced script cannot restart or stop the
+gateway from inside the gateway process"* — because the restart would kill the
+command mid-flight. **That refusal is correct and is not a fault to work
+around.** Hand the restart to the operator, wait, and resume verification
+afterwards.
+
 The notify route has `deliver_only: true`, so it sends the narrow rendered
 notification without model execution. The roster route omits `deliver_only`,
 so HTTP acceptance starts an asynchronous agent run. Its example grants only

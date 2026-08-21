@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+Documentation, from the first Hermes Agent install (#52) and the tester's report
+@ateneabuffayhermes filed on #60. No code changes.
+
+- **Where a harness keeps its credentials is written down.** Each runtime keeps
+  its agent's mail credentials in the workspace folder of its own installation
+  directory — `~/.openclaw/workspace/.env`, `~/.hermes/workspace/.env` — and
+  `AGENTS.md` step 2 said instead that a new install of either harness keeps them
+  inside the clone, which is untrue for Hermes. An agent that followed it on a
+  correctly provisioned host was told `NO CREDENTIALS` and sent to re-enter a
+  password already on disk. Step 2 now states the rule, names
+  [#59](https://github.com/julianflores/agenteiamail/issues/59) as the reason the
+  resolver can still disagree with it, and prescribes the symlink — never a copy,
+  because a second copy of a password is a second thing to leak.
+- **The Himalaya examples no longer hardcode an OpenClaw path.** All three
+  `password.cmd` lines read `~/.openclaw/workspace/agenteiamail/.env`, which is
+  the wrong runtime and a pre-single-root path besides. They now carry an
+  unmistakable placeholder and point at whatever step 2 reported.
+- **`mailbox.alias.inbox = "INBOX"` is in the v2 Himalaya example.** Without it
+  the account is valid and `himalaya account check` passes while every
+  `envelope list` fails — found on v2.1.0 during the first Hermes install. The
+  neighbouring text now also says plainly that `account check` authenticates
+  rather than reads a mailbox, so section 4.4 is the proof and this is not.
+- **`HERMES.md` says a route is not live until the gateway restarts**, that the
+  restart must come from a shell outside the gateway, and that Hermes refusing to
+  restart itself from a tool subprocess is correct rather than a fault to work
+  around. Skipping it leaves nothing listening on `HERMES_HEALTH_URL` and fails
+  the installer's health probe on a correct configuration. This stopped the first
+  install until an operator intervened.
+
 Closes [#61](https://github.com/julianflores/agenteiamail/issues/61), found by
 @ateneabuffayhermes on the first Hermes Agent install — she hit it, diagnosed it,
 and patched her own clone to get past it.

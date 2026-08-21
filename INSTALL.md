@@ -232,6 +232,19 @@ python3 scripts/idle_listener.py --env /path/to/your/.env
 Or set `AGENTEIAMAIL_ENV`, which every part of this tool honours ahead of its own
 defaults.
 
+**Where a harness keeps them.** Each runtime keeps its agent's mail credentials
+in the workspace folder of its own installation directory:
+
+| Runtime | Credentials |
+|---|---|
+| OpenClaw | `~/.openclaw/workspace/.env` |
+| Hermes Agent | `~/.hermes/workspace/.env` |
+
+The resolver knows the OpenClaw path and does not yet know the others
+([#59](https://github.com/julianflores/agenteiamail/issues/59)). Until it does,
+link the file into the clone — `ln -s "$HOME/.hermes/workspace/.env" .env` — or
+name it with `AGENTEIAMAIL_ENV`. Link rather than copy, for the reason above.
+
 **You do not need to add keys.** The listener reads either schema:
 
 | Field | This tool's name | OpenClaw workspace name |
@@ -364,26 +377,36 @@ Backends are named sections, the host and port are one URL, and TLS is implied b
 the scheme. Auth is SASL.
 
 Himalaya's own config lives outside the clone and is read by Himalaya, not by
-anything here, so the credentials path in it has to be written out in full. The
-example below uses the recommended OpenClaw location; substitute your own clone.
+anything here, so the credentials path in it has to be written out in full.
+Substitute the real path of the file `agenteiamail_env_file` reported in step 2 —
+which on a harness install is that harness's workspace `.env`, not a path inside
+the clone. Himalaya resolves nothing for you: a placeholder left in place fails
+as an auth error.
 
 ```toml
 [accounts.agenteiamail]
 email = "agent@example.com"
 default = true
+mailbox.alias.inbox = "INBOX"
 
 [accounts.agenteiamail.imap]
 server = "imaps://mail.example.com:993"
 [accounts.agenteiamail.imap.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
 
 [accounts.agenteiamail.smtp]
 server = "smtps://mail.example.com:465"
 [accounts.agenteiamail.smtp.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
 ```
+
+`mailbox.alias.inbox` is not optional on v2. Without it the account is valid and
+`himalaya account check` passes, while every `envelope list` fails — verified on
+v2.1.0 by @ateneabuffayhermes during the first Hermes Agent install. It must
+appear before the first `[accounts.agenteiamail.*]` sub-table, or TOML attaches
+it to the wrong table.
 
 Confirm both backends registered; an empty `BACKENDS` column means the config
 parsed but nothing is wired, which then fails later with
@@ -393,6 +416,10 @@ parsed but nothing is wired, which then fails later with
 himalaya account list        # BACKENDS must read "imap, smtp"
 himalaya account check -a agenteiamail
 ```
+
+**`account check` passing is not the proof.** It authenticates; it does not read
+a mailbox. Section 4.4 below is the check that can fail after this one
+succeeds.
 
 ### v1.x
 
@@ -408,7 +435,7 @@ imap-port = 993
 imap-ssl = true
 imap-login = "agent@example.com"
 imap-auth = "passwd"
-imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' ~/.openclaw/workspace/agenteiamail/.env"
+imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
 ```
 
 Field names moved between 1.x releases too, so if a key is rejected, the error
