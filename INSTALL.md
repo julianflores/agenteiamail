@@ -212,8 +212,19 @@ actually read them.
 Everything below is the manual route, for a host where somebody writes the file
 by hand.
 
+Put it where your harness keeps credentials, which is where the resolver looks
+first and where the agent is told to look:
+
 ```bash
-cd /path/to/your/clone      # every path below is relative to it
+cd ~/.hermes/workspace      # or ~/.openclaw/workspace — your harness
+touch .env
+chmod 600 .env
+```
+
+On a host with no harness, the clone is the place:
+
+```bash
+cd /path/to/your/clone      # every other path below is relative to it
 touch .env
 chmod 600 .env
 ```
@@ -402,13 +413,13 @@ mailbox.alias.inbox = "INBOX"
 server = "imaps://mail.example.com:993"
 [accounts.agenteiamail.imap.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/the/.env"
 
 [accounts.agenteiamail.smtp]
 server = "smtps://mail.example.com:465"
 [accounts.agenteiamail.smtp.sasl.plain]
 authcid = "agent@example.com"
-password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
+password.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/the/.env"
 ```
 
 `mailbox.alias.inbox` is not optional on v2. Without it the account is valid and
@@ -444,7 +455,7 @@ imap-port = 993
 imap-ssl = true
 imap-login = "agent@example.com"
 imap-auth = "passwd"
-imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/your/clone/.env"
+imap-passwd.cmd = "sed -n 's/^AGENTEIAMAIL_PASSWORD=//p' /full/path/to/the/.env"
 ```
 
 Field names moved between 1.x releases too, so if a key is rejected, the error

@@ -78,6 +78,17 @@ Se o nome que você digitou não aparecer nessa saída, use um que apareça.
 
 ## Crie o arquivo
 
+Se o seu agente roda sob um harness, este arquivo fica na pasta workspace desse
+harness, que é onde o agente é instruído a olhar:
+
+```bash
+cd ~/.hermes/workspace        # ou ~/.openclaw/workspace — o seu harness
+touch .env
+chmod 600 .env
+```
+
+Em um host sem harness, coloque-o na raiz do clone:
+
 ```bash
 cd /caminho/para/seu/clone
 touch .env

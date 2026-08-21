@@ -20,7 +20,10 @@ minutes of checking that it really works.
 ### Step 1: Give it a mailbox
 
 The agent needs an email account of its own and the connection details for it,
-written into `.env` inside the clone.
+written into a `.env` file. **If your agent runs under a harness, that file
+belongs in the harness's own workspace folder** — `~/.hermes/workspace/.env`,
+`~/.openclaw/workspace/.env` — which is where the agent is told to look and where
+this tool reads it from. On a host with no harness, put it in the clone.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it**: which account to use,
 where to find the server hostname (the one part that reliably goes wrong), and the
@@ -34,24 +37,32 @@ password should not travel through a chat.
 Paste this to your agent:
 
 ```text
-Your email account is already configured at <clone>/.env
+Check your email account settings in the workspace folder of your Harness
+installation directory.
 
-Install this repository so you can use it:
+../workspace/.env
+
+Then install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
 
-Follow AGENTS.md. Ask me anything you need.
+Follow the AGENTS.md file inside the repository.
+Ask me anything you need.
 ```
 
 <details>
 <summary>En español</summary>
 
 ```text
-Tu cuenta de correo ya está configurada en <clone>/.env
+Revisa la configuración de tu cuenta de correo en la carpeta workspace del
+directorio de instalación de tu Harness.
 
-Instala este repositorio para poder usarla:
+../workspace/.env
+
+Luego instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites.
+Sigue el archivo AGENTS.md dentro del repositorio.
+Pregúntame lo que necesites.
 ```
 
 </details>
@@ -116,7 +127,9 @@ Worth knowing before you agree to it. The agent is instructed to report all of
 this back when it finishes, and you can hold it to the list:
 
 - A systemd user service that runs continuously and restarts on failure
-- A credentials file at `.env` inside the clone, mode `600`
+- A credentials file at mode `600` — your harness's workspace `.env` if you keep
+  one there, otherwise `.env` inside the clone. It is read where it lies and
+  never copied
 - Log and state files under `state/` inside the clone
 - Lingering enabled for the user, so the service survives logout
 - A standing rule added to the agent's own instructions

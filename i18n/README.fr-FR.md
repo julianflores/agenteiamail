@@ -24,7 +24,11 @@ vraiment.
 ### Étape 1 : Donnez-lui une boîte aux lettres
 
 L'agent a besoin de son propre compte de messagerie, et des paramètres de
-connexion de ce compte écrits dans `.env` au sein du clone.
+connexion de ce compte écrits dans un fichier `.env`. **Si votre agent tourne sous
+un harness, ce fichier appartient au dossier workspace de ce harness** —
+`~/.hermes/workspace/.env`, `~/.openclaw/workspace/.env` —, c'est là qu'on demande
+à l'agent de regarder et c'est de là que cet outil le lit. Sur un hôte sans
+harness, placez-le au sein du clone.
 
 **[MAILBOX_SETUP.fr-FR.md](MAILBOX_SETUP.fr-FR.md) vous guide** : quel compte utiliser, où
 trouver le nom du serveur (la seule partie qui échoue systématiquement), et le
@@ -38,12 +42,16 @@ et un mot de passe ne doit pas transiter par une conversation.
 Collez ceci à votre agent :
 
 ```text
-Votre compte de messagerie est déjà configuré dans <clone>/.env
+Vérifiez les paramètres de votre compte de messagerie dans le dossier workspace
+du répertoire d'installation de votre Harness.
 
-Installez ce dépôt pour pouvoir l'utiliser :
+../workspace/.env
+
+Installez ensuite ce dépôt pour pouvoir l'utiliser :
 https://github.com/julianflores/agenteiamail
 
-Suivez AGENTS.md. Demandez-moi tout ce dont vous avez besoin.
+Suivez le fichier AGENTS.md à l'intérieur du dépôt.
+Demandez-moi tout ce dont vous avez besoin.
 ```
 
 Tout le reste dont l'agent a besoin se trouve dans le dépôt : le texte n'a donc
@@ -113,7 +121,9 @@ tout ceci en terminant, et vous pouvez lui en demander la liste :
 
 - Un service utilisateur systemd qui tourne en continu et redémarre en cas
   d'échec
-- Un fichier d'identifiants dans `.env` au sein du clone, en `600`
+- Un fichier d'identifiants en `600` : le `.env` du workspace de votre harness si
+  vous le gardez là, sinon `.env` au sein du clone. Il est lu où il se trouve et
+  n'est jamais copié
 - Des fichiers de journal et d'état sous `state/` au sein du clone
 - Le *lingering* activé pour l'utilisateur, afin que le service survive à la
   déconnexion

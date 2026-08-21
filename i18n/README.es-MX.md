@@ -23,7 +23,10 @@ tercero son dos minutos para revisar que de verdad funciona.
 ### Paso 1: Dale un buzón
 
 El agente necesita su propia cuenta de correo, y los datos de conexión de esa
-cuenta escritos en `.env` dentro del clon.
+cuenta escritos en un archivo `.env`. **Si tu agente corre bajo un harness, ese
+archivo va en la carpeta workspace del propio harness** — `~/.hermes/workspace/.env`,
+`~/.openclaw/workspace/.env` —, que es donde se le dice al agente que mire y de
+donde esta herramienta lo lee. En un host sin harness, ponlo dentro del clon.
 
 **[MAILBOX_SETUP.es-MX.md](MAILBOX_SETUP.es-MX.md) te lleva de la mano**: qué cuenta usar,
 dónde encontrar el nombre del servidor (la parte que falla siempre), y cómo queda
@@ -37,12 +40,16 @@ contraseña no debe pasar por un chat.
 Pégale esto a tu agente:
 
 ```text
-Tu cuenta de correo ya está configurada en <clon>/.env
+Revisa la configuración de tu cuenta de correo en la carpeta workspace del
+directorio de instalación de tu Harness.
 
-Instala este repositorio para poder usarla:
+../workspace/.env
+
+Luego instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
-Sigue AGENTS.md. Pregúntame lo que necesites.
+Sigue el archivo AGENTS.md dentro del repositorio.
+Pregúntame lo que necesites.
 ```
 
 Todo lo demás que el agente necesita está en el repositorio, así que el texto solo
@@ -106,7 +113,9 @@ todo esto cuando termine, y puedes exigirle la lista:
 
 - Un servicio de usuario de systemd que corre todo el tiempo y se reinicia solo si
   falla
-- Un archivo de credenciales en `.env` dentro del clon, con permisos `600`
+- Un archivo de credenciales con permisos `600`: el `.env` del workspace de tu
+  harness si lo guardas ahí, y si no, `.env` dentro del clon. Se lee donde está y
+  nunca se copia
 - Archivos de bitácora y estado en `state/` dentro del clon
 - *Lingering* activado para tu usuario, para que el servicio sobreviva cuando
   cierras sesión

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+Closes [#70](https://github.com/julianflores/agenteiamail/issues/70).
+
+- **The prompt a human pastes to their agent points at the harness workspace.**
+  It said the mailbox was "already configured at `<clone>/.env`", which names one
+  runtime's arrangement as though it were the only one and asserts a fact the
+  human may not have established yet. It now tells the agent to *check* its
+  settings in the workspace folder of its harness installation directory, which
+  reads the same to a person and to an agent and stays true as runtimes are
+  added. Changed in `README.md`, its inline Spanish copy, and all four
+  translations together — a prompt that differs by language is four prompts.
+- **The setup instructions now agree with that prompt.** They told the human to
+  write credentials into the clone while the prompt sent their agent to the
+  harness workspace — two places that both happen to work, which is how a
+  convention quietly becomes optional. `README.md` step 1, `MAILBOX_SETUP.md`,
+  `INSTALL.md` and the "what it changes on the machine" list now name the
+  harness's workspace `.env` first and the clone as the answer for a host with no
+  harness, in English and in all four translations. The Himalaya `password.cmd`
+  examples stop naming a clone path they cannot know.
+
 Closes [#67](https://github.com/julianflores/agenteiamail/issues/67).
 
 - **The installer reads back the `runtime.env` it wrote.** A second run on a
@@ -23,7 +42,6 @@ Closes [#67](https://github.com/julianflores/agenteiamail/issues/67).
 - Parsed as `KEY=VALUE` data and never sourced, undoing exactly the escaping that
   writes it. The file holds no secrets: the two route secrets are named by path
   and never by value.
-
 Closes [#59](https://github.com/julianflores/agenteiamail/issues/59), the last
 thing the first Hermes Agent install had to work around by hand.
 
