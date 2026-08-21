@@ -30,7 +30,7 @@ import event as ev            # noqa: E402
 import dispatch as dsp        # noqa: E402
 from adapters import ACCEPTED, CONFIG   # noqa: E402
 from paths import (env_file, install_root, migration_transaction,   # noqa: E402
-                   repo_root, state_dir)
+                   repo_root, runtime_env, state_dir)
 
 STATE_DIR = state_dir()
 LISTENER_STATE = STATE_DIR / "idle.json"
@@ -46,6 +46,50 @@ DISPATCH_UNIT = "agenteiamail-dispatch.service"
 # Long enough that a slow delivery is not a fault, short enough that a queue
 # nobody is draining is noticed within a working session.
 STALE_QUEUE = float(os.environ.get("HEALTH_STALE_QUEUE", 15 * 60))
+
+
+def load_runtime_env(path=None):
+    """
+    Layer the installer's `runtime.env` under the real environment.
+
+    The services are handed this file by systemd (`EnvironmentFile=` in
+    agenteiamail-dispatch.service). A hand-run healthcheck is handed it by
+    nothing at all, and that is a real difference rather than a cosmetic one:
+    `adapters/hermes.py` detects its runtime by reading five `HERMES_*`
+    variables out of the environment, while `adapters/openclaw.py` detects its
+    own by looking for a binary on the host. So this command has always worked
+    when run by hand on OpenClaw and could not work on Hermes, where it reported
+    no selected runtime on an install whose services were delivering mail.
+
+    Read as data, never sourced. This is the inverse of the
+    `generated-runtime-config` branch of `render_artifact()` in
+    scripts/install.sh, including the backslash escaping that writes it; change
+    both or neither. `runtime.env` holds no secrets — the two Hermes route
+    secrets are named by path and never by value — and nothing here prints what
+    it read either way.
+
+    The real environment wins, so `AGENTEIAMAIL_RUNTIME=... scripts/healthcheck.py`
+    still overrides the file. Returns the path read, or None when there was
+    nothing to read: a manual install, or an OpenClaw host, has no such file and
+    that is not a fault.
+    """
+    path = runtime_env() if path is None else path
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        value = value.strip()
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            # Unescaping in this order is safe because the writer's escaping is
+            # prefix-free: it doubles backslashes first, then escapes quotes.
+            value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        os.environ.setdefault(name.strip(), value)
+    return path
 
 
 def unit_state(unit):
@@ -151,7 +195,12 @@ def runtime_facts():
     ok" is exactly the phrase somebody stops reading after.
     """
     out = {"selected": None, "available": dsp.available(), "reachable": None,
-           "detail": None, "proves_route_readiness": False}
+           "detail": None, "proves_route_readiness": False,
+           "runtime_env": None}
+    # Before anything reads the environment: on a Hermes install every value
+    # that decides the answers below arrives in this file and nowhere else.
+    loaded = load_runtime_env()
+    out["runtime_env"] = str(loaded) if loaded else None
     try:
         out["selected"] = dsp.select_runtime(os.environ.get("AGENTEIAMAIL_RUNTIME", "auto"))
     except SystemExit as exc:
@@ -219,7 +268,15 @@ def assess(facts):
                         "journalled but nothing is delivering it")
 
     if runtime["selected"] is None:
-        problems.append("no runtime is selected: " + (runtime["detail"] or "unknown reason"))
+        detail = (runtime["detail"] or "unknown reason").rstrip()
+        if not runtime["runtime_env"]:
+            # The difference between "no runtime here" and "this command could
+            # not see the one that is here" is the whole of #61, and it sends
+            # the next person to a different place.
+            detail = detail.rstrip(".") + (
+                f". No runtime.env was read from {runtime_env()}, so a runtime "
+                "configured only by that file is invisible to this command")
+        problems.append("no runtime is selected: " + detail)
     elif runtime["reachable"] is False:
         problems.append(f"the {runtime['selected']} runtime cannot be reached: "
                         + (runtime["detail"] or "no detail"))
@@ -260,6 +317,8 @@ def render(facts, problems, warnings):
     out = []
     out.append(f"runtime      {runtime['selected'] or 'NONE SELECTED'}"
                + (f"  (available: {', '.join(runtime['available'])})" if runtime["available"] else ""))
+    if runtime["runtime_env"]:
+        out.append(f"             configured by {runtime['runtime_env']}")
     if runtime["selected"]:
         reach = "reachable" if runtime["reachable"] else "NOT REACHABLE"
         out.append(f"             {reach}" + (f": {runtime['detail']}" if runtime["detail"] else ""))

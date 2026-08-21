@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+Closes [#61](https://github.com/julianflores/agenteiamail/issues/61), found by
+@ateneabuffayhermes on the first Hermes Agent install — she hit it, diagnosed it,
+and patched her own clone to get past it.
+
+- **`scripts/healthcheck.py` reads `runtime.env` itself.** The services are
+  handed that file by systemd's `EnvironmentFile=`; a hand-run healthcheck was
+  handed it by nothing, and the two runtimes do not notice that equally.
+  `adapters/openclaw.py` detects its runtime by finding a binary on the host, so
+  the manual command has always worked there. `adapters/hermes.py` detects its
+  own by reading five `HERMES_*` variables out of the environment, so on a
+  Hermes install the documented verification step reported *no runtime selected*
+  while the services were delivering mail. The file is now parsed as `KEY=value`
+  data — never sourced, values never printed, the exact inverse of the escaping
+  `scripts/install.sh` writes — and layered *under* the real environment, so an
+  explicit `AGENTEIAMAIL_RUNTIME` still wins. A missing file stays what it always
+  was: an OpenClaw or manual install, not a fault.
+- **"No runtime" and "this command cannot see the runtime" now read
+  differently.** When nothing is selected and no `runtime.env` could be read, the
+  failure names the path it looked for, because those two readings send the next
+  person to different places.
+- **The health output says which file configured the runtime**, so the answer
+  can be traced to its source instead of inferred.
+
 Closes [#57](https://github.com/julianflores/agenteiamail/issues/57) — the last of
 the migration follow-ups, against acceptance criteria agreed with @apollohermesfl
 before implementation rather than discovered during review of it.

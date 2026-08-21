@@ -26,6 +26,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import event as ev
 import healthcheck as hc
 
+# Fixture replaces hc.runtime_facts wholesale, so the real one is kept here
+# while it still exists — one test below is about what it actually does.
+REAL_RUNTIME_FACTS = hc.runtime_facts
+
 passed = failed = 0
 
 
@@ -73,7 +77,8 @@ class Fixture:
         return {"selected": self.runtime, "available": ["openclaw"],
                 "reachable": self.reachable,
                 "detail": None if self.reachable else "no openclaw binary found",
-                "proves_route_readiness": False}
+                "proves_route_readiness": False,
+                "runtime_env": None}
 
     def queue(self, count, age_seconds=0):
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ",
@@ -257,6 +262,116 @@ try:
     check("and a finished migration is not reported", 0, code)
 finally:
     hc.migration_transaction = original
+
+# --- runtime.env is read, or this command is blind on Hermes (#61) ------------
+#
+# The services get runtime.env from systemd's EnvironmentFile=; a hand-run
+# healthcheck used to get it from nowhere. That mattered asymmetrically:
+# openclaw.detect() looks for a binary on the host and is true in any process,
+# while hermes.detect() reads five HERMES_* variables out of the environment and
+# was false in every process but the units. So the documented command reported
+# no runtime on a Hermes install that was delivering mail, and only on Hermes —
+# which is why it survived to 1.7.0 unnoticed.
+
+HERMES_KEYS = ("AGENTEIAMAIL_RUNTIME", "HERMES_NOTIFY_URL", "HERMES_NOTIFY_SECRET_FILE",
+               "HERMES_ROSTER_URL", "HERMES_ROSTER_SECRET_FILE", "HERMES_HEALTH_URL",
+               "HERMES_SIGNATURE_MODE")
+
+
+def without_hermes_env():
+    """A process that has never seen runtime.env, which is the bug's precondition."""
+    saved = {k: os.environ.pop(k) for k in HERMES_KEYS if k in os.environ}
+    return saved
+
+
+def restore(saved):
+    for k in HERMES_KEYS:
+        os.environ.pop(k, None)
+    os.environ.update(saved)
+
+
+f = Fixture()
+generated = f.dir / "runtime.env"
+# Written the way scripts/install.sh writes it: quoted, escaped values.
+generated.write_text('AGENTEIAMAIL_RUNTIME="hermes"\n'
+                     'HERMES_NOTIFY_URL="http://127.0.0.1:8644/hooks/agenteiamail-notify"\n'
+                     'HERMES_NOTIFY_SECRET_FILE="%s/hermes/notify.secret"\n'
+                     'HERMES_ROSTER_URL="http://127.0.0.1:8644/hooks/agenteiamail-roster"\n'
+                     'HERMES_ROSTER_SECRET_FILE="%s/hermes/roster.secret"\n'
+                     'HERMES_HEALTH_URL="http://127.0.0.1:8644/health"\n'
+                     'HERMES_SIGNATURE_MODE="v2"\n' % (f.dir, f.dir))
+
+saved = without_hermes_env()
+try:
+    check("without runtime.env, hermes cannot be detected at all", False,
+          hc.dsp.load_adapter("hermes").detect())
+
+    read = hc.load_runtime_env(generated)
+    check("the file is reported as read", generated, read)
+    check("and the runtime it names reaches the environment", "hermes",
+          os.environ.get("AGENTEIAMAIL_RUNTIME"))
+    check("and every value the adapter detects on", True,
+          hc.dsp.load_adapter("hermes").detect())
+    check("quoting is undone, not passed through", "http://127.0.0.1:8644/health",
+          os.environ.get("HERMES_HEALTH_URL"))
+finally:
+    restore(saved)
+
+# An explicit variable is an operator overriding the install on purpose.
+saved = without_hermes_env()
+os.environ["AGENTEIAMAIL_RUNTIME"] = "openclaw"
+try:
+    hc.load_runtime_env(generated)
+    check("an explicit variable outranks the file", "openclaw",
+          os.environ.get("AGENTEIAMAIL_RUNTIME"))
+finally:
+    restore(saved)
+
+# A host with no such file is an OpenClaw or manual install, not a fault.
+saved = without_hermes_env()
+try:
+    check("a missing runtime.env is not an error", None,
+          hc.load_runtime_env(f.dir / "does-not-exist"))
+finally:
+    restore(saved)
+
+# End to end: the selection healthcheck performs, on a host configured only by
+# the file. The adapter is stubbed because reachability is a separate question —
+# what is under test is that a runtime is selected at all.
+saved = without_hermes_env()
+original_env, original_load = hc.runtime_env, hc.dsp.load_adapter
+
+
+class Reachable:
+    @staticmethod
+    def check():
+        class R:
+            status = hc.ACCEPTED
+            detail = "gateway answered"
+        return R()
+
+
+hc.runtime_env = lambda *a, **k: generated
+hc.dsp.load_adapter = lambda name: Reachable
+try:
+    facts = REAL_RUNTIME_FACTS()
+    check("runtime_facts selects hermes from the file alone", "hermes", facts["selected"])
+    check("and says which file configured it", str(generated), facts["runtime_env"])
+finally:
+    hc.runtime_env, hc.dsp.load_adapter = original_env, original_load
+    restore(saved)
+
+# And when there is genuinely nothing to read, the operator is told this command
+# could not see a file — not merely that no runtime exists. The two readings send
+# the next person to different places.
+missing = f.dir / "absent-runtime.env"
+hc.runtime_env = lambda *a, **k: missing
+try:
+    _, problems, _ = Fixture(runtime=None).run()
+    check("a runtime.env that could not be read is named in the failure", True,
+          any(str(missing) in p for p in problems))
+finally:
+    hc.runtime_env = original_env
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
