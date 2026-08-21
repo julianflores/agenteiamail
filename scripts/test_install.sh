@@ -808,6 +808,108 @@ else
     fail=$((fail + 1))
 fi
 
+# ---------------------------------------------------------------------------
+# The installer reads back the runtime.env it wrote. #67.
+#
+# Every check above supplies the three Hermes URLs in the environment, which is
+# how the defect stayed invisible: a re-run on a converged host has none of them,
+# and the installer demanded values it had already recorded itself. The failure
+# read as "this host was never configured" on a host that was configured,
+# running and delivering mail.
+#
+# These run without the URLs, which is the case the harness above never covers.
+# ---------------------------------------------------------------------------
+recall_run() {   # runs the installer with no Hermes values in the environment
+    env -u AGENTEIAMAIL_ENV -u HERMES_NOTIFY_URL -u HERMES_ROSTER_URL \
+        -u HERMES_HEALTH_URL -u HERMES_SIGNATURE_MODE \
+        HOME="$sandbox" \
+        XDG_CONFIG_HOME="$sandbox/ignored-config" \
+        XDG_STATE_HOME="$sandbox/ignored-state" \
+        FAKE_SERVICE_PATH="$fixture_bin:/usr/bin:/bin" \
+        PATH="$fixture_bin:/usr/bin:/bin" \
+        "$INSTALL" "$@" 2>&1
+}
+
+reset_install; rm -rf "$FAKE_SYSTEMD_STATE"; mkdir -p "$FAKE_SYSTEMD_STATE"
+
+# Nothing recorded: the old failure, unchanged. An install that has never
+# converged has nothing to recall and must still say so.
+out=$(recall_run --runtime hermes --profile default --dry-run)
+if [[ "$out" == *'HERMES_NOTIFY_URL is required'* ]]; then
+    printf 'ok   with nothing recorded, the requirement is unchanged\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL a host with no runtime.env should still demand the URLs\n%s\n' "$out"
+    fail=$((fail + 1))
+fi
+
+# Recorded by a previous run, written exactly as render_artifact writes it:
+# quoted values, secrets named by path and never by value.
+install -m 600 /dev/null "$clone/hermes-notify.secret"
+install -m 600 /dev/null "$clone/hermes-roster.secret"
+printf 'notify-secret-value\n' >"$clone/hermes-notify.secret"
+printf 'roster-secret-value\n' >"$clone/hermes-roster.secret"
+cat >"$clone/runtime.env" <<RUNTIME_ENV
+AGENTEIAMAIL_RUNTIME="hermes"
+HERMES_NOTIFY_URL="http://127.0.0.1:9/webhooks/agenteiamail-notify"
+HERMES_NOTIFY_SECRET_FILE="$clone/hermes-notify.secret"
+HERMES_ROSTER_URL="http://127.0.0.1:9/webhooks/agenteiamail-roster"
+HERMES_ROSTER_SECRET_FILE="$clone/hermes-roster.secret"
+HERMES_HEALTH_URL="http://127.0.0.1:9/health"
+HERMES_SIGNATURE_MODE="v2"
+RUNTIME_ENV
+
+out=$(recall_run --runtime hermes --profile default --dry-run)
+if [[ "$out" != *'HERMES_NOTIFY_URL is required'* ]]; then
+    printf 'ok   a recorded runtime.env is enough to re-run\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL the installer still demanded what it had already written\n%s\n' "$out"
+    fail=$((fail + 1))
+fi
+for name in HERMES_NOTIFY_URL HERMES_ROSTER_URL HERMES_HEALTH_URL \
+            HERMES_NOTIFY_SECRET_FILE HERMES_ROSTER_SECRET_FILE; do
+    if [[ "$out" == *"inventory recalled=$name from=$clone/runtime.env"* ]]; then
+        printf 'ok   %s is recalled, and says where from\n' "$name"
+        pass=$((pass + 1))
+    else
+        printf 'FAIL %s was not recalled\n' "$name"
+        fail=$((fail + 1))
+    fi
+done
+
+# Quoting is undone rather than passed through: a value carrying its quotes
+# would be a URL no request could be made to.
+if [[ "$out" != *'"http://127.0.0.1:9'* ]]; then
+    printf 'ok   recalled values are unquoted\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL a recalled value kept its quotes\n'
+    fail=$((fail + 1))
+fi
+
+# The environment outranks the file. An operator who names a value means it, and
+# recall must not quietly overrule them.
+# Spelled out rather than routed through recall_run: this one keeps a value in
+# the environment, which is the whole point of the check.
+out=$(env -u AGENTEIAMAIL_ENV -u HERMES_ROSTER_URL -u HERMES_HEALTH_URL \
+        HOME="$sandbox" HERMES_NOTIFY_URL=http://127.0.0.1:9/webhooks/chosen-by-hand \
+        XDG_CONFIG_HOME="$sandbox/ignored-config" XDG_STATE_HOME="$sandbox/ignored-state" \
+        FAKE_SERVICE_PATH="$fixture_bin:/usr/bin:/bin" \
+        PATH="$fixture_bin:/usr/bin:/bin" \
+        "$INSTALL" --runtime hermes --profile default --dry-run 2>&1)
+if [[ "$out" != *'inventory recalled=HERMES_NOTIFY_URL'* &&
+      "$out" == *'inventory recalled=HERMES_ROSTER_URL'* ]]; then
+    printf 'ok   an explicit value outranks the recorded one\n'
+    pass=$((pass + 1))
+else
+    printf 'FAIL recall overruled a value supplied by the operator\n%s\n' "$out"
+    fail=$((fail + 1))
+fi
+
+reset_install; rm -f "$clone/hermes-notify.secret" "$clone/hermes-roster.secret"
+rm -rf "$FAKE_SYSTEMD_STATE"; mkdir -p "$FAKE_SYSTEMD_STATE"
+
 printf '
 %d passed, %d failed
 ' "$pass" "$fail"
