@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-08-21
 
 Documentation, from the first Hermes Agent install (#52) and the tester's report
 @ateneabuffayhermes filed on #60. No code changes.
@@ -125,8 +125,6 @@ fixing three defects @apollohermesfl found reviewing
   mid-inventory, and still finished `result=passed`. Hygiene is now a tri-state
   carried into the final report: a non-`.git` tree finishes
   `result=passed-with-unverified-control`.
-
-## 1.7.0 — 2026-08-20
 
 **One install, one directory, and that directory is the clone.** An install used
 to spread itself over three places — credentials and route secrets in
