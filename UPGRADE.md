@@ -170,6 +170,21 @@ it while the unit still names it is the failure INSTALL.md warns about: a
 hand-run test succeeds and the service dies at startup on a file that is no
 longer there.
 
+**Himalaya holds its own copy of that path, and nothing here can update it.**
+`~/.config/himalaya/config.toml` reads the password with a command naming the
+file in full, and Himalaya's config lives outside the clone. If that command
+points at the link you just removed, sending fails with a `FileNotFoundError`
+for a path that no longer exists — while the listener, the units and the
+healthcheck all look correct, because none of them go through Himalaya's config.
+
+```bash
+grep -n 'password.cmd\|passwd.cmd' ~/.config/himalaya/config.toml
+```
+
+Point it at the same file `agenteiamail_env_file` now reports, and keep a backup
+first. Found on the first host to make this change, where it was the only step
+the installer could not do for itself.
+
 ## 7a. If this install still uses the old split layout
 
 An install made before the single-root layout keeps credentials under
