@@ -21,6 +21,27 @@ Closes [#70](https://github.com/julianflores/agenteiamail/issues/70).
   harness, in English and in all four translations. The Himalaya `password.cmd`
   examples stop naming a clone path they cannot know.
 
+Closes [#67](https://github.com/julianflores/agenteiamail/issues/67).
+
+- **The installer reads back the `runtime.env` it wrote.** A second run on a
+  converged Hermes host demanded every value the installer had already recorded
+  itself, and failed with `HERMES_NOTIFY_URL is required` — which reads as "this
+  host was never configured" on a host that was configured, running and
+  delivering mail. Re-running the installer is ordinary: it is what an upgrade
+  changing a rendered path asks for, and that is exactly when this was found,
+  while verifying the change below on the first Hermes host. Precedence is now an
+  explicit flag, then the environment, then the recorded file, then fail. A host
+  that has never converged has nothing to recall and fails exactly as before.
+- **Recalled values are validated like supplied ones.** The recall happens before
+  every argument check rather than after, so the file cannot become a way around
+  validation. Both route-secret paths are recalled only when neither was given,
+  so a supplied flag is never paired with a path the operator did not choose.
+- **Each recalled value says where it came from**, as
+  `inventory recalled=NAME from=PATH`. A value that appears from nowhere is worse
+  than one somebody typed.
+- Parsed as `KEY=VALUE` data and never sourced, undoing exactly the escaping that
+  writes it. The file holds no secrets: the two route secrets are named by path
+  and never by value.
 Closes [#59](https://github.com/julianflores/agenteiamail/issues/59), the last
 thing the first Hermes Agent install had to work around by hand.
 
