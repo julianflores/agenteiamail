@@ -656,12 +656,37 @@ Compare it against what your OpenClaw build requires; `openclaw --version` in yo
 own shell will fail loudly if the Node it finds is too old. One observed install
 needed Node 24 and the service supplied 22.
 
-If they differ, pin both in the unit and restart it:
+If they differ, set both where the fix survives an upgrade — in
+`~/.config/environment.d/`, not in the unit:
 
 ```ini
-Environment=OPENCLAW=/home/you/.npm-global/bin/openclaw
-Environment=PATH=/home/you/.nvm/versions/node/v24.4.0/bin:/usr/local/bin:/usr/bin:/bin
+# ~/.config/environment.d/10-openclaw-user-path.conf
+OPENCLAW=/home/you/.npm-global/bin/openclaw
+PATH=/home/you/.nvm/versions/node/v24.4.0/bin:/usr/local/bin:/usr/bin:/bin
 ```
+
+**That file is read when the user manager starts**, so it governs every later
+login and does nothing for the session already running. Apply it to the live
+manager too, then restart the service:
+
+```bash
+systemctl --user set-environment OPENCLAW=/home/you/.npm-global/bin/openclaw
+systemctl --user set-environment PATH=/home/you/.nvm/versions/node/v24.4.0/bin:/usr/local/bin:/usr/bin:/bin
+systemctl --user restart agenteiamail-dispatch.service
+```
+
+**Do not pin these by editing the installed unit.** `scripts/install.sh`
+converges all four units from the copies in `systemd/`, so an `Environment=` line
+added by hand is drift and `--upgrade` removes it. The install keeps working
+until the next upgrade and then stops — dispatcher unable to reach `openclaw`
+again, every check in §7 still passing, and the only evidence in
+`state/watch.err.log`. That is this section's own failure mode, arriving later by
+a route nobody thinks to suspect.
+
+If you would rather carry it in the unit anyway, uncomment the `Environment=`
+line in `systemd/agenteiamail-dispatch.service` **in the clone** and rerun the
+installer. Convergence copies from there, so that edit is the source rather than
+drift, and it survives.
 
 **These warnings cannot reach your session, and you have to go and look for them.**
 If `openclaw` is missing or cannot run, the watcher has no way to inject anything,
