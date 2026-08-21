@@ -340,5 +340,106 @@ else
     printf 'skip git ignore checks (not a git checkout)\n'
 fi
 
+# ---------------------------------------------------------------------------
+# A harness keeps its agent's credentials in its own workspace, and this reads
+# them where they lie.
+#
+# Found the hard way on the first Hermes Agent install: the operator provisioned
+# ~/.hermes/workspace/.env, which is where the install prompt tells an agent to
+# look, and the resolver — which knew only the OpenClaw path — answered with the
+# clone. AGENTS.md step 2 then reported NO CREDENTIALS on a host whose
+# credentials were one directory up, and the install had to be finished with a
+# symlink nobody should have needed. #59.
+#
+# Only the credentials move. State, runtime.env, the manifest and hermes/ still
+# hang off the clone, and that split is deliberate: the harness owns that file
+# and this project does not.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.hermes/workspace"
+printf 'AGENTEIAMAIL_EMAIL=agent@example.com\n' >"$home/.hermes/workspace/.env"
+agree_all "hermes harness" "$home"
+check "hermes harness: credentials are read where the harness keeps them" \
+    "$home/.hermes/workspace/.env" "$(py "$home" "" env)"
+check "hermes harness: state still hangs off the clone" "$ROOT/state" "$(py "$home" "" state)"
+check "hermes harness: runtime config still hangs off the clone" \
+    "$ROOT/runtime.env" "$(py "$home" "" runtime-env)"
+check "hermes harness: hermes secrets still hang off the clone" \
+    "$ROOT/hermes" "$(py "$home" "" hermes)"
+check "hermes harness: this is not the legacy layout" "no" \
+    "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
+check "hermes harness: an explicit override still wins" "/srv/named.env" \
+    "$(py "$home" /srv/named.env env)"
+# The file is asked about as a link too: an operator may point the harness path
+# at a credential file kept elsewhere, and a link to a file says where it belongs.
+rm "$home/.hermes/workspace/.env"
+ln -s "$home/elsewhere.env" "$home/.hermes/workspace/.env"
+agree "hermes harness symlink" "$home"
+check "hermes harness: a dangling link is still where the credentials belong" \
+    "$home/.hermes/workspace/.env" "$(py "$home" "" env)"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
+# The runtime's own config is not the agent's mailbox.
+#
+# ~/.hermes/.env holds Hermes' gateway token. The rule matches
+# <harness-root>/workspace/.env exactly and nothing else, because "something
+# mail-shaped nearby" is how an install reads credentials it was never given.
+# The unrelated-deployment case above plants exactly this file; this states the
+# reason separately so the next reader cannot delete one and keep the other.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.hermes"
+printf 'HERMES_TOKEN=not-ours\n' >"$home/.hermes/.env"
+agree_all "runtime own config" "$home"
+check "a runtime's own .env is not the agent's credentials" "$ROOT/.env" \
+    "$(py "$home" "" env)"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
+# OpenClaw is an instance of the rule, and the legacy branch still wins there.
+#
+# ~/.openclaw/workspace/.env is listed among the harness roots because it is the
+# same rule, but it is also what legacy_layout() detects — so such a host
+# resolves into the split layout, credentials and state together, exactly as it
+# did before this rule existed. Adding the pattern must not quietly move an
+# OpenClaw install into the clone.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.openclaw/workspace"
+printf 'AGENT_EMAIL_ACCOUNT=agent@example.com\n' >"$home/.openclaw/workspace/.env"
+agree_all "openclaw harness" "$home"
+check "openclaw harness: credentials are read where they lie" \
+    "$home/.openclaw/workspace/.env" "$(py "$home" "" env)"
+check "openclaw harness: and the state tree is the legacy one, not the clone" \
+    "$home/.local/state/agenteiamail" "$(py "$home" "" state)"
+check "openclaw harness: config is the legacy one too" \
+    "$home/.config/agenteiamail" "$(py "$home" "" config)"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
+# Two harnesses on one host: neither is adopted.
+#
+# Two agents share the machine. Either file could be the wrong mailbox, and a
+# listener on the wrong mailbox is indistinguishable from a quiet one — the
+# failure this whole module exists to prevent. So the answer falls back to the
+# file this install owns, and the operator names the right one with
+# AGENTEIAMAIL_ENV.
+#
+# Built with two non-OpenClaw roots would be truer to the future, but there is
+# only one today; the OpenClaw file also trips legacy_layout, which is why the
+# fallback here is the legacy neutral path rather than the clone.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.hermes/workspace" "$home/.openclaw/workspace"
+printf 'AGENTEIAMAIL_EMAIL=hermes@example.com\n' >"$home/.hermes/workspace/.env"
+printf 'AGENT_EMAIL_ACCOUNT=openclaw@example.com\n' >"$home/.openclaw/workspace/.env"
+agree_all "two harnesses" "$home"
+check "two harnesses: neither agent's mailbox is guessed at" "no" \
+    "$(case $(py "$home" "" env) in "$home"/.hermes/*) echo yes ;; *) echo no ;; esac)"
+check "two harnesses: an explicit override is how you say which" "/srv/named.env" \
+    "$(py "$home" /srv/named.env env)"
+rm -rf "$home"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

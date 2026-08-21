@@ -21,6 +21,19 @@ agenteiamail_root() {
 AGENTEIAMAIL_LEGACY_CONFIG_MARKERS="env install.manifest runtime.env logrotate.conf hermes/notify.secret hermes/roster.secret"
 AGENTEIAMAIL_LEGACY_STATE_MARKERS="idle.json events.jsonl dispatch.offset delivery.json rotate-state.json version.check setup.token mail.log idle.err.log dispatch.log dispatch.err.log watch.err.log setup-web.log"
 
+# Every harness keeps its agent's mail credentials in the workspace folder of its
+# own installation directory. One pattern, not a list of special cases: a new
+# runtime is a new root here and nothing else. Keep in step with HARNESS_ROOTS /
+# HARNESS_ENV_RELATIVE in harness/paths.py and the same pair in
+# webapp/lib/envfile.php; scripts/test_paths.sh asserts all three agree.
+#
+# The OpenClaw root is listed because it is an instance of the rule rather than
+# an exception to it, and is unreachable through this list: the same file is what
+# agenteiamail_legacy_layout detects, so such a host resolves into the legacy
+# branch first.
+AGENTEIAMAIL_HARNESS_ROOTS=".openclaw .hermes"
+AGENTEIAMAIL_HARNESS_ENV_RELATIVE="workspace/.env"
+
 # True when this host has a pre-single-root install that must stay put.
 #
 # One predicate for the whole layout. Deciding credentials and state separately
@@ -77,6 +90,23 @@ agenteiamail_env_file() {
     fi
 
     if ! agenteiamail_legacy_layout; then
+        # Read the harness's file where it lies. Everything else still hangs off
+        # the clone; that split is deliberate and is explained in
+        # harness/paths.py. Two harness files means two agents share this host,
+        # either could be the wrong mailbox, and a listener on the wrong mailbox
+        # is indistinguishable from a quiet one — so neither is adopted.
+        local root candidate found="" count=0
+        for root in $AGENTEIAMAIL_HARNESS_ROOTS; do
+            candidate="$HOME/$root/$AGENTEIAMAIL_HARNESS_ENV_RELATIVE"
+            if [ -f "$candidate" ] || [ -L "$candidate" ]; then
+                found=$candidate
+                count=$((count + 1))
+            fi
+        done
+        if [ "$count" -eq 1 ]; then
+            printf '%s' "$found"
+            return
+        fi
         printf '%s/.env' "$(agenteiamail_root)"
         return
     fi

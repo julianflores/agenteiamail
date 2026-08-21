@@ -25,6 +25,21 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/guard.php';
 
+/**
+ * Every harness keeps its agent's mail credentials in the workspace folder of
+ * its own installation directory. One pattern rather than a list of special
+ * cases: a new runtime is a new root here and nothing else. Keep in step with
+ * HARNESS_ROOTS / HARNESS_ENV_RELATIVE in harness/paths.py and the same pair in
+ * scripts/envpath.sh; scripts/test_paths.sh asserts all three agree.
+ *
+ * The OpenClaw root is listed because it is an instance of the rule rather than
+ * an exception to it, and is unreachable through this list: the same file is
+ * what legacy_layout() detects, so such a host resolves into the legacy branch
+ * before these are consulted.
+ */
+const HARNESS_ROOTS         = ['.openclaw', '.hermes'];
+const HARNESS_ENV_RELATIVE  = 'workspace/.env';
+
 const ENV_BASENAME      = '.env';
 const ENV_RELATIVE      = '.config/agenteiamail/env';
 const ENV_LINK_RELATIVE = '.config/agenteiamail/env';
@@ -48,6 +63,22 @@ function env_path(): string
     }
 
     if (!legacy_layout()) {
+        // Read the harness's file where it lies. Everything else still hangs
+        // off the clone; that split is deliberate and is explained in
+        // harness/paths.py. Two harness files means two agents share this host,
+        // either could be the wrong mailbox, and a listener on the wrong mailbox
+        // is indistinguishable from a quiet one — so neither is adopted.
+        $harness = [];
+        foreach (HARNESS_ROOTS as $root) {
+            $candidate = rtrim(home_dir(), '/') . '/' . $root . '/' . HARNESS_ENV_RELATIVE;
+            clearstatcache(true, $candidate);
+            if (is_file($candidate) || is_link($candidate)) {
+                $harness[] = $candidate;
+            }
+        }
+        if (count($harness) === 1) {
+            return $harness[0];
+        }
         return install_root() . '/' . ENV_BASENAME;
     }
 

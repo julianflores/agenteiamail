@@ -144,6 +144,47 @@ rather than assuming:
   install that is the mailbox password, both route secrets, the roster and the
   UID baseline. Use `git clean -df`.
 
+## 7b. If you linked your harness's credentials into the clone
+
+Only relevant if your credentials live in a harness workspace —
+`~/.hermes/workspace/.env` or the OpenClaw equivalent — and you linked or copied
+them to `.env` inside the clone because an older version of this tool could not
+find them there.
+
+**The resolver now reads them where the harness keeps them**, so the answer to
+"where are my credentials" changes on your host even though nothing moved. Your
+existing link keeps working, and nothing breaks at the moment you pull.
+
+What changes is what `scripts/install.sh` renders: the listener unit carries
+`--env <path>` fixed at install time, and it now resolves to the harness file
+rather than to the link. Re-run the installer so the unit matches:
+
+```bash
+scripts/install.sh --runtime <your runtime> --profile <your profile> --dry-run
+scripts/install.sh --runtime <your runtime> --profile <your profile>
+grep ExecStart ~/.config/systemd/user/agenteiamail-idle.service
+```
+
+Only once that reports the harness path is it safe to remove the link. Removing
+it while the unit still names it is the failure INSTALL.md warns about: a
+hand-run test succeeds and the service dies at startup on a file that is no
+longer there.
+
+**Himalaya holds its own copy of that path, and nothing here can update it.**
+`~/.config/himalaya/config.toml` reads the password with a command naming the
+file in full, and Himalaya's config lives outside the clone. If that command
+points at the link you just removed, sending fails with a `FileNotFoundError`
+for a path that no longer exists — while the listener, the units and the
+healthcheck all look correct, because none of them go through Himalaya's config.
+
+```bash
+grep -n 'password.cmd\|passwd.cmd' ~/.config/himalaya/config.toml
+```
+
+Point it at the same file `agenteiamail_env_file` now reports, and keep a backup
+first. Found on the first host to make this change, where it was the only step
+the installer could not do for itself.
+
 ## 7a. If this install still uses the old split layout
 
 An install made before the single-root layout keeps credentials under
