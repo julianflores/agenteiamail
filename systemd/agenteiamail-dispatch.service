@@ -32,6 +32,9 @@ EnvironmentFile=-/path/to/config/runtime.env
 # A systemd user service gets a minimal PATH with nothing under $HOME, so a
 # harness binary installed by npm is invisible here while an interactive shell
 # finds it. Set the full path if autodetection cannot.
+# Uncomment it in the clone, not in the installed copy: the installer converges
+# units from this file, so an edit made to the installed unit is drift and
+# --upgrade removes it. INSTALL.md gives the environment.d alternative.
 #Environment=OPENCLAW=%h/.npm-global/bin/openclaw
 # Hermes uses full operator-supplied URLs and reads each route secret from a
 # protected file. Keep the route secrets different. GET /health proves only the

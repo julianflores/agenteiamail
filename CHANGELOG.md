@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 — 2026-08-21
+
+Closes [#75](https://github.com/julianflores/agenteiamail/issues/75).
+
+- **The documented fix for an unreachable `openclaw` no longer disappears on
+  upgrade.** §6 told operators to pin `OPENCLAW` and `PATH` by adding
+  `Environment=` lines to the installed unit. The installer converges all four
+  units from the copies in `systemd/`, so that edit is drift and `--upgrade`
+  removes it — leaving the dispatcher unable to reach `openclaw` again, every
+  check in §7 still passing, and the only evidence in `state/watch.err.log`.
+  The advice produced an install that broke later, for the exact reason the
+  section tells you to stop suspecting.
+- **`~/.config/environment.d/` is the documented mechanism now**, because it
+  lives outside the converged artifacts and survives. The section also says that
+  the file is only read when the user manager starts, and gives
+  `systemctl --user set-environment` for applying it to the running one — a gap
+  that made the file look ineffective on the host where it was first used.
+- Pinning in the unit is still supported and now says how to do it correctly:
+  uncomment the line in `systemd/agenteiamail-dispatch.service` in the clone,
+  where convergence copies *from*, rather than in the installed copy. The
+  template carries the same warning, since an operator reading the installed
+  unit sees that comment and not this changelog.
+- Found on the first fresh OpenClaw install of 1.7.0, by the tester having
+  solved it a different way than the documentation prescribes.
 
 Closes [#72](https://github.com/julianflores/agenteiamail/issues/72).
 
