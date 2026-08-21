@@ -276,12 +276,27 @@ its UID baseline into the other — and that failure is invisible. Nothing error
 The mailbox simply appears to go quiet, which is the one failure this codebase
 exists to prevent.
 
-The predicate also probes `~/.local/state/agenteiamail/idle.json`, which looks
-redundant next to the credentials probes and is not. An OpenClaw install with
-only `~/.openclaw/workspace/.env` would otherwise resolve credentials to the
-legacy path and state into the clone, abandoning the UID baseline: the listener
-then either replays the entire mailbox or skips everything already delivered.
-Both are silent.
+The predicate probes `~/.local/state/agenteiamail/idle.json` and every other file
+the old layout could durably own, and it probes **only files this project wrote**.
+That last part is the rule, and it was learned twice.
+
+First by making the inventory an inventory: a legacy state tree holding an
+undelivered `events.jsonl` and no `idle.json` resolved into the clone and
+abandoned the journal.
+
+Then by taking a file out of it. `~/.openclaw/workspace/.env` used to count as
+evidence, back when its presence correlated with an install predating
+runtime-neutral paths. It is written by the human or by the harness, never by
+this project, and once the harness workspace became the recommended place to keep
+credentials, a brand-new agent following the README landed in the split layout on
+a host where nothing had ever been installed. A credentials file says where
+credentials are. It says nothing about whether there is an install.
+
+Credentials at a harness path with everything else in the clone is therefore not
+a split-brain install but the ordinary arrangement: the harness owns that file,
+this project owns the clone, and neither is half of the other. The split-brain
+this predicate exists to prevent is a *layout* half-applied — a listener reading
+its password from one layout and writing its UID baseline into the other.
 
 **A legacy install stays legacy, indefinitely.** Half a migration is worse than
 none, so `scripts/install.sh --migrate` is opt-in.

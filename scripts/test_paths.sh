@@ -129,13 +129,20 @@ rm -rf "$home"
 # delivered.
 # ---------------------------------------------------------------------------
 home=$(mktemp -d)
-mkdir -p "$home/.openclaw/workspace"
+mkdir -p "$home/.openclaw/workspace" "$home/.local/state/agenteiamail"
 printf 'AGENT_EMAIL_ACCOUNT=old@example.com\n' >"$home/.openclaw/workspace/.env"
+# The UID baseline is what makes this an install rather than a credentials file.
+# It is a file this project wrote; the .env is not, and on its own it now means
+# nothing about the layout — see "credentials are not an install" below.
+printf '{"mailbox":"INBOX","uidvalidity":"1","last_uid":9}\n' \
+    >"$home/.local/state/agenteiamail/idle.json"
 agree_all "legacy openclaw install" "$home"
 check "legacy openclaw install: keeps its own file" "$home/.openclaw/workspace/.env" \
     "$(py "$home" "" env)"
 check "legacy openclaw install: keeps its own state tree" \
     "$home/.local/state/agenteiamail" "$(py "$home" "" state)"
+check "legacy openclaw install: keeps its own config tree" \
+    "$home/.config/agenteiamail" "$(py "$home" "" config)"
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
@@ -397,13 +404,18 @@ check "a runtime's own .env is not the agent's credentials" "$ROOT/.env" \
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
-# OpenClaw is an instance of the rule, and the legacy branch still wins there.
+# Credentials are not an install. #72.
 #
-# ~/.openclaw/workspace/.env is listed among the harness roots because it is the
-# same rule, but it is also what legacy_layout() detects — so such a host
-# resolves into the split layout, credentials and state together, exactly as it
-# did before this rule existed. Adding the pattern must not quietly move an
-# OpenClaw install into the clone.
+# A brand-new OpenClaw agent does exactly what the README tells it: it puts its
+# mailbox settings in its harness's workspace. That file used to also be the
+# legacy-layout marker, so following the instructions dropped a fresh install
+# into the pre-1.7.0 split layout — config and state outside the clone, on a host
+# where nothing had ever been installed.
+#
+# The marker was the odd one out all along. legacy_layout() counts only files
+# this project has written; the harness .env is written by the human or the
+# harness, and it was included because its presence used to correlate with an old
+# install. Making it the recommended location for a new one broke that.
 # ---------------------------------------------------------------------------
 home=$(mktemp -d)
 mkdir -p "$home/.openclaw/workspace"
@@ -411,10 +423,14 @@ printf 'AGENT_EMAIL_ACCOUNT=agent@example.com\n' >"$home/.openclaw/workspace/.en
 agree_all "openclaw harness" "$home"
 check "openclaw harness: credentials are read where they lie" \
     "$home/.openclaw/workspace/.env" "$(py "$home" "" env)"
-check "openclaw harness: and the state tree is the legacy one, not the clone" \
-    "$home/.local/state/agenteiamail" "$(py "$home" "" state)"
-check "openclaw harness: config is the legacy one too" \
-    "$home/.config/agenteiamail" "$(py "$home" "" config)"
+check "openclaw harness: a credentials file is not an install (state)" \
+    "$ROOT/state" "$(py "$home" "" state)"
+check "openclaw harness: a credentials file is not an install (config)" \
+    "$ROOT/config-is-the-clone" "$(py "$home" "" config)/config-is-the-clone"
+check "openclaw harness: nothing resolves under ~/.local/state" "no" \
+    "$(case $(py "$home" "" state) in "$home"/.local/state/*) echo yes ;; *) echo no ;; esac)"
+check "openclaw harness: the hermes secrets stay in the clone" "$ROOT/hermes" \
+    "$(py "$home" "" hermes)"
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
@@ -426,9 +442,9 @@ rm -rf "$home"
 # file this install owns, and the operator names the right one with
 # AGENTEIAMAIL_ENV.
 #
-# Built with two non-OpenClaw roots would be truer to the future, but there is
-# only one today; the OpenClaw file also trips legacy_layout, which is why the
-# fallback here is the legacy neutral path rather than the clone.
+# Two non-OpenClaw roots would be truer to the future, but there is only one
+# today. Since #72 the OpenClaw credentials file no longer pins the layout, so
+# this host is an ordinary one and the fallback is the clone's own file.
 # ---------------------------------------------------------------------------
 home=$(mktemp -d)
 mkdir -p "$home/.hermes/workspace" "$home/.openclaw/workspace"
@@ -437,6 +453,8 @@ printf 'AGENT_EMAIL_ACCOUNT=openclaw@example.com\n' >"$home/.openclaw/workspace/
 agree_all "two harnesses" "$home"
 check "two harnesses: neither agent's mailbox is guessed at" "no" \
     "$(case $(py "$home" "" env) in "$home"/.hermes/*) echo yes ;; *) echo no ;; esac)"
+check "two harnesses: the fallback is the file this install owns" "$ROOT/.env" \
+    "$(py "$home" "" env)"
 check "two harnesses: an explicit override is how you say which" "/srv/named.env" \
     "$(py "$home" /srv/named.env env)"
 rm -rf "$home"
