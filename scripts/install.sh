@@ -127,6 +127,68 @@ PYINNER
     fi
 }
 
+# What this installer already recorded, for a run that did not repeat it.
+#
+# `runtime.env` is generated here (see render_artifact's
+# generated-runtime-config branch) and, until now, never read back — so a second
+# run on a converged Hermes host demanded every value it had already written and
+# failed with "HERMES_NOTIFY_URL is required" on a host that was configured,
+# running and delivering mail. Re-running the installer is ordinary: it is what
+# an upgrade that changes a rendered path asks for.
+#
+# Parsed as KEY=VALUE data and never sourced, undoing exactly the escaping the
+# writer applies — change both or neither. It holds no secrets; the two route
+# secrets are named by path and never by value.
+declare -A recorded_runtime_env=()
+
+load_recorded_runtime_env() {
+    local file line name value
+    file=$(agenteiamail_runtime_env)
+    [[ -f "$file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        [[ -n "$line" && "$line" != '#'* && "$line" == *=* ]] || continue
+        name=${line%%=*}
+        name=${name//[[:space:]]/}
+        [[ "$name" == HERMES_* ]] || continue
+        value=${line#*=}
+        if [[ ${#value} -ge 2 && "$value" == '"'*'"' ]]; then
+            value=${value:1:${#value}-2}
+            value=${value//\\\"/\"}
+            value=${value//\\\\/\\}
+        fi
+        recorded_runtime_env[$name]=$value
+    done < "$file"
+}
+
+# Precedence: an explicit flag, then the environment, then this file, then fail.
+# An install that has never converged has no file and still fails exactly as it
+# did before, which is correct — there is nothing to recall.
+apply_recorded_runtime_env() {
+    local name source
+    source=$(agenteiamail_runtime_env)
+    load_recorded_runtime_env
+    for name in HERMES_NOTIFY_URL HERMES_ROSTER_URL HERMES_HEALTH_URL \
+                HERMES_SIGNATURE_MODE HERMES_ALLOW_REMOTE; do
+        if [[ -z "${!name:-}" && -n "${recorded_runtime_env[$name]:-}" ]]; then
+            export "$name=${recorded_runtime_env[$name]}"
+            printf 'inventory recalled=%s from=%s\n' "$name" "$source"
+        fi
+    done
+    # Only when neither was given. Supplying one and recalling the other would
+    # pair a flag the operator chose with a path they did not, and the
+    # supplied-together check below exists to stop exactly that kind of half
+    # answer.
+    if [[ -z "$notify_secret_file" && -z "$roster_secret_file" &&
+          -n "${recorded_runtime_env[HERMES_NOTIFY_SECRET_FILE]:-}" &&
+          -n "${recorded_runtime_env[HERMES_ROSTER_SECRET_FILE]:-}" ]]; then
+        notify_secret_file=${recorded_runtime_env[HERMES_NOTIFY_SECRET_FILE]}
+        roster_secret_file=${recorded_runtime_env[HERMES_ROSTER_SECRET_FILE]}
+        printf 'inventory recalled=%s from=%s\n' HERMES_NOTIFY_SECRET_FILE "$source"
+        printf 'inventory recalled=%s from=%s\n' HERMES_ROSTER_SECRET_FILE "$source"
+    fi
+}
+
 validate_hermes_route_environment() {
     local name value
     for name in HERMES_NOTIFY_URL HERMES_ROSTER_URL HERMES_HEALTH_URL; do
@@ -1746,6 +1808,12 @@ elif ((uninstall)); then
     mode="uninstall"
 elif ((migrate)); then
     mode="migrate"
+fi
+
+# Before every check below, so a recalled value is validated exactly as a
+# supplied one is. Recalling past validation would make the file a way to skip it.
+if [[ "$runtime" == hermes ]]; then
+    apply_recorded_runtime_env
 fi
 
 if [[ "$runtime" != hermes ]]; then
