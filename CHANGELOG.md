@@ -12,6 +12,14 @@ Closes [#70](https://github.com/julianflores/agenteiamail/issues/70).
   reads the same to a person and to an agent and stays true as runtimes are
   added. Changed in `README.md`, its inline Spanish copy, and all four
   translations together — a prompt that differs by language is four prompts.
+- **The setup instructions now agree with that prompt.** They told the human to
+  write credentials into the clone while the prompt sent their agent to the
+  harness workspace — two places that both happen to work, which is how a
+  convention quietly becomes optional. `README.md` step 1, `MAILBOX_SETUP.md`,
+  `INSTALL.md` and the "what it changes on the machine" list now name the
+  harness's workspace `.env` first and the clone as the answer for a host with no
+  harness, in English and in all four translations. The Himalaya `password.cmd`
+  examples stop naming a clone path they cannot know.
 
 Closes [#59](https://github.com/julianflores/agenteiamail/issues/59), the last
 thing the first Hermes Agent install had to work around by hand.

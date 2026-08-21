@@ -23,7 +23,10 @@ dois minutos conferindo que funciona de verdade.
 ### Passo 1: Dê uma caixa de e-mail a ele
 
 O agente precisa de uma conta de e-mail própria, e dos dados de conexão dessa
-conta escritos em `.env` dentro do clone.
+conta escritos em um arquivo `.env`. **Se o seu agente roda sob um harness, esse
+arquivo fica na pasta workspace do próprio harness** — `~/.hermes/workspace/.env`,
+`~/.openclaw/workspace/.env` —, que é onde o agente é instruído a olhar e de onde
+esta ferramenta o lê. Em um host sem harness, coloque-o dentro do clone.
 
 **O [MAILBOX_SETUP.pt-BR.md](MAILBOX_SETUP.pt-BR.md) explica passo a passo**: qual conta usar,
 onde encontrar o nome do servidor (a única parte que sempre dá errado), e como
@@ -110,7 +113,9 @@ terminar, e você pode cobrar a lista:
 
 - Um serviço de usuário do systemd que roda continuamente e reinicia sozinho em
   caso de falha
-- Um arquivo de credenciais em `.env` dentro do clone, com permissão `600`
+- Um arquivo de credenciais com permissão `600`: o `.env` do workspace do seu
+  harness, se você o mantém lá, ou `.env` dentro do clone. Ele é lido onde está e
+  nunca é copiado
 - Arquivos de log e estado em `state/` dentro do clone
 - *Lingering* ativado para o usuário, para o serviço sobreviver ao logout
 - Uma regra permanente adicionada às instruções do próprio agente

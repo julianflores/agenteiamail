@@ -20,7 +20,10 @@ minutes of checking that it really works.
 ### Step 1: Give it a mailbox
 
 The agent needs an email account of its own and the connection details for it,
-written into `.env` inside the clone.
+written into a `.env` file. **If your agent runs under a harness, that file
+belongs in the harness's own workspace folder** — `~/.hermes/workspace/.env`,
+`~/.openclaw/workspace/.env` — which is where the agent is told to look and where
+this tool reads it from. On a host with no harness, put it in the clone.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it**: which account to use,
 where to find the server hostname (the one part that reliably goes wrong), and the
@@ -124,7 +127,9 @@ Worth knowing before you agree to it. The agent is instructed to report all of
 this back when it finishes, and you can hold it to the list:
 
 - A systemd user service that runs continuously and restarts on failure
-- A credentials file at `.env` inside the clone, mode `600`
+- A credentials file at mode `600` — your harness's workspace `.env` if you keep
+  one there, otherwise `.env` inside the clone. It is read where it lies and
+  never copied
 - Log and state files under `state/` inside the clone
 - Lingering enabled for the user, so the service survives logout
 - A standing rule added to the agent's own instructions
