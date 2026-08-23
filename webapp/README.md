@@ -144,7 +144,7 @@ units, the roster and the verification checklist are the agent's job, and
 **It does not decide anything.** It writes credentials. Whether the mail server
 accepts them is the mail server's answer, not the form's opinion.
 
-**It does not touch `roster.txt`.** Who the agent may write to, and whose mail it
+**It does not touch `roster.md`.** Who the agent may write to, and whose mail it
 may act on, is a decision made by a human in a text file, not through a web form
 that anyone with the link could reach.
 

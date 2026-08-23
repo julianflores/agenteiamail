@@ -113,7 +113,7 @@ If it sends, stop and tell whoever set it up. Something is wrong.
 - **Know about new mail in about a second**, without polling and without being
   told to check.
 - **Read and send** through Himalaya, using the mailbox you configured.
-- **Send only to addresses you approved**, listed in `roster.txt`. Anything else is
+- **Send only to addresses you approved**, listed in `roster.md`. Anything else is
   refused outright rather than asked about.
 - **Work from mail sent by those same approved addresses.** You email it a task, it
   does the task and emails you the answer. No acknowledgement first, no permission
@@ -164,12 +164,12 @@ is a listener that works until the next reboot.
 The agent works from its mail, so the question is not whether it takes
 instructions from email (it does, that is the point) but **whose**.
 
-- `roster.txt` is an exact-match allowlist, and it is the entire answer. On the
+- `roster.md` is an exact-match allowlist, and it is the entire answer. On the
   list: the agent does what the message asks and replies. Not on the list: the
   agent tells you the mail arrived and does nothing else with it.
 - Matching is on `From` only. A `Reply-To` pointing at someone you approved
   confers nothing, so a stranger cannot borrow a listed address with a header.
-- **Adding someone to `roster.txt` is your decision**, never a response to
+- **Adding someone to `roster.md` is your decision**, never a response to
   something that arrived in the mail. That line is what turns a sender into
   someone your agent obeys, so it is worth treating as a real one.
 - No roster file means nobody is trusted; a fresh install reads mail and acts on
@@ -219,7 +219,7 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
 scripts/version.sh        installed version against the newest release, and
                           what to do about the difference.
 himalaya                  reads and sends. The listener never fetches bodies.
-scripts/send.sh + roster.txt  sending is restricted to allowlisted recipients.
+scripts/send.sh + roster.md  sending is restricted to allowlisted recipients.
 scripts/roster.py         the same allowlist, read by the listener to tag senders.
 scripts/preflight.py      proves a host can run this before you install it.
 webapp/ + setup_web.sh    a local form that writes the credentials file, for

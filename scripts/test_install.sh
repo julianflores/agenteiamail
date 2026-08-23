@@ -61,14 +61,14 @@ trap 'rm -rf "$sandbox" "$fixture_root"' EXIT
 reset_install() {
     rm -rf "$sandbox/.config" "$sandbox/.local"
     rm -rf "$clone/hermes" "$clone/state"
-    rm -f "$clone/install.manifest" "$clone/runtime.env" "$clone/.env" "$clone/roster.txt"
+    rm -f "$clone/install.manifest" "$clone/runtime.env" "$clone/.env" "$clone/roster.md"
 }
 
 clone="$sandbox/workspace/agenteiamail"
 mkdir -p "$(dirname "$clone")"
 cp -a "$ROOT" "$clone"
 rm -rf "$clone/state" "$clone/.env" "$clone/runtime.env" "$clone/install.manifest" \
-    "$clone/hermes" "$clone/roster.txt"
+    "$clone/hermes" "$clone/roster.md"
 # A genuinely clean clone. Leaving pre-existing bytecode caches here made the
 # "leaves HOME untouched" check order-dependent: with a matching __pycache__
 # already present when the tree is snapshotted, an installer that writes
@@ -569,7 +569,7 @@ done
 [[ "$LAST_OUTPUT" == *"inventory preserve-tree=$clone/state"* ]] || {
     printf 'FAIL inventory does not preserve event and UID state\n'; fail=$((fail + 1));
 }
-[[ "$LAST_OUTPUT" == *"inventory preserve-file=$clone/roster.txt role=recipient-roster"* ]] || {
+[[ "$LAST_OUTPUT" == *"inventory preserve-file=$clone/roster.md role=recipient-roster"* ]] || {
     printf 'FAIL inventory does not preserve the roster\n'; fail=$((fail + 1));
 }
 [[ "$LAST_OUTPUT" == *'plan contains create, modify, or remove actions'* ]] || {

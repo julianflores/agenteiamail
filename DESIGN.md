@@ -489,10 +489,10 @@ refusing to take instructions from mail, because taking instructions from mail i
 the product. It resolves it by making one list, written only by a human, decide
 which mail counts.
 
-`roster.txt` answers a single question, *did my human vouch for this person*, and
+`roster.md` answers a single question, *did my human vouch for this person*, and
 that one answer drives everything:
 
-| | on `roster.txt` | everyone else |
+| | on `roster.md` | everyone else |
 |---|---|---|
 | Reported to the agent | yes | yes |
 | Tagged `roster` in the notification | yes | no |

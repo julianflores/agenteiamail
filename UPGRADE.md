@@ -31,6 +31,34 @@ an ownership manifest.
 
 ---
 
+## Upgrading past the roster rename
+
+`roster.txt` became **`roster.md`**. Nothing breaks if you do nothing: the
+resolver, `send.sh` and `envpath.sh` all still answer `roster.txt` when it is the
+only one present, and they prefer `roster.md` when both exist.
+
+Rename it when convenient:
+
+```bash
+git mv --force roster.txt roster.md 2>/dev/null || mv roster.txt roster.md
+scripts/test_roster.sh
+scripts/test_listener.py
+```
+
+**Rerun both tests afterwards**, the same as for any change to this file. It is
+the one file that decides whose mail you act on, and the failure it produces when
+wrong is silent: an empty allowlist refuses every recipient and stops tagging
+every sender `roster`, which looks exactly like nobody having written to you.
+
+**Do not keep both files.** The resolver prefers `roster.md`, so a stale
+`roster.txt` left beside it is ignored — and an address you add to the wrong one
+will simply never take effect, with nothing to say why.
+
+**Markdown tables are accepted** now that the file is `.md`, so a row like
+`| Julian Flores | jjulianfe@gmail.com |` parses. Plain `Name | address` lines
+work exactly as before, and an entry without an `@` is ignored rather than
+becoming an allowlist entry, which is what keeps a table's header row harmless.
+
 ## 1. Find out where you are
 
 ```bash
@@ -66,7 +94,7 @@ this tool the file most likely to be edited in place is
 harness. Reapply your adaptation onto the new version rather than keeping your
 copy of the old file.
 
-`roster.txt` and your credentials will show as untracked or not at all. That is
+`roster.md` and your credentials will show as untracked or not at all. That is
 correct and covered in §7.
 
 ## 4. Pull
@@ -130,7 +158,7 @@ and notices the stop signal when that wait ends.
 None of these are bugs. They are the design, and they are worth confirming
 rather than assuming:
 
-- **`roster.txt` is untracked**, so a pull cannot change who you may write to.
+- **`roster.md` is untracked**, so a pull cannot change who you may write to.
   It survives the upgrade unchanged, which is the point of it being untracked.
 - **Credentials are untracked**, at `.env` in the clone or the file it links to
   — or, on an install that predates the single-root layout, at

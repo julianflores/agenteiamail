@@ -3,7 +3,7 @@
 #
 #   send.sh [--check] <to> <subject> <body-file>
 #
-# Anything not in roster.txt exits 2 and sends nothing. That is the point: this
+# Anything not in roster.md exits 2 and sends nothing. That is the point: this
 # agent reads mail all day and acts on the part of it that comes from the roster,
 # so the address it writes to must come from the same list and nowhere else.
 #
@@ -12,7 +12,7 @@
 # gate runs first, so a refusal exits before the env file is ever read.
 #
 # Environment:
-#   ROSTER    path to the allowlist        (default: repo root/roster.txt)
+#   ROSTER    path to the allowlist        (default: repo root/roster.md)
 #   ENV_FILE  path to the credentials file (default: from envpath.sh)
 #
 # ENV_FILE matters on any host whose credentials live somewhere else — the
@@ -25,7 +25,20 @@ set -euo pipefail
 # The roster lives at the repository root, not beside this script. Resolve it
 # from here rather than from the caller's working directory, and allow an
 # override so a test can point somewhere else.
-ROSTER="${ROSTER:-$(cd "$(dirname "$0")/.." && pwd)/roster.txt}"
+# roster.md is the name. roster.txt is still honoured when it is the only one
+# present: every install made before the rename has one, and resolving only the
+# new name would empty the allowlist on upgrade -- which refuses every recipient
+# while looking exactly like a roster nobody has added anyone to.
+if [ -z "${ROSTER:-}" ]; then
+	_agenteiamail_root=$(cd "$(dirname "$0")/.." && pwd)
+	if [ -e "$_agenteiamail_root/roster.md" ]; then
+		ROSTER="$_agenteiamail_root/roster.md"
+	elif [ -e "$_agenteiamail_root/roster.txt" ]; then
+		ROSTER="$_agenteiamail_root/roster.txt"
+	else
+		ROSTER="$_agenteiamail_root/roster.md"
+	fi
+fi
 # shellcheck source=envpath.sh
 . "$(cd "$(dirname "$0")" && pwd)/envpath.sh"
 ENV_FILE="${ENV_FILE:-$(agenteiamail_env_file)}"
@@ -52,7 +65,7 @@ subject=$(printf '%s' "$subject" | tr -d '\r\n')
 
 if [ ! -f "$ROSTER" ]; then
     echo "no roster at $ROSTER — refusing to send" >&2
-    echo "Create it from the template:  cp roster.txt.example roster.txt" >&2
+    echo "Create it from the template:  cp roster.md.example roster.md" >&2
     exit 2
 fi
 

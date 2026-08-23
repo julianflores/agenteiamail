@@ -34,7 +34,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = pathlib.Path(tmpdir)
 
-        roster = tmp / "roster.txt"
+        roster = tmp / "roster.md"
         roster.write_text(
             "# Addresses this agent may write to unattended.\n"
             "\n"
@@ -47,6 +47,31 @@ def main():
 
         check(allowed == {"jjulianfe@gmail.com", "spaced@example.com", "bare@example.com"},
               f"roster parsed to {allowed}")
+
+        # --- the file is roster.md now, so markdown rows must parse ---------
+        #
+        # A table row ends in a pipe. Taking everything after the last one yields
+        # an empty string, which used to be discarded silently -- so the person
+        # was simply not on the list, and nobody would notice until their mail
+        # stopped being tagged `roster` and the agent quietly stopped acting on
+        # it. That is indistinguishable from them not having written.
+        table = tmp / "roster-table.md"
+        table.write_text(
+            "# Roster\n"
+            "\n"
+            "| Name | Email |\n"
+            "|---|---|\n"
+            "| Julian Flores | jjulianfe@gmail.com |\n"
+            "| Metis Claude-Tob | metis.claude.tob@gmail.com |\n",
+            encoding="utf-8",
+        )
+        from_table = roster_addresses(table)
+        check(from_table == {"jjulianfe@gmail.com", "metis.claude.tob@gmail.com"},
+              f"markdown table roster parsed to {from_table}")
+        check("email" not in from_table,
+              "a table header row must not become an allowlist entry")
+        check(not any("-" == a for a in from_table),
+              "a table separator row must not become an allowlist entry")
 
         # --- must be tagged -------------------------------------------------
         check(sender_is_listed(message("Julian Flores <jjulianfe@gmail.com>"), allowed),

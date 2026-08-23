@@ -98,7 +98,7 @@ Si lo manda, detente y avísale a quien lo instaló. Algo está mal.
 - **Enterarse de correo nuevo en cosa de un segundo**, sin andar revisando y sin
   que se lo pidas.
 - **Leer y enviar** con Himalaya, usando el buzón que configuraste.
-- **Enviar solo a direcciones que tú aprobaste**, listadas en `roster.txt`.
+- **Enviar solo a direcciones que tú aprobaste**, listadas en `roster.md`.
   Cualquier otra se rechaza de plano, ni siquiera te pregunta.
 - **Trabajar con el correo que mandan esas mismas direcciones aprobadas.** Le
   escribes una tarea, la hace y te manda la respuesta por correo. Sin acuse previo
@@ -150,13 +150,13 @@ El agente trabaja desde su correo, así que la pregunta no es si obedece
 instrucciones que llegan por email (sí lo hace, ese es el punto) sino **de
 quién**.
 
-- `roster.txt` es una lista de coincidencia exacta, y es toda la respuesta. Si el
+- `roster.md` es una lista de coincidencia exacta, y es toda la respuesta. Si el
   remitente está en la lista, el agente hace lo que el mensaje pide y contesta. Si
   no está, te avisa que llegó el correo y no hace nada más con él.
 - La coincidencia es sobre `From` únicamente. Un `Reply-To` que apunte a alguien
   aprobado no otorga nada, así que un desconocido no puede tomar prestada una
   dirección de la lista con un encabezado.
-- **Agregar a alguien a `roster.txt` es decisión tuya**, nunca respuesta a algo que
+- **Agregar a alguien a `roster.md` es decisión tuya**, nunca respuesta a algo que
   llegó por correo. Esa línea es lo que convierte a un remitente en alguien a quien
   tu agente obedece, así que vale la pena tratarla como lo que es.
 - Sin archivo de roster no hay nadie confiable; una instalación nueva lee correo y
@@ -208,7 +208,7 @@ scripts/idle_listener.py  Servicio systemd --user. Mantiene abierta una conexió
 scripts/version.sh        la versión instalada frente a la más reciente publicada,
                           y qué hacer con la diferencia.
 himalaya                  lee y envía. El listener nunca descarga cuerpos.
-scripts/send.sh + roster.txt  el envío está restringido a destinatarios autorizados.
+scripts/send.sh + roster.md  el envío está restringido a destinatarios autorizados.
 scripts/roster.py         la misma lista, que el listener lee para marcar remitentes.
 scripts/preflight.py      comprueba que una máquina puede correr esto antes de instalarlo.
 webapp/ + setup_web.sh    un formulario local que escribe el archivo de credenciales,

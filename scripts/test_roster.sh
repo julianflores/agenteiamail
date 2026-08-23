@@ -21,7 +21,7 @@ SEND="$(cd "$(dirname "$0")" && pwd)/send.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-roster="$tmp/roster.txt"
+roster="$tmp/roster.md"
 body="$tmp/body.txt"
 echo "hi" >"$body"
 

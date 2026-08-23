@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **`roster.txt` is now `roster.md`.** The template is `roster.md.example` and
+  every document names the new file.
+- **`roster.txt` still resolves when it is the only one present**, and this is
+  the part that matters rather than the rename. Every install made before this
+  has a `roster.txt`; resolving only the new name would empty the allowlist on
+  upgrade, and an empty allowlist does not announce itself. Sending refuses
+  everyone, every inbound message stops being tagged `roster`, and the agent
+  quietly stops acting on mail it was supposed to act on — which is
+  indistinguishable from nobody having written. `paths.py`, `send.sh` and
+  `envpath.sh` all answer the same way, and prefer `roster.md` when both exist.
+- **Markdown table rows parse**, now that the file is `.md`. A row ends in a
+  pipe, and the old parser took everything after the last one — which yielded an
+  empty string that was then discarded, silently leaving that person off the
+  list. Outer pipes are stripped, separator rows are skipped, and an entry
+  without an `@` is ignored rather than becoming an allowlist entry, which is
+  what keeps a table's header row harmless.
+- `UPGRADE.md` says how to rename an existing file, and warns against keeping
+  both: the resolver prefers `roster.md`, so an address added to a stale
+  `roster.txt` beside it never takes effect and nothing says why.
+
+## Unreleased
+
 Towards [#78](https://github.com/julianflores/agenteiamail/issues/78), the session
 side: the hook branch, the watch, and the design note.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared reader for roster.txt — the list of people this agent works for.
+"""Shared reader for roster.md — the list of people this agent works for.
 
 Two things consult the roster, and they must agree exactly or the agent will
 answer someone it may not reply to:
@@ -20,7 +20,7 @@ import re
 from email.message import Message
 from email.utils import getaddresses
 
-DEFAULT_ROSTER = pathlib.Path(__file__).resolve().parents[1] / "roster.txt"
+DEFAULT_ROSTER = pathlib.Path(__file__).resolve().parents[1] / "roster.md"
 
 
 def normalise(address: str) -> str:
@@ -29,7 +29,21 @@ def normalise(address: str) -> str:
 
 
 def roster_addresses(path: pathlib.Path) -> set[str]:
-    """Allowed addresses from a `Name | email` roster. Missing file means none."""
+    """
+    Allowed addresses from a `Name | email` roster. Missing file means none.
+
+    Markdown table rows are accepted too, because the file is now `roster.md` and
+    somebody will eventually write one that way. A row like
+
+        | Julian Flores | jjulianfe@gmail.com |
+
+    ends in a pipe, and taking everything after the last one would yield an empty
+    string — which `discard("")` would then drop, silently unlisting the person.
+    Nobody would see that until mail from them stopped counting as roster mail, by
+    which point it looks like the roster simply does not work. So outer pipes are
+    stripped before the split, and a `|---|---|` separator row is ignored rather
+    than parsed into an address.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
@@ -40,7 +54,19 @@ def roster_addresses(path: pathlib.Path) -> set[str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        allowed.add(normalise(line.rsplit("|", 1)[-1]))
+        if line.startswith("|"):
+            line = line.strip("|").strip()
+            if not line:
+                continue
+            # A markdown separator row: |---|:---:|
+            if set(line.replace("|", "").strip()) <= set("-: \t"):
+                continue
+        candidate = normalise(line.rsplit("|", 1)[-1])
+        # An allowlist entry that is not an address cannot be a From address
+        # either, so this only ever makes the list stricter. It also drops a
+        # markdown header row's "Email" without needing to recognise headers.
+        if "@" in candidate:
+            allowed.add(candidate)
     allowed.discard("")
     return allowed
 
