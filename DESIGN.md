@@ -255,6 +255,80 @@ the seam to look at first; the rest is harness-independent.
 
 ---
 
+## Why one runtime pulls
+
+Claude Code is the exception to the section above, and it is worth understanding
+before changing anything in `adapters/claudecode.py`, `session_watch.sh`, or the
+Claude Code branch of `session_start.py`.
+
+**Nothing outside a Claude Code session can speak into it.** There is no
+`claude system event`. `claude -p --resume` starts a fresh headless turn and
+never appears on the screen of the session a person is sitting in front of. The
+active-producer trick that works for OpenClaw has nothing to call.
+
+So on this runtime delivery inverts. The dispatcher writes the rendered line to
+`state/session.spool` and stops there; the session comes and gets it, through two
+readers that both index the file by byte offset:
+
+- the **session-start hook**, which replays what arrived while nothing was running;
+- an armed **Monitor**, which reports each new line as it lands.
+
+The offset is what makes two readers safe: the hook replays through byte *N* and
+asks for the watch to be armed **at** *N*, so nothing falls in the gap between the
+hook finishing and the monitor attaching, and nothing is shown twice.
+
+### The spool is not named `*.log`, and that is load-bearing
+
+`rotate_logs.py` rotates every `*.log` in the state directory. Rotation renumbers
+bytes. Two readers index this file by offset, so a rotation landing between a
+replay and an arming resumes at the wrong place: mail shown twice, or mail
+stepped over that nobody ever saw. The second is indistinguishable from a quiet
+mailbox, which is the failure this whole repository exists to prevent.
+
+The cost is a file that grows without bound. That is accepted, because it grows
+by one line per message, and the alternative is a rotation scheme that would have
+to move two independent readers' cursors atomically.
+
+### One record is exactly one line
+
+A rendered notification can carry a line break — a folded subject is the usual
+source. Letting it through makes the monitor report one message as two and leaves
+every later offset a line out of step with the file it indexes into. The adapter
+flattens line breaks before appending; `scripts/test_claudecode.py` pins it.
+
+### Why the watch takes a lock, when the other runtimes forbid one outright
+
+`session_start.py` says, for every other runtime, that it deliberately does not
+start a watcher: *a session that armed its own copy made two consumers of one
+stream racing on one cursor file, which duplicated events and corrupted the
+record of what had been seen.* That is a scar, not a preference.
+
+Claude Code cannot obey that rule, because a session that does not arm a watcher
+receives nothing at all. So the rule is not dropped — the guard moves. The
+dispatcher writes the spool and never reads it, which leaves exactly one
+consumer, and `session_watch.sh` takes an exclusive `flock` so a second session
+refuses to arm rather than quietly halving the accuracy of both. Two sessions on
+one host is precisely the original bug; the lock is what keeps it from coming
+back by a different route.
+
+### Arming is the acknowledgement, and the hook must not perform it
+
+The hook reports the offset it replayed through; the **watch** writes it, when it
+is actually armed. The hook advancing it would be claiming an arming it cannot
+observe, and an agent that read the replay and never armed would lose that mail
+silently.
+
+The failure mode this chooses is repetition. An agent that ignores the arming
+instruction sees the same messages again next session. That is annoying and
+visible, which is the right trade against skipping, which is neither.
+
+The same reasoning runs the other way for a spool shorter than the recorded
+offset: it was truncated or replaced, so the offset is meaningless and reading
+resumes from zero. Replaying is survivable; stepping over everything now in the
+file is not.
+
+---
+
 ## Why the install lives inside the clone
 
 The install used to be spread over three directories: credentials and secrets in

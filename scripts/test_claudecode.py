@@ -134,5 +134,129 @@ class AgentMode(unittest.TestCase):
         self.assertEqual(claudecode.spool_path().read_text(encoding="utf-8"), "x\n")
 
 
+class SpoolReplay(unittest.TestCase):
+    """The session-start side: what a new session is told it missed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = pathlib.Path(self.tmp.name)
+        sys.path.insert(0, str(ROOT / "harness"))
+        import session_start as ss
+        self.ss = ss
+        self.spool = self.state / "session.spool"
+        self.offset = self.state / "session.offset"
+        for attr, value in (("SPOOL", self.spool), ("SESSION_OFFSET", self.offset)):
+            patcher = mock.patch.object(ss, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_everything_is_replayed_from_a_cold_start(self):
+        self.spool.write_text("one\ntwo\n", encoding="utf-8")
+        lines, capped, through = self.ss.read_spool_backlog()
+        self.assertEqual(lines, ["one", "two"])
+        self.assertFalse(capped)
+        self.assertEqual(through, self.spool.stat().st_size)
+
+    def test_only_what_is_past_the_offset_is_replayed(self):
+        self.spool.write_text("one\ntwo\n", encoding="utf-8")
+        self.offset.write_text("4", encoding="utf-8")
+        lines, _, _ = self.ss.read_spool_backlog()
+        self.assertEqual(lines, ["two"])
+
+    def test_reading_does_not_advance_the_offset(self):
+        """
+        Arming the watch acknowledges the replay, not reading it. A hook that
+        advanced the offset would claim an arming it cannot observe, and an agent
+        that never armed would silently lose that mail.
+        """
+        self.spool.write_text("one\n", encoding="utf-8")
+        self.ss.read_spool_backlog()
+        self.assertFalse(self.offset.exists())
+
+    def test_a_truncated_spool_replays_rather_than_skips(self):
+        """
+        A spool shorter than the recorded offset was replaced or truncated.
+        Trusting the stale offset steps over everything now in it, and a skipped
+        message is indistinguishable from a quiet mailbox.
+        """
+        self.spool.write_text("fresh\n", encoding="utf-8")
+        self.offset.write_text("9999", encoding="utf-8")
+        lines, _, _ = self.ss.read_spool_backlog()
+        self.assertEqual(lines, ["fresh"])
+
+    def test_a_corrupt_offset_replays_rather_than_skips(self):
+        self.spool.write_text("fresh\n", encoding="utf-8")
+        self.offset.write_text("not-a-number", encoding="utf-8")
+        lines, _, _ = self.ss.read_spool_backlog()
+        self.assertEqual(lines, ["fresh"])
+
+    def test_replay_is_capped_but_the_offset_still_covers_everything(self):
+        """
+        Trimming protects the context window. The offset must still account for
+        the untrimmed bytes, or the trimmed messages come back forever.
+        """
+        count = self.ss.MAX_REPLAY + 5
+        self.spool.write_text("".join(f"line{i}\n" for i in range(count)), encoding="utf-8")
+        lines, capped, through = self.ss.read_spool_backlog()
+        self.assertEqual(len(lines), self.ss.MAX_REPLAY)
+        self.assertTrue(capped)
+        self.assertEqual(through, self.spool.stat().st_size)
+
+    def test_missing_spool_is_quiet(self):
+        lines, capped, through = self.ss.read_spool_backlog()
+        self.assertEqual(lines, [])
+        self.assertEqual(through, 0)
+
+
+class Watcher(unittest.TestCase):
+    """The shell side: one watcher, and an offset that advances exactly."""
+
+    WATCH = ROOT / "harness/session_watch.sh"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = pathlib.Path(self.tmp.name)
+
+    def test_a_second_watcher_refuses_rather_than_racing(self):
+        """
+        Two consumers of one stream racing on one cursor duplicated events and
+        corrupted the record of what had been seen. Every other runtime avoids
+        this by never letting a session arm a watcher; this one cannot, so the
+        guard lives here instead.
+        """
+        import subprocess as sp
+        (self.state / "session.spool").write_text("", encoding="utf-8")
+        first = sp.Popen(["bash", str(self.WATCH), str(self.state), "0"],
+                         stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        self.addCleanup(lambda: (first.kill(), first.stdout.close(), first.stderr.close()))
+        deadline = __import__("time").time() + 5
+        while not (self.state / "session.watch.lock").exists():
+            if __import__("time").time() > deadline:
+                self.fail("first watcher never took the lock")
+            __import__("time").sleep(0.05)
+        __import__("time").sleep(0.3)
+        second = sp.run(["bash", str(self.WATCH), str(self.state), "0"],
+                        capture_output=True, text=True, timeout=10)
+        self.assertEqual(second.returncode, 0)
+        self.assertIn("already watching", second.stderr)
+
+    def test_arming_records_the_offset_it_was_given(self):
+        """Arming is the acknowledgement; it must land before any mail does."""
+        import subprocess as sp, time
+        (self.state / "session.spool").write_text("a\nb\n", encoding="utf-8")
+        proc = sp.Popen(["bash", str(self.WATCH), str(self.state), "4"],
+                        stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+        self.addCleanup(lambda: (proc.kill(), proc.stdout.close(), proc.stderr.close()))
+        deadline = time.time() + 5
+        offset = self.state / "session.offset"
+        while not offset.exists():
+            if time.time() > deadline:
+                self.fail("offset was never written")
+            time.sleep(0.05)
+        self.assertGreaterEqual(int(offset.read_text().strip()), 4)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
