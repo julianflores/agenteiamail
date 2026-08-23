@@ -184,6 +184,41 @@ def delivery_facts():
     return out
 
 
+def spool_facts(selected):
+    """
+    How much of the Claude Code spool no session has picked up yet.
+
+    **Reported, never judged.** Unread bytes with no session open is the normal
+    resting state of this runtime, not a fault — mail waits in the spool exactly
+    so a session that starts tomorrow still sees it.
+
+    The check the PRD originally asked for, "unread bytes and no watch attached",
+    is not implementable honestly: a Monitor is armed inside a session and cannot
+    be seen from out here. Rather than infer it from a proxy and call the guess a
+    health state, this reports what is true and says what it does not know.
+    """
+    if selected != "claudecode":
+        return None
+    out = {"spool": None, "bytes_total": 0, "bytes_unread": 0,
+           "session_arming": "unobservable"}
+    try:
+        from adapters import claudecode as cc
+        spool = cc.spool_path()
+    except Exception:
+        return out
+    out["spool"] = str(spool)
+    try:
+        out["bytes_total"] = spool.stat().st_size
+    except OSError:
+        return out
+    try:
+        offset = int((spool.parent / "session.offset").read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        offset = 0
+    out["bytes_unread"] = max(0, out["bytes_total"] - offset)
+    return out
+
+
 def runtime_facts():
     """
     Which runtime is selected, and whether it could take an event right now.
@@ -319,6 +354,13 @@ def render(facts, problems, warnings):
                + (f"  (available: {', '.join(runtime['available'])})" if runtime["available"] else ""))
     if runtime["runtime_env"]:
         out.append(f"             configured by {runtime['runtime_env']}")
+    spool = facts.get("spool")
+    if spool and spool.get("spool"):
+        out.append(f"spool        {spool['spool']}")
+        out.append(f"             {spool['bytes_unread']} byte(s) not yet picked up "
+                   f"by a session, of {spool['bytes_total']}")
+        out.append("             whether a session has armed a watch is not "
+                   "observable from here; unread bytes with no session open is normal")
     if runtime["selected"]:
         reach = "reachable" if runtime["reachable"] else "NOT REACHABLE"
         out.append(f"             {reach}" + (f": {runtime['detail']}" if runtime["detail"] else ""))
@@ -389,6 +431,7 @@ def main(argv=None):
         "delivery": delivery_facts(),
         "config": config_facts(),
     }
+    facts["spool"] = spool_facts(facts["runtime"].get("selected"))
     problems, warnings = assess(facts)
 
     if args.json:

@@ -32,6 +32,7 @@ usage() {
 Usage:
   scripts/install.sh --runtime openclaw [--upgrade|--migrate|--uninstall] [--dry-run]
   scripts/install.sh --runtime hermes [--deliver TARGET --chat-id ID | --profile PROFILE]
+  scripts/install.sh --runtime claudecode [--upgrade|--migrate|--uninstall] [--dry-run]
                      [--upgrade|--migrate|--uninstall] [--non-interactive]
                      [--notify-secret-file PATH --roster-secret-file PATH]
                      [--dry-run]
@@ -43,7 +44,7 @@ Modes:
   --uninstall        Remove only artifacts owned by this installer
 
 Options:
-  --runtime RUNTIME          Required: openclaw or hermes
+  --runtime RUNTIME          Required: openclaw, hermes, or claudecode
   --deliver TARGET          Guidance label for an operator-managed Hermes target
   --chat-id ID               Guidance label for that target's chat ID
   --profile PROFILE          Guidance label for an existing operator-managed profile
@@ -283,7 +284,14 @@ discover_prerequisites() {
     if [[ "$mode" == uninstall ]]; then
         runtime_cli="not-required-for-uninstall"
     else
-        if [[ "$runtime" == openclaw ]]; then
+        if [[ "$runtime" == claudecode ]]; then
+            # No runtime CLI is required. Delivery is a file append, and the
+            # `claude` binary is only used by the opt-in agent mode -- so
+            # demanding it here would refuse a host that this runtime works
+            # perfectly well on. The spool being writable is the real
+            # prerequisite, and the adapter's own check() owns that question.
+            runtime_cli="not-required-for-claudecode"
+        elif [[ "$runtime" == openclaw ]]; then
             if [[ -z "$service_path" ]]; then
                 if ((service_path_error_reported == 0)); then
                     prereq_error 'openclaw executable cannot be verified because the systemd user PATH is unavailable
@@ -528,6 +536,10 @@ render_artifact() {
     if [[ "$source" == generated-runtime-config ]]; then
         if [[ "$runtime" == openclaw ]]; then
             printf 'AGENTEIAMAIL_RUNTIME=openclaw\n'
+            return
+        fi
+        if [[ "$runtime" == claudecode ]]; then
+            printf 'AGENTEIAMAIL_RUNTIME=claudecode\n'
             return
         fi
         python3 - "$notify_secret_file" "$roster_secret_file" <<'PYINNER'
@@ -1644,6 +1656,32 @@ probe_openclaw_service_environment() {
     printf 'openclaw_service_probe=accepted executable=%s\n' "$discovered_runtime_cli"
 }
 
+probe_claudecode_spool() {
+    # The whole prerequisite for this runtime: can the dispatcher write the file
+    # a session will read? Proved by writing, because a stat that says "should
+    # be writable" and a write that fails are the pair this project keeps
+    # getting caught by.
+    #
+    # Deliberately NOT proved here: that anyone is reading it. A Monitor is armed
+    # inside a session and is invisible from out here, so claiming a delivery
+    # path end to end would be claiming something this code cannot see.
+    local state spool probe
+    state=$(python3 -c 'import sys; sys.path.insert(0, "'"$ROOT"'/harness"); import paths; print(paths.state_dir())') ||         die_config 'could not resolve the state directory for the Claude Code spool'
+    spool="$state/session.spool"
+    mkdir -p -- "$state" 2>/dev/null ||         die_config "state directory $state cannot be created"
+    probe="$state/.spool-probe.$$"
+    if ! : >"$probe" 2>/dev/null; then
+        rm -f -- "$probe" 2>/dev/null || true
+        die_config "state directory $state is not writable, so no event could ever be delivered"
+    fi
+    rm -f -- "$probe" 2>/dev/null || true
+    if [[ -e "$spool" && ! -w "$spool" ]]; then
+        die_config "$spool exists but is not writable"
+    fi
+    printf 'claudecode_spool_probe=accepted spool=%s\n' "$spool"
+    printf 'claudecode_spool_probe=session-arming-unobservable scope=writability-only\n'
+}
+
 print_final_verification_report() {
     local unit label secret_path secret_mode
     printf 'verification_report_begin\n'
@@ -1671,6 +1709,13 @@ print_final_verification_report() {
         printf 'verification_smoke=notify-email.received result=delivered\n'
         printf 'verification_smoke=notify-listener.error result=delivered\n'
         printf 'verification_smoke=roster-email.received result=accepted completion=unconfirmed\n'
+    elif [[ "$runtime" == claudecode ]]; then
+        printf 'verification_secret=not-applicable runtime=claudecode\n'
+        printf 'verification_smoke=claudecode-spool result=writable\n'
+        # Said plainly rather than implied. Nothing outside a session can see
+        # whether a Monitor is armed, so a writable spool proves mail can be
+        # delivered and proves nothing about whether anyone is reading it.
+        printf 'verification_note=claudecode-delivery scope=spool-writable-only session-arming=unobservable\n'
     else
         printf 'verification_secret=not-applicable runtime=openclaw\n'
         printf 'verification_smoke=openclaw-service-environment result=accepted\n'
@@ -1804,7 +1849,7 @@ done
 
 [[ -n "$runtime" ]] || die_usage '--runtime is required'
 case "$runtime" in
-    openclaw|hermes) ;;
+    openclaw|hermes|claudecode) ;;
     *) die_usage "unsupported runtime: $runtime" ;;
 esac
 
@@ -2012,6 +2057,8 @@ converge_runtime_filesystem
 verify_installed_units
 if [[ "$runtime" == openclaw ]]; then
     probe_openclaw_service_environment
+elif [[ "$runtime" == claudecode ]]; then
+    probe_claudecode_spool
 else
     probe_hermes_routes
 fi

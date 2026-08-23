@@ -639,6 +639,72 @@ passive stream.
 The one piece that may need adapting to your harness version is the output payload
 of `session_start.py`; it is marked in the file.
 
+### Claude Code
+
+This runtime is wired differently from the other two, and the difference is not
+cosmetic. **Nothing outside a Claude Code session can speak into it** — there is
+no `claude system event`, and `claude -p --resume` starts a fresh headless turn
+rather than appearing in the session you are sitting in. So the dispatcher writes
+each rendered line to `state/session.spool` and stops there, and the session
+comes and gets it. `DESIGN.md`, *"Why one runtime pulls"*, is the full account.
+
+Two consequences for the install:
+
+**No `claude` binary is required.** Delivery is a file append. The binary is used
+only by the opt-in agent mode below, so the installer does not demand it and a
+host without it on `PATH` is fine.
+
+**The session-start hook has to be registered in Claude Code's own settings**,
+and that file is yours rather than this project's. It holds configuration this
+repository knows nothing about, so the installer never converges it and never
+records it in the ownership manifest. Register it explicitly:
+
+```bash
+scripts/claude_hook.py --print     # show the fragment, change nothing
+scripts/claude_hook.py --install   # merge it in, backing up first
+scripts/claude_hook.py --check     # exits 0 when registered
+```
+
+`--install` **appends** to any `SessionStart` list already there rather than
+replacing it, because Claude Code runs every hook registered for the event and
+replacing the list would silently disable whatever your host already does at
+startup. Running it twice does not duplicate the entry. If the file is not valid
+JSON it refuses and changes nothing, rather than rewriting a file it could not
+read.
+
+**What the hook then asks of the agent.** At each session start it replays what
+arrived while nothing was watching and prints the exact watch command, including
+a byte offset:
+
+```
+bash <clone>/harness/session_watch.sh <state_dir> <offset>
+```
+
+The agent must arm that as a persistent Monitor. The offset is not optional:
+the hook replayed the spool through exactly that byte, so starting anywhere else
+repeats messages or steps over ones nobody has seen. **Arming is also what
+acknowledges the replay** — an agent that skips it sees the same messages again
+next session and receives no new mail for the rest of this one.
+
+`session_watch.sh` takes an exclusive lock, so a second session on the same host
+refuses to arm rather than racing the first on the offset file. One session per
+host is the supported arrangement.
+
+**Optional: let mail reach an agent with no session open.** Setting
+`AGENTEIAMAIL_CLAUDE_MODE=agent` in `runtime.env` starts a headless `claude -p`
+run per event. It is **off by default**, because it widens what an inbound
+message can cause — read the roster rules in `AGENTS.md` before turning it on.
+The spool write happens either way, so enabling or disabling it can never lose
+an event.
+
+**Verifying it.** `scripts/healthcheck.py` reports how many spool bytes no
+session has picked up yet. Read that as information, not as a fault: unread bytes
+with no session open is this runtime's normal resting state. Whether a session
+has armed a watch is not observable from outside one, and the healthcheck says so
+rather than guessing.
+
+---
+
 **Check the dispatcher can actually reach `openclaw`.** A systemd user service gets a
 minimal PATH with nothing under `$HOME`, so a binary installed by npm is often
 invisible to it even though your shell finds it. The adapter looks in the usual
