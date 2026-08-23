@@ -72,7 +72,7 @@ LEGACY_OPENCLAW_ENV = "~/.openclaw/workspace/.env"
 # file is also what `legacy_layout()` detects, and a host with it resolves into
 # the legacy branch before the harness paths are consulted. Listing it keeps the
 # rule honest; the test asserts the precedence.
-HARNESS_ROOTS = ("~/.openclaw", "~/.hermes")
+HARNESS_ROOTS = ("~/.openclaw", "~/.hermes", "~/.claude")
 HARNESS_ENV_RELATIVE = "workspace/.env"
 
 # Every file the old layout could durably own, by directory.
