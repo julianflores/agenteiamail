@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+Towards [#78](https://github.com/julianflores/agenteiamail/issues/78), the session
+side: the hook branch, the watch, and the design note.
+
+- **A Claude Code session is told what it missed and how to start listening.**
+  The session-start hook replays `session.spool` from the recorded offset and
+  then names the exact watch command, including the byte offset it replayed
+  through, so nothing falls in the gap between the hook finishing and the monitor
+  attaching.
+- **Arming the watch is what acknowledges the replay**, and the hook deliberately
+  does not do it. The hook advancing the offset would claim an arming it cannot
+  observe, and an agent that read the replay and never armed would lose that mail
+  silently. The failure this chooses is repetition, which is visible.
+- **`session_watch.sh` takes an exclusive lock.** `session_start.py` says that on
+  every other runtime a session must never arm a watcher, because two consumers
+  of one stream racing on one cursor duplicated events and corrupted the record
+  of what had been seen. Claude Code cannot obey that rule and still receive
+  anything, so the guard moved rather than disappeared: a second session refuses
+  to arm instead of quietly halving the accuracy of both.
+- **A spool shorter than the recorded offset replays from zero** rather than
+  trusting it. It was truncated or replaced, and stepping over everything now in
+  it is the failure that looks like a quiet mailbox.
+- `DESIGN.md` gains *"Why one runtime pulls"*, which also starts closing #68.
+
 Towards [#78](https://github.com/julianflores/agenteiamail/issues/78): Claude Code
 as a third runtime. This is the runtime core — adapter, resolution and tests.
 Installer support and the full documentation follow separately.

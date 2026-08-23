@@ -36,6 +36,14 @@ VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
 DISPATCH_SERVICE = "agenteiamail-dispatch.service"
 
+# Claude Code cannot be pushed into, so its session is the consumer: the
+# dispatcher writes the spool and never reads it, and these two files are how a
+# session knows where it got to. See DESIGN.md, "Why one runtime pulls".
+SPOOL = STATE_DIR / "session.spool"
+SESSION_OFFSET = STATE_DIR / "session.offset"
+SESSION_WATCH = REPO / "harness/session_watch.sh"
+RUNTIME_ENV = REPO / "runtime.env"
+
 MAX_REPLAY = 20   # enough to see overnight without flooding the context window
 MAX_DISPATCH_ERR = 5   # the last few lines say whether it is still failing
 VERSION_TIMEOUT = 20   # above version.sh's own 10s, so its timeout fires first
@@ -94,6 +102,61 @@ def version_line():
     return r.stdout.strip() or None
 
 
+def selected_runtime():
+    """
+    Which runtime this install delivers to, or None if it cannot be determined.
+
+    Read rather than detected. Detection asks what is installed on the host; this
+    asks what the installer chose, and on a host with two harnesses present those
+    are different questions with different answers.
+    """
+    name = (os.environ.get("AGENTEIAMAIL_RUNTIME") or "").strip().lower()
+    if name and name != "auto":
+        return name
+    try:
+        for raw in RUNTIME_ENV.read_text(encoding="utf-8").splitlines():
+            key, _, value = raw.partition("=")
+            if key.strip() == "AGENTEIAMAIL_RUNTIME":
+                value = value.strip().strip('"').strip("'").lower()
+                return value if value and value != "auto" else None
+    except OSError:
+        pass
+    return None
+
+
+def read_spool_backlog():
+    """
+    (rendered lines, capped, byte offset read through) for the Claude Code spool.
+
+    **This does not advance the offset**, and that asymmetry is deliberate. The
+    watch writes the offset when it is armed, so an agent that reads this and
+    never arms the watch replays the same messages next time. Replaying is the
+    survivable error; skipping is not, and a hook that acknowledged on the
+    agent's behalf would be claiming an arming it cannot observe.
+    """
+    try:
+        start = int(SESSION_OFFSET.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        start = 0
+    try:
+        size = SPOOL.stat().st_size
+    except OSError:
+        return [], False, start
+    # A spool shorter than the recorded offset means the file was replaced or
+    # truncated underneath us. Trusting the stale offset would step over
+    # everything now in it, so start again rather than skip.
+    if size < start:
+        start = 0
+    try:
+        with open(SPOOL, "rb") as handle:
+            handle.seek(start)
+            data = handle.read()
+    except OSError:
+        return [], False, start
+    lines = [ln for ln in data.decode("utf-8", "replace").splitlines() if ln.strip()]
+    return lines[-MAX_REPLAY:], len(lines) > MAX_REPLAY, start + len(data)
+
+
 def read_backlog():
     """
     (rendered lines, whether it was capped) for events not yet delivered.
@@ -114,7 +177,11 @@ def read_backlog():
 
 
 def main():
+    runtime = selected_runtime()
     lines, capped = read_backlog()
+    spool_lines, spool_capped, spool_through = ([], False, 0)
+    if runtime == "claudecode":
+        spool_lines, spool_capped, spool_through = read_spool_backlog()
     down = unit_down(SERVICE)
     dispatch_down = unit_down(DISPATCH_SERVICE)
     faults = dispatcher_faults()
@@ -142,6 +209,33 @@ def main():
             "look healthy:\n" + "\n".join(faults)
         )
 
+    if runtime == "claudecode":
+        # Everything below is this runtime only. The other two are pushed to by a
+        # supervised service; here nothing can speak into a session, so the
+        # session has to come and get it, and this hook is where it is told how.
+        if spool_lines:
+            parts.append(
+                f"Mail that arrived while no session was watching "
+                f"({len(spool_lines)} message(s)"
+                + (f", trimmed to the most recent {MAX_REPLAY}" if spool_capped else "")
+                + "):\n" + "\n".join(spool_lines)
+            )
+        else:
+            parts.append("No unseen mail since the last session armed the watch.")
+
+        parts.append(
+            "ARM THE MAIL WATCH NOW, before doing anything else, with a persistent "
+            "Monitor running exactly:\n\n"
+            f"    bash {SESSION_WATCH} {STATE_DIR} {spool_through}\n\n"
+            "Each stdout line is one new mail notification. The byte offset is not "
+            "optional and must not be rounded: this hook has replayed the spool "
+            "through exactly that byte, so starting anywhere else either repeats "
+            "messages or steps over ones nobody has seen. Arming is also what "
+            "acknowledges the replay above — if you skip it, the next session "
+            "shows these same messages again, and no new mail reaches you for the "
+            "rest of this one."
+        )
+
     if lines:
         header = (f"Mail queued but not yet delivered ({len(lines)} message(s)"
                   + (f", trimmed to the most recent {MAX_REPLAY}" if capped else "")
@@ -149,7 +243,7 @@ def main():
                   "expect the dispatcher to deliver it as well rather than "
                   "treating this as the only copy:")
         parts.append(header + "\n" + "\n".join(lines))
-    else:
+    elif runtime != "claudecode":
         parts.append("No unseen mail since the last session acknowledged the log.")
 
     version = version_line()
