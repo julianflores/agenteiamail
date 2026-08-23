@@ -286,12 +286,20 @@ discover_prerequisites() {
         if [[ "$runtime" == openclaw ]]; then
             if [[ -z "$service_path" ]]; then
                 if ((service_path_error_reported == 0)); then
-                    prereq_error 'openclaw executable cannot be verified because the systemd user PATH is unavailable'
+                    prereq_error 'openclaw executable cannot be verified because the systemd user PATH is unavailable
+  fix: set OPENCLAW and PATH in ~/.config/environment.d/10-openclaw-user-path.conf,
+       then `systemctl --user set-environment` for the manager already running
+  see: INSTALL.md section 6, "Check the dispatcher can actually reach openclaw"'
                 fi
             else
                 runtime_cli=$(resolve_in_path "$runtime" "$service_path" || true)
                 if [[ -z "$runtime_cli" ]]; then
-                    prereq_error 'openclaw executable not found in the systemd user PATH'
+                    prereq_error 'openclaw executable not found in the systemd user PATH
+  why: a systemd user service gets a minimal PATH with nothing under $HOME, so an
+       npm-installed binary your shell finds is invisible here
+  fix: set OPENCLAW and PATH in ~/.config/environment.d/10-openclaw-user-path.conf,
+       then `systemctl --user set-environment` for the manager already running
+  see: INSTALL.md section 6, "Check the dispatcher can actually reach openclaw"'
                 fi
             fi
         else
