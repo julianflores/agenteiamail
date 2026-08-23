@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+Towards [#78](https://github.com/julianflores/agenteiamail/issues/78), the install
+side. With this, a Claude Code agent can install by following `AGENTS.md`.
+
+- **`scripts/install.sh --runtime claudecode`.** It requires no `claude` binary,
+  because delivery is a file append and the binary is only used by the opt-in
+  agent mode. Demanding it would refuse hosts this runtime works fine on.
+- **The installer proves the spool by writing to it**, not by reading a mode bit.
+  It also states what that does *not* prove: whether any session is reading is
+  invisible from outside one, and the verification report says so in its own line
+  rather than letting `result=accepted` imply an end-to-end path.
+- **`scripts/claude_hook.py` registers the session-start hook by merging**, and
+  Claude Code's `settings.json` is deliberately never a managed artifact. It is
+  the operator's file and holds configuration this project knows nothing about,
+  so converging it would eventually overwrite somebody's unrelated hooks. It
+  appends rather than replacing the `SessionStart` list, is idempotent, backs up
+  first, writes through a temporary file, and **refuses to touch a settings file
+  it cannot parse** rather than rewriting one it could not read.
+- **`healthcheck.py` reports the spool backlog as information, not as a verdict.**
+  Unread bytes with no session open is this runtime's normal resting state. The
+  stronger check first sketched for it — "unread bytes and no watch attached" —
+  is not implementable honestly, so the output says what is true and names what
+  it cannot see.
+- `INSTALL.md` gains a Claude Code section and `AGENTS.md` step 4 points at it.
+
 Towards [#78](https://github.com/julianflores/agenteiamail/issues/78), the session
 side: the hook branch, the watch, and the design note.
 

@@ -108,6 +108,13 @@ so the binary your shell finds is invisible to the service. `INSTALL.md` §6
 error itself now names it. Read that section rather than searching an
 800-line document from the top.
 
+For a Claude Code runtime, register the session-start hook after installing —
+`scripts/claude_hook.py --install` — and read `INSTALL.md` §6 *"Claude Code"*
+first. That hook is what makes a session aware of mail at all, and it is the one
+piece the installer deliberately does not converge, because Claude Code's
+settings file is the operator's and holds configuration this project knows
+nothing about.
+
 For a Hermes runtime, also follow [`HERMES.md`](HERMES.md). Do not silently add
 webhook routes, tools, or skills to a Hermes profile: show the operator the
 static route example, explain the direct-notification and roster-agent trust

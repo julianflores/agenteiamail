@@ -258,5 +258,74 @@ class Watcher(unittest.TestCase):
         self.assertGreaterEqual(int(offset.read_text().strip()), 4)
 
 
+class HookRegistration(unittest.TestCase):
+    """settings.json is the user's file. We merge into it and never own it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.settings = pathlib.Path(self.tmp.name) / "settings.json"
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import importlib
+        self.hook = importlib.import_module("claude_hook")
+
+    def run_install(self):
+        return self.hook.install(self.settings)
+
+    def load(self):
+        import json
+        return json.loads(self.settings.read_text(encoding="utf-8"))
+
+    def test_creates_the_file_when_absent(self):
+        self.run_install()
+        self.assertTrue(self.hook.already_registered(self.load()))
+
+    def test_unrelated_settings_survive(self):
+        import json
+        self.settings.write_text(json.dumps({
+            "theme": "dark",
+            "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.py"}]}]},
+        }), encoding="utf-8")
+        self.run_install()
+        after = self.load()
+        self.assertEqual(after["theme"], "dark")
+        self.assertEqual(after["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "mine.py")
+
+    def test_an_existing_session_start_hook_is_kept(self):
+        """Claude Code runs every SessionStart hook. Replacing the list silently
+        disables whatever the host was already doing at startup."""
+        import json
+        self.settings.write_text(json.dumps({
+            "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "theirs.py"}]}]},
+        }), encoding="utf-8")
+        self.run_install()
+        commands = [h["command"]
+                    for entry in self.load()["hooks"]["SessionStart"]
+                    for h in entry["hooks"]]
+        self.assertIn("theirs.py", commands)
+        self.assertEqual(len(commands), 2)
+
+    def test_installing_twice_does_not_duplicate(self):
+        self.run_install()
+        self.run_install()
+        commands = [h["command"]
+                    for entry in self.load()["hooks"]["SessionStart"]
+                    for h in entry["hooks"]]
+        self.assertEqual(len(commands), 1)
+
+    def test_an_existing_file_is_backed_up(self):
+        self.settings.write_text('{"theme": "dark"}', encoding="utf-8")
+        self.run_install()
+        self.assertTrue(self.settings.with_suffix(".json.agenteiamail.bak").is_file())
+
+    def test_unparseable_settings_are_refused_not_repaired(self):
+        """Rewriting a file we could not parse is how an install eats
+        configuration it was never asked to touch."""
+        self.settings.write_text("{ not json", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.run_install()
+        self.assertEqual(self.settings.read_text(encoding="utf-8"), "{ not json")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
