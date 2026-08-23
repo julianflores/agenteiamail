@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-08-23
+
+**Claude Code is a third runtime**, and the roster is `roster.md`. Everything
+below shipped across #82, #83, #84 and #85.
 
 - **`roster.txt` is now `roster.md`.** The template is `roster.md.example` and
   every document names the new file.
