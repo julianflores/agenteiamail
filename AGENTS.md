@@ -98,6 +98,15 @@ exists for.
 `--dry-run` first, review its plan, then rerun the same command without
 `--dry-run`. `INSTALL.md` gives the exact OpenClaw and Hermes commands and covers
 credentials, Himalaya, service wiring, verification, and troubleshooting.
+
+**The installer can stop here on harness wiring rather than on anything you did
+wrong.** The commonest is `openclaw executable not found in the systemd user
+PATH`: a systemd user service gets a minimal `PATH` with nothing under `$HOME`,
+so the binary your shell finds is invisible to the service. `INSTALL.md` §6
+*"Check the dispatcher can actually reach `openclaw`"* is the answer, and the
+error itself now names it. Read that section rather than searching an
+800-line document from the top.
+
 For a Hermes runtime, also follow [`HERMES.md`](HERMES.md). Do not silently add
 webhook routes, tools, or skills to a Hermes profile: show the operator the
 static route example, explain the direct-notification and roster-agent trust

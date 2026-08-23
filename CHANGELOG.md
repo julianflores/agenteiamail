@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Closes [#77](https://github.com/julianflores/agenteiamail/issues/77).
+
+- **The installer says how to fix the PATH failure it stops on.** A fresh
+  OpenClaw host reliably meets `openclaw executable not found in the systemd user
+  PATH` during the install, and the message named the problem without naming the
+  remedy. The remedy is in `INSTALL.md` §6, a section the agent has not reached:
+  `AGENTS.md` step 4 points at `INSTALL.md` as a whole, and it is ~800 lines. Both
+  `prereq_error` calls now carry the fix and the section title.
+- **`AGENTS.md` step 4 warns that the installer can stop on harness wiring**, so
+  the answer is discoverable before the failure rather than only after it.
+- Found on the first fresh OpenClaw install of 1.7.0 (#74). The tester got past
+  it by inventing a solution, which turned out better than the documented one and
+  became #75. The next installer should not have to be that resourceful.
+
 ## 1.7.1 — 2026-08-21
 
 Closes [#75](https://github.com/julianflores/agenteiamail/issues/75).
