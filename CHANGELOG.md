@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+Towards [#78](https://github.com/julianflores/agenteiamail/issues/78): Claude Code
+as a third runtime. This is the runtime core — adapter, resolution and tests.
+Installer support and the full documentation follow separately.
+
+- **Claude Code delivers by inversion.** Nothing outside a Claude Code session
+  can speak into it: there is no `claude system event`, and `claude -p --resume`
+  starts a fresh headless turn rather than appearing in the session a human is
+  sitting in. So where OpenClaw and Hermes are pushed to, this runtime comes and
+  gets it. The adapter appends the rendered line to a spool that two session-side
+  readers consume — the `SessionStart` hook for what arrived while nothing ran,
+  and an armed `Monitor` for what lands next.
+- **The spool is deliberately not named `*.log`.** `rotate_logs.py` rotates every
+  `*.log` in the state directory, and rotation renumbers bytes underneath two
+  readers that index by offset. A rotation between a hook replay and a monitor
+  arming would resume at the wrong place — showing mail twice, or stepping over
+  mail that was never shown, which is indistinguishable from a quiet mailbox.
+- **One record is exactly one line.** A rendered notification can carry a line
+  break, usually from a folded subject, and letting it through would make the
+  monitor report one message as two and leave every later offset out of step. A
+  test pins it; it caught this during development rather than in the field.
+- **Spooled means durable, not seen**, and the code says so where it returns
+  `ACCEPTED`. This is the same bargain the Hermes adapter makes with HTTP 202,
+  with one difference worth remembering: Hermes always has something running to
+  drain the queue, and here there may be no session for hours.
+- **`~/.claude` joins `HARNESS_ROOTS`**, so credentials resolve from
+  `~/.claude/workspace/.env` under the existing rule rather than a special case.
+  It is deliberately **not** a `legacy_layout()` marker — a credentials path
+  doing double duty as a layout marker is what caused #72.
+- Optional `AGENTEIAMAIL_CLAUDE_MODE=agent` starts a headless run per event so
+  mail can reach an agent with no session open. Off by default, because it
+  widens what an inbound message can cause. The spool write happens either way,
+  so a failed run can never lose an event.
+
+## Unreleased
+
 Closes [#77](https://github.com/julianflores/agenteiamail/issues/77).
 
 - **The installer says how to fix the PATH failure it stops on.** A fresh

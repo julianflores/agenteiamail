@@ -40,6 +40,7 @@ file per harness:
 |---|---|
 | OpenClaw | `~/.openclaw/workspace/.env` |
 | Hermes Agent | `~/.hermes/workspace/.env` |
+| Claude Code | `~/.claude/workspace/.env` |
 
 A clone that was set up with its own `.env` inside it keeps that instead; the
 command above answers with whichever this host has, and it reads the harness's
