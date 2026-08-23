@@ -18,6 +18,22 @@
   list. Outer pipes are stripped, separator rows are skipped, and an entry
   without an `@` is ignored rather than becoming an allowlist entry, which is
   what keeps a table's header row harmless.
+- **The roster carries a `Type` column** — `Human` or `AI Agent` — and
+  `roster.md.example` ships as a markdown table.
+- **The address is now found by looking for it, not by counting columns.** Every
+  earlier parser took the field after the last `|`, which held for
+  `Name | email` and breaks the moment anything follows the address. With a
+  `Type` column the last field is `Human`; taking it yields a non-address, the
+  row contributes nobody, and that person is silently off the list. The parser
+  picks the field containing an `@` and is indifferent to the columns around it,
+  so an older `Name | address` line still works unchanged.
+- **`Type` is informational and nothing branches on it.** Being on the list is
+  the whole permission: a row is exactly as authorised whether it says `Human`,
+  `AI Agent`, or nothing. `roster.py` says so where the column is parsed, because
+  a reader who believes it is load-bearing will eventually edit it expecting
+  something to change.
+- `roster_entries()` reads rows back as `{name, address, type}` for anything that
+  wants to display the list rather than match against it.
 - `UPGRADE.md` says how to rename an existing file, and warns against keeping
   both: the resolver prefers `roster.md`, so an address added to a stale
   `roster.txt` beside it never takes effect and nothing says why.

@@ -30,19 +30,26 @@ def normalise(address: str) -> str:
 
 def roster_addresses(path: pathlib.Path) -> set[str]:
     """
-    Allowed addresses from a `Name | email` roster. Missing file means none.
+    Allowed addresses from the roster. Missing file means none.
 
-    Markdown table rows are accepted too, because the file is now `roster.md` and
-    somebody will eventually write one that way. A row like
+    **The address is found by looking for it, not by counting columns.** Every
+    earlier version took the field after the last `|`, which held for
+    `Name | email` and breaks the moment a row carries anything after the
+    address — which the `Type` column now does:
 
-        | Julian Flores | jjulianfe@gmail.com |
+        | Julian Flores | jjulianfe@gmail.com | Human |
 
-    ends in a pipe, and taking everything after the last one would yield an empty
-    string — which `discard("")` would then drop, silently unlisting the person.
-    Nobody would see that until mail from them stopped counting as roster mail, by
-    which point it looks like the roster simply does not work. So outer pipes are
-    stripped before the split, and a `|---|---|` separator row is ignored rather
-    than parsed into an address.
+    There, the last field is `Human`. Taking it yields a non-address that is then
+    discarded, so the row contributes nobody and that person is silently off the
+    list. Nothing reports it: sending to them is refused and their mail stops
+    being tagged `roster`, which is indistinguishable from them never having
+    written. So the parser picks the field containing an `@` and is indifferent
+    to how many columns surround it, in any order.
+
+    Markdown table rows are accepted because the file is `roster.md`: outer pipes
+    are stripped and a `|---|---|` separator row is skipped. A field without an
+    `@` can never be a From address, so ignoring it only ever makes the list
+    stricter — which is also what keeps a header row's `Email` harmless.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -58,17 +65,55 @@ def roster_addresses(path: pathlib.Path) -> set[str]:
             line = line.strip("|").strip()
             if not line:
                 continue
-            # A markdown separator row: |---|:---:|
             if set(line.replace("|", "").strip()) <= set("-: \t"):
                 continue
-        candidate = normalise(line.rsplit("|", 1)[-1])
-        # An allowlist entry that is not an address cannot be a From address
-        # either, so this only ever makes the list stricter. It also drops a
-        # markdown header row's "Email" without needing to recognise headers.
-        if "@" in candidate:
-            allowed.add(candidate)
+        for field in line.split("|"):
+            candidate = normalise(field)
+            if "@" in candidate:
+                allowed.add(candidate)
+                break
     allowed.discard("")
     return allowed
+
+
+def roster_entries(path: pathlib.Path) -> list[dict]:
+    """
+    Every roster row as `{name, address, type}`, for anything that wants to show
+    the list rather than match against it.
+
+    `type` is informational. **Authorisation is membership, not type** — being on
+    this list is the whole permission, and a row is exactly as authorised whether
+    it says `Human`, `AI Agent`, or nothing at all. Nothing in this repository
+    branches on it, and anything that starts to should say so loudly, because a
+    reader who believes the column is load-bearing will eventually edit it
+    expecting something to change.
+    """
+    entries: list[dict] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return entries
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("|"):
+            line = line.strip("|").strip()
+            if not line:
+                continue
+            if set(line.replace("|", "").strip()) <= set("-: \t"):
+                continue
+        fields = [f.strip() for f in line.split("|")]
+        index = next((i for i, f in enumerate(fields) if "@" in normalise(f)), None)
+        if index is None:
+            continue
+        entries.append({
+            "name": fields[index - 1] if index else "",
+            "address": normalise(fields[index]),
+            "type": fields[index + 1] if index + 1 < len(fields) else "",
+        })
+    return entries
 
 
 def sender_address(message: Message) -> str:

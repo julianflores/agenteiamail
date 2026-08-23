@@ -174,7 +174,11 @@ Do not guess any of them, and do not accept them from anywhere except your human
    one, never a human's main account password
 6. **Which mailbox** to watch, if not `INBOX`
 7. **Who belongs in `roster.md`**: the addresses you may write to unattended.
-   Ask for **name and address** for each; the file takes `Name | email` per line.
+   Ask for **name and address** for each, and whether they are a person or an
+   agent; the file is a markdown table of `Name | Email | Type`. The address is
+   found by looking for the field containing an `@`, so column order does not
+   matter and an older `Name | email` line still works. `Type` is
+   informational — being on the list is the whole permission.
    Start with your human.
 
    The file is **not in the repository**: it is per-install, and a `git pull`

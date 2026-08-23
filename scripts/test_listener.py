@@ -14,7 +14,7 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from idle_listener import describe, decode_hdr
-from roster import roster_addresses, sender_is_listed
+from roster import roster_addresses, roster_entries, sender_is_listed
 
 
 def message(from_header, **extra):
@@ -48,30 +48,42 @@ def main():
         check(allowed == {"jjulianfe@gmail.com", "spaced@example.com", "bare@example.com"},
               f"roster parsed to {allowed}")
 
-        # --- the file is roster.md now, so markdown rows must parse ---------
+        # --- the file is roster.md, with a Type column ----------------------
         #
-        # A table row ends in a pipe. Taking everything after the last one yields
-        # an empty string, which used to be discarded silently -- so the person
-        # was simply not on the list, and nobody would notice until their mail
-        # stopped being tagged `roster` and the agent quietly stopped acting on
-        # it. That is indistinguishable from them not having written.
+        # The address is no longer the last field. Every earlier parser took the
+        # field after the last pipe, which held for `Name | email` and breaks the
+        # moment anything follows the address -- the Type column does. Taking
+        # `Human` yields a non-address, the row contributes nobody, and that
+        # person is silently off the list: sending to them is refused and their
+        # mail stops being tagged `roster`, which is indistinguishable from them
+        # never having written.
         table = tmp / "roster-table.md"
         table.write_text(
             "# Roster\n"
             "\n"
-            "| Name | Email |\n"
-            "|---|---|\n"
-            "| Julian Flores | jjulianfe@gmail.com |\n"
-            "| Metis Claude-Tob | metis.claude.tob@gmail.com |\n",
+            "| Name | Email | Type |\n"
+            "|---|---|---|\n"
+            "| Julian Flores | jjulianfe@gmail.com | Human |\n"
+            "| Metis Claude-Tob | metis.claude.tob@gmail.com | AI Agent |\n"
+            "Legacy Plain | legacy@example.com\n",
             encoding="utf-8",
         )
         from_table = roster_addresses(table)
-        check(from_table == {"jjulianfe@gmail.com", "metis.claude.tob@gmail.com"},
-              f"markdown table roster parsed to {from_table}")
+        check(from_table == {"jjulianfe@gmail.com", "metis.claude.tob@gmail.com",
+                             "legacy@example.com"},
+              f"typed markdown table parsed to {from_table}")
+        check("human" not in from_table and "aiagent" not in from_table,
+              "the Type column must not become an allowlist entry")
         check("email" not in from_table,
               "a table header row must not become an allowlist entry")
-        check(not any("-" == a for a in from_table),
-              "a table separator row must not become an allowlist entry")
+        check(sender_is_listed(message("Julian Flores <jjulianfe@gmail.com>"), from_table),
+              "a row with a trailing Type column is still authorised")
+
+        entries = roster_entries(table)
+        check([e["type"] for e in entries] == ["Human", "AI Agent", ""],
+              f"types read back as {[e['type'] for e in entries]}")
+        check(entries[0]["name"] == "Julian Flores",
+              "the name is the field before the address")
 
         # --- must be tagged -------------------------------------------------
         check(sender_is_listed(message("Julian Flores <jjulianfe@gmail.com>"), allowed),
