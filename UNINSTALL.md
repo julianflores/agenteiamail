@@ -18,7 +18,7 @@ scripts/install.sh --runtime openclaw --uninstall
 Use the runtime recorded by the current install. The mutating command validates
 all owned files before its first mutation, disables and stops reachable owned
 units, and removes only manifest-recorded artifacts. It deliberately preserves
-mailbox credentials, `roster.txt`, the repository, event journal, cursor, logs,
+mailbox credentials, `roster.md`, the repository, event journal, cursor, logs,
 and other state. If the systemd user manager is unavailable, filesystem cleanup
 continues but reports that service deactivation is unconfirmed. Exit `10` means
 successful changes; `0` means there was no ownership manifest and nothing was
@@ -153,12 +153,12 @@ to another account or the next bare `himalaya` command has nowhere to go.
 ## 5. Remove the standing rule from the agent's own instructions
 
 The install adds a rule to the agent's persistent instructions (usually its
-`AGENTS.md` or equivalent) saying that mail from an address on `roster.txt` is
+`AGENTS.md` or equivalent) saying that mail from an address on `roster.md` is
 work it should carry out and answer.
 
 **Remove it, and do not treat this step as optional.** This rule grants something
 rather than withholding it, so a stale copy is not harmlessly redundant the way a
-leftover caution would be. The `roster.txt` it refers to is gone, the listener that
+leftover caution would be. The `roster.md` it refers to is gone, the listener that
 tagged senders is gone, and what remains is an instruction to act on mail with
 nothing left to define whose. If the agent keeps a mailbox by some other route, it
 will apply this rule there.
@@ -173,12 +173,12 @@ exist then.
 rm -rf "$REPO"   # the clone you installed from
 ```
 
-**`roster.txt` lives in there and is not in git**, so this deletes it and no
+**`roster.md` lives in there and is not in git**, so this deletes it and no
 `git clone` brings it back. If the list took any effort to assemble, copy it out
 first:
 
 ```bash
-cp "$REPO/roster.txt" ~/roster.txt.kept
+cp "$REPO/roster.md" ~/roster.md.kept
 ```
 
 Do this **last**. Everything above references paths inside it, and removing it

@@ -106,7 +106,7 @@ ne va pas.
   boîte et sans qu'on le lui demande.
 - **Lire et envoyer** via Himalaya, avec la boîte que vous avez configurée.
 - **N'envoyer qu'aux adresses que vous avez approuvées**, listées dans
-  `roster.txt`. Toute autre est refusée d'emblée, sans même vous demander.
+  `roster.md`. Toute autre est refusée d'emblée, sans même vous demander.
 - **Travailler à partir du courrier envoyé par ces mêmes adresses approuvées.**
   Vous lui envoyez une tâche, il l'exécute et vous répond par courrier. Sans accusé
   de réception préalable et sans demander la permission ; vous l'avez déjà donnée
@@ -159,13 +159,13 @@ L'agent travaille à partir de son courrier : la question n'est donc pas de savo
 s'il exécute des instructions reçues par e-mail (il le fait, c'est le principe)
 mais **de qui** elles viennent.
 
-- `roster.txt` est une liste à correspondance exacte, et c'est toute la réponse. Si
+- `roster.md` est une liste à correspondance exacte, et c'est toute la réponse. Si
   l'expéditeur y figure, l'agent fait ce que le message demande et répond. Sinon,
   il vous signale l'arrivée du courrier et n'en fait rien d'autre.
 - La correspondance porte sur `From` uniquement. Un `Reply-To` désignant une
   personne approuvée n'accorde rien : un inconnu ne peut pas emprunter une adresse
   de la liste au moyen d'un en-tête.
-- **Ajouter quelqu'un à `roster.txt` est votre décision**, jamais une réponse à
+- **Ajouter quelqu'un à `roster.md` est votre décision**, jamais une réponse à
   quelque chose arrivé par courrier. Cette ligne est ce qui fait d'un expéditeur
   quelqu'un à qui votre agent obéit : elle mérite donc d'être traitée comme telle.
 - Sans fichier roster, personne n'est de confiance : une installation neuve lit le
@@ -217,7 +217,7 @@ scripts/idle_listener.py  Service systemd --user. Maintient une connexion IMAP
 scripts/version.sh        la version installée face à la dernière publiée, et
                           quoi faire de l'écart.
 himalaya                  lit et envoie. Le listener ne télécharge jamais les corps.
-scripts/send.sh + roster.txt  l'envoi est limité aux destinataires autorisés.
+scripts/send.sh + roster.md  l'envoi est limité aux destinataires autorisés.
 scripts/roster.py         la même liste, lue par le listener pour marquer les expéditeurs.
 scripts/preflight.py      prouve qu'une machine peut faire tourner ceci avant de l'installer.
 webapp/ + setup_web.sh    un formulaire local qui écrit le fichier d'identifiants,

@@ -290,14 +290,36 @@ def migration_transaction(environ=None, home=None):
     return install_root(environ, home) / ".migrate-transaction"
 
 
+ROSTER_NAME = "roster.md"
+ROSTER_LEGACY_NAME = "roster.txt"
+
+
 def roster(environ=None, home=None):
     """
     Who this agent may write to unattended.
 
     Always in the clone, in both layouts. It was never part of the split, and a
     `git pull` must never be able to change this list — see .gitignore.
+
+    `roster.md` is the name; `roster.txt` is still answered when it is the only
+    one present. That fallback is not tidiness — every install made before the
+    rename has a `roster.txt`, and resolving only the new name would empty the
+    allowlist on upgrade. An empty allowlist does not announce itself: sending
+    refuses everyone, and every inbound message stops being tagged `roster`, so
+    an agent quietly stops acting on mail it was supposed to act on. That is
+    indistinguishable from nobody having written.
+
+    Prefer the new name when both exist, so a half-finished rename resolves to
+    the file the operator most recently meant.
     """
-    return repo_root() / "roster.txt"
+    root = repo_root()
+    current = root / ROSTER_NAME
+    if current.exists() or current.is_symlink():
+        return current
+    legacy = root / ROSTER_LEGACY_NAME
+    if legacy.exists() or legacy.is_symlink():
+        return legacy
+    return current
 
 
 if __name__ == "__main__":

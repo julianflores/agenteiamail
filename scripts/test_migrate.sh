@@ -181,7 +181,7 @@ build_legacy_install() {
     mkdir -p "$(dirname "$clone")"
     cp -a "$ROOT" "$clone"
     rm -rf "$clone/state" "$clone/.env" "$clone/runtime.env" \
-        "$clone/install.manifest" "$clone/hermes" "$clone/roster.txt" \
+        "$clone/install.manifest" "$clone/hermes" "$clone/roster.md" \
         "$clone/.migrate-staging" "$clone/.migrate-transaction"
     rm -f "$sandbox/refuse-stop" "$sandbox/refuse-start"
     : >"$unit_state/agenteiamail-idle.service"

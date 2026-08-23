@@ -145,4 +145,17 @@ agenteiamail_state_dir() {
 agenteiamail_runtime_env() { printf '%s/runtime.env' "$(agenteiamail_config_dir)"; }
 agenteiamail_manifest() { printf '%s/install.manifest' "$(agenteiamail_config_dir)"; }
 agenteiamail_hermes_dir() { printf '%s/hermes' "$(agenteiamail_config_dir)"; }
-agenteiamail_roster() { printf '%s/roster.txt' "$(agenteiamail_root)"; }
+# roster.md, falling back to roster.txt when that is the only one present. See
+# harness/paths.py roster() for why the fallback exists rather than being tidied
+# away: an install made before the rename would otherwise resolve to an empty
+# allowlist, silently.
+agenteiamail_roster() {
+	_agenteiamail_r=$(agenteiamail_root)
+	if [ -e "$_agenteiamail_r/roster.md" ]; then
+		printf '%s/roster.md' "$_agenteiamail_r"
+	elif [ -e "$_agenteiamail_r/roster.txt" ]; then
+		printf '%s/roster.txt' "$_agenteiamail_r"
+	else
+		printf '%s/roster.md' "$_agenteiamail_r"
+	fi
+}

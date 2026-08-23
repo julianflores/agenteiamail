@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **`roster.txt` is now `roster.md`.** The template is `roster.md.example` and
+  every document names the new file.
+- **`roster.txt` still resolves when it is the only one present**, and this is
+  the part that matters rather than the rename. Every install made before this
+  has a `roster.txt`; resolving only the new name would empty the allowlist on
+  upgrade, and an empty allowlist does not announce itself. Sending refuses
+  everyone, every inbound message stops being tagged `roster`, and the agent
+  quietly stops acting on mail it was supposed to act on — which is
+  indistinguishable from nobody having written. `paths.py`, `send.sh` and
+  `envpath.sh` all answer the same way, and prefer `roster.md` when both exist.
+- **Markdown table rows parse**, now that the file is `.md`. A row ends in a
+  pipe, and the old parser took everything after the last one — which yielded an
+  empty string that was then discarded, silently leaving that person off the
+  list. Outer pipes are stripped, separator rows are skipped, and an entry
+  without an `@` is ignored rather than becoming an allowlist entry, which is
+  what keeps a table's header row harmless.
+- **The roster carries a `Type` column** — `Human` or `AI Agent` — and
+  `roster.md.example` ships as a markdown table.
+- **The address is now found by looking for it, not by counting columns.** Every
+  earlier parser took the field after the last `|`, which held for
+  `Name | email` and breaks the moment anything follows the address. With a
+  `Type` column the last field is `Human`; taking it yields a non-address, the
+  row contributes nobody, and that person is silently off the list. The parser
+  picks the field containing an `@` and is indifferent to the columns around it,
+  so an older `Name | address` line still works unchanged.
+- **`Type` is informational and nothing branches on it.** Being on the list is
+  the whole permission: a row is exactly as authorised whether it says `Human`,
+  `AI Agent`, or nothing. `roster.py` says so where the column is parsed, because
+  a reader who believes it is load-bearing will eventually edit it expecting
+  something to change.
+- `roster_entries()` reads rows back as `{name, address, type}` for anything that
+  wants to display the list rather than match against it.
+- `UPGRADE.md` says how to rename an existing file, and warns against keeping
+  both: the resolver prefers `roster.md`, so an address added to a stale
+  `roster.txt` beside it never takes effect and nothing says why.
+
 Towards [#78](https://github.com/julianflores/agenteiamail/issues/78), the install
 side. With this, a Claude Code agent can install by following `AGENTS.md`.
 
@@ -81,8 +117,6 @@ Installer support and the full documentation follow separately.
   mail can reach an agent with no session open. Off by default, because it
   widens what an inbound message can cause. The spool write happens either way,
   so a failed run can never lose an event.
-
-## Unreleased
 
 Closes [#77](https://github.com/julianflores/agenteiamail/issues/77).
 

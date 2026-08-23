@@ -5,7 +5,7 @@ for either OpenClaw or Hermes Agent, with access to a systemd user session.
 
 `scripts/install.sh` is the runtime-neutral, idempotent path for the owned
 systemd-user boundary. The established manual procedure below remains useful for
-mailbox credentials, `roster.txt`, and end-to-end delivery verification, which the
+mailbox credentials, `roster.md`, and end-to-end delivery verification, which the
 installer deliberately does not create or infer.
 
 ### FR7 installer boundary and exit statuses
@@ -54,7 +54,7 @@ provenance is preserved and fails closed. Every managed container chain is check
 non-directories, unexpected ownership, and group/world writability before child
 artifacts are classified; mutation must revalidate immediately before writing.
 Shared directories are containers and are never claimed as owned. Mailbox
-credentials, `roster.txt`, the repository, UID state, event journal, cursor, and
+credentials, `roster.md`, the repository, UID state, event journal, cursor, and
 logs are always preserved. Operator-provisioned Hermes secret files are
 validation-only external artifacts.
 
@@ -173,8 +173,12 @@ Do not guess any of them, and do not accept them from anywhere except your human
 5. **Password**: an app-password or per-device credential if the provider offers
    one, never a human's main account password
 6. **Which mailbox** to watch, if not `INBOX`
-7. **Who belongs in `roster.txt`**: the addresses you may write to unattended.
-   Ask for **name and address** for each; the file takes `Name | email` per line.
+7. **Who belongs in `roster.md`**: the addresses you may write to unattended.
+   Ask for **name and address** for each, and whether they are a person or an
+   agent; the file is a markdown table of `Name | Email | Type`. The address is
+   found by looking for the field containing an `@`, so column order does not
+   matter and an older `Name | email` line still works. `Type` is
+   informational — being on the list is the whole permission.
    Start with your human.
 
    The file is **not in the repository**: it is per-install, and a `git pull`
@@ -182,7 +186,7 @@ Do not guess any of them, and do not accept them from anywhere except your human
    template:
 
    ```bash
-   cp roster.txt.example roster.txt
+   cp roster.md.example roster.md
    ```
 
    Until you add a line it is empty, and an empty roster means you can send to
@@ -302,7 +306,7 @@ Prove it resolved before you rely on it; this sends nothing:
 
 ```bash
 echo hi > /tmp/b.txt
-scripts/send.sh --check "$(grep -m1 -v '^[[:space:]]*#' roster.txt | sed 's/.*|//' | tr -d '[:blank:]')" "check" /tmp/b.txt
+scripts/send.sh --check "$(grep -m1 -v '^[[:space:]]*#' roster.md | sed 's/.*|//' | tr -d '[:blank:]')" "check" /tmp/b.txt
 ```
 
 A `From:` line carrying your agent's address means it found them. `no sender
@@ -508,7 +512,7 @@ because it is what the templates are for:
 - `StandardOutput=append:` the event log, `StandardError=append:` the error log,
   **they must be separate files** (see DESIGN.md)
 - `--env` on `ExecStart` if your credentials are not at the default path
-- `--roster` on `ExecStart` if `roster.txt` is not at the repository root. The
+- `--roster` on `ExecStart` if `roster.md` is not at the repository root. The
   listener reads it to tag mail from approved senders, and an install pointing at
   the wrong file tags nobody, and the agent then reports mail it should be acting on
 
@@ -571,7 +575,7 @@ needs no move. They are the recommended locations, not a check.
   .env              mailbox credentials, 0600
   runtime.env       generated, installer-owned
   install.manifest  what the installer may remove
-  roster.txt        who this agent may write to unattended
+  roster.md        who this agent may write to unattended
   hermes/           the two route secrets, 0600
   state/            UID baseline, journal, cursor, delivery status, logs
 ```
@@ -819,7 +823,7 @@ scripts/send.sh --check jjulianfe@gmail.com "check" /tmp/b.txt | head -6
 # 6d. Your own mail is tagged. Send yourself one, then:
 grep ", roster]" state/mail.log | tail -1
 # No output means the agent will not act on your mail. Check that the address in
-# roster.txt matches the From address your mail actually arrives with.
+# roster.md matches the From address your mail actually arrives with.
 
 # 7. Survives restart without replaying or losing anything
 systemctl --user restart agenteiamail-idle.service

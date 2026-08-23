@@ -158,7 +158,7 @@ prove either route name, secret, profile binding, filter, target, or agent run.
 
 Do not call the installation complete after `GET /health`.
 
-1. Send an external test email from an address **not** in `roster.txt`.
+1. Send an external test email from an address **not** in `roster.md`.
 2. Observe a real user-facing notification from `agenteiamail-notify` without a
    model run.
 3. Send an external test email from an exact roster address.
@@ -170,7 +170,7 @@ Do not call the installation complete after `GET /health`.
 7. Stop the test gateway, send another message, and confirm the journal cursor
    does not advance. Restart the gateway and confirm the same event is then
    accepted.
-8. Confirm `scripts/send.sh` still refuses a recipient absent from `roster.txt`.
+8. Confirm `scripts/send.sh` still refuses a recipient absent from `roster.md`.
 
 `scripts/healthcheck.py` records the last adapter detail. For Hermes agent mode,
 that detail deliberately distinguishes transport acceptance from completion.

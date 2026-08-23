@@ -737,7 +737,7 @@ print_managed_inventory() {
     printf 'inventory container-directory=%s policy=never-own-directory\n' "$config_dir"
 
     printf 'inventory preserve-file=%s role=mailbox-credentials\n' "$credentials"
-    printf 'inventory preserve-file=%s/roster.txt role=recipient-roster\n' "$ROOT"
+    printf 'inventory preserve-file=%s/roster.md role=recipient-roster\n' "$ROOT"
     printf 'inventory preserve-tree=%s role=uid-journal-cursor-and-logs\n' "$state_dir"
     printf 'inventory preserve-repository=%s\n' "$ROOT"
 
@@ -797,7 +797,7 @@ check_git_hygiene() {
     # `state/` and `hermes/` keep their trailing slash: .gitignore matches them
     # as directories, and `git check-ignore state` answers "not ignored" for a
     # directory that does not exist yet — which is exactly when this runs.
-    for relative in .env runtime.env install.manifest roster.txt \
+    for relative in .env runtime.env install.manifest roster.md \
         hermes/notify.secret hermes/roster.secret hermes/ state/; do
         if git -C "$install_root" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
             tracked+=("$relative")

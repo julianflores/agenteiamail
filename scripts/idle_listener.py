@@ -7,7 +7,7 @@ as mail arrives; we fetch headers for the new UIDs and print one line per messag
 on stdout.
 
 Every message is reported, whoever sent it. Messages from an address on
-`roster.txt` are additionally tagged `roster` in the emitted line: that tag is
+`roster.md` are additionally tagged `roster` in the emitted line: that tag is
 how the agent knows, without opening anything, that this is mail it may act on
 and answer. Everything else is a notification and nothing more.
 

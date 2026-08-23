@@ -96,7 +96,12 @@ check "fresh host: state is one tree in the clone" "$ROOT/state" "$(py "$home" "
 check "fresh host: runtime config is in the clone" "$ROOT/runtime.env" "$(py "$home" "" runtime-env)"
 check "fresh host: manifest is in the clone" "$ROOT/install.manifest" "$(py "$home" "" manifest)"
 check "fresh host: hermes secrets are in the clone" "$ROOT/hermes" "$(py "$home" "" hermes)"
-check "fresh host: roster is in the clone" "$ROOT/roster.txt" "$(py "$home" "" roster)"
+# The property is the directory, not the filename: roster.md is the name and
+# roster.txt still resolves when it is the only one present, so pinning a literal
+# name here would fail on any clone that still has the old file.
+check "fresh host: roster is in the clone" "$ROOT" "$(dirname "$(py "$home" "" roster)")"
+check "fresh host: roster is one of the two known names" "yes" \
+    "$(case $(basename "$(py "$home" "" roster)") in roster.md|roster.txt) echo yes ;; *) echo no ;; esac)"
 check "fresh host: nothing resolves under ~/.config" "no" \
     "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
 check "fresh host: nothing resolves under ~/.local/state" "no" \
