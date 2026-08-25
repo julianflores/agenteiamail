@@ -14,6 +14,10 @@ readonly EX_CONFIG=78
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly ROOT
 
+if [[ "$(uname -s 2>/dev/null || true)" == Darwin ]]; then
+    exec python3 "$ROOT/scripts/install_macos.py" "$@"
+fi
+
 # The installer must not write into the tree it is converging.
 #
 # Several helpers here are Python that imports repository-local modules, and the

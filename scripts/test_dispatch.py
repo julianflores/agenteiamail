@@ -554,7 +554,8 @@ fake_bin = bindir / "openclaw"
 fake_bin.write_text(
     "#!/usr/bin/env bash\n"
     'printf "%s\\n" "$*" >> "$CAPTURE"\n'
-    'case "$*" in *BOOM*) echo "session not up" >&2; exit 3 ;; esac\n'
+    'args="$*"\n'
+    'case "$args" in *BOOM*) echo "session not up" >&2; exit 3 ;; esac\n'
     "exit 0\n")
 fake_bin.chmod(fake_bin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 os.environ["CAPTURE"] = str(capture)
@@ -566,6 +567,21 @@ check("openclaw: it is called as a system event",
       True, "system event --mode now --text" in capture.read_text())
 check("openclaw: the rendered line is what gets sent",
       True, "[mail 12:00:00] Dulce — hola" in capture.read_text())
+
+roster_event = ev.mail_event(
+    account="agent@example.com", mailbox="INBOX", uidvalidity=42, uid=4,
+    sender_name="Dulce", sender_address="dulce@example.com",
+    subject="haz algo", sent_at="", roster_match=True,
+    notification_text="[mail 12:00:00, roster] Dulce — haz algo")
+check("openclaw: a roster message is accepted",
+      "accepted", openclaw.deliver(roster_event).status)
+called = capture.read_text()
+check("openclaw: roster mail uses the same system notification route",
+      True, "system event --mode now --text" in called)
+check("openclaw: the roster tag survives in the notification",
+      True, "[mail 12:00:00, roster] Dulce — haz algo" in called)
+check("openclaw: roster mail does not start an agent run",
+      False, "agent --session-key" in called)
 
 check("openclaw: a nonzero exit is retryable, not fatal", "retry",
       openclaw.deliver({"event_id": "x", "notification_text": "BOOM"}).status)

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-The OpenClaw adapter: deliver an event by injecting it into a live session.
+The OpenClaw adapter.
 
-This is the behaviour that shipped before there were adapters, moved behind the
-interface without changing what it does on the wire. It still calls
-`openclaw system event --mode now --text <line>`, and it still sends the rendered
-notification rather than the envelope, because that command takes exactly one
-string.
+Mail is delivered as a notification to the live session. The notification line
+still carries the roster tag when the listener matched the sender, but this
+adapter intentionally does not start an agent run from incoming mail.
 """
 
 import os
@@ -82,6 +80,11 @@ def check():
     return accepted((run.stdout or "").strip())
 
 
+def _system_event(binary, text):
+    return subprocess.run([binary, "system", "event", "--mode", "now", "--text", text],
+                          capture_output=True, text=True, timeout=TIMEOUT)
+
+
 def deliver(envelope):
     """
     Push one event into the live session.
@@ -104,8 +107,7 @@ def deliver(envelope):
         return config(f"event {envelope.get('event_id')} has no notification_text to send")
 
     try:
-        run = subprocess.run([binary, "system", "event", "--mode", "now", "--text", text],
-                             capture_output=True, text=True, timeout=TIMEOUT)
+        run = _system_event(binary, text)
     except subprocess.TimeoutExpired:
         return retry(f"{binary} did not return within {TIMEOUT}s")
     except OSError as exc:

@@ -17,7 +17,7 @@ Never fails the session: any unexpected error degrades to a quiet no-op, because
 broken hook must not be able to block startup.
 """
 
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, platform, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import event as ev
@@ -35,6 +35,8 @@ REPO = repo_root()
 VERSION_SH = REPO / "scripts/version.sh"
 SERVICE = "agenteiamail-idle.service"
 DISPATCH_SERVICE = "agenteiamail-dispatch.service"
+SERVICE_LABEL = "com.agenteiamail.idle"
+DISPATCH_SERVICE_LABEL = "com.agenteiamail.dispatch"
 
 # Claude Code cannot be pushed into, so its session is the consumer: the
 # dispatcher writes the spool and never reads it, and these two files are how a
@@ -49,8 +51,26 @@ MAX_DISPATCH_ERR = 5   # the last few lines say whether it is still failing
 VERSION_TIMEOUT = 20   # above version.sh's own 10s, so its timeout fires first
 
 
+def launchd_down(label):
+    """True only if launchd positively reports that a label is not running."""
+    try:
+        r = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return True
+        return "state = running" not in (r.stdout or "")
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def unit_down(unit):
     """True only if we positively confirmed the unit is not active."""
+    if platform.system() == "Darwin":
+        labels = {
+            SERVICE: SERVICE_LABEL,
+            DISPATCH_SERVICE: DISPATCH_SERVICE_LABEL,
+        }
+        return launchd_down(labels.get(unit, unit))
     try:
         r = subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit],
                            timeout=5)
@@ -188,17 +208,21 @@ def main():
 
     parts = []
     if down:
+        check = (f"`launchctl print gui/$(id -u)/{SERVICE_LABEL}`" if platform.system() == "Darwin"
+                 else f"`systemctl --user status {SERVICE}`")
         parts.append(
             f"MAIL LISTENER IS DOWN — {SERVICE} is not active, so no new mail is "
-            f"being detected at all. Check `systemctl --user status {SERVICE}` and "
+            f"being detected at all. Check {check} and "
             "restart it before relying on mail notifications."
         )
 
     if dispatch_down:
+        check = (f"`launchctl print gui/$(id -u)/{DISPATCH_SERVICE_LABEL}`" if platform.system() == "Darwin"
+                 else f"`systemctl --user status {DISPATCH_SERVICE}`")
         parts.append(
             f"MAIL DISPATCHER IS DOWN — {DISPATCH_SERVICE} is not active. Mail is still "
             "being detected and journalled, but nothing is delivering it into a "
-            f"session. Check `systemctl --user status {DISPATCH_SERVICE}`."
+            f"session. Check {check}."
         )
 
     if faults:

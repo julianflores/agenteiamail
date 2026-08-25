@@ -249,9 +249,12 @@ stdout as an event stream, the way Claude Code's Monitor tool does.
 **OpenClaw has no such primitive.** There is no `--stream-command` in its cron.
 That search has been done; it is a dead end.
 
-The inverse works: `dispatch.py` is an **active producer** that injects each event with
-`openclaw system event --mode now`. If you port this to another harness, that is
-the seam to look at first; the rest is harness-independent.
+The inverse works: `dispatch.py` is an **active producer**. It injects each
+OpenClaw mail event as a live notification with `openclaw system event --mode
+now`; roster mail carries the `roster` tag in that rendered line, but the
+OpenClaw adapter does not start an agent run from incoming mail. If you port
+this to another harness, that runtime delivery boundary is the part to inspect
+first; the rest is harness-independent.
 
 ---
 
