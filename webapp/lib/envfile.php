@@ -37,7 +37,7 @@ require_once __DIR__ . '/guard.php';
  * what legacy_layout() detects, so such a host resolves into the legacy branch
  * before these are consulted.
  */
-const HARNESS_ROOTS         = ['.openclaw', '.hermes'];
+const HARNESS_ROOTS         = ['.openclaw', '.hermes', '.claude'];
 const HARNESS_ENV_RELATIVE  = 'workspace/.env';
 
 const ENV_BASENAME      = '.env';
