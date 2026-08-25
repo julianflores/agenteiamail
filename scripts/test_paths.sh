@@ -392,6 +392,29 @@ check "hermes harness: a dangling link is still where the credentials belong" \
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
+# Claude Code is a harness root like the other two. 1.8.0 added it to
+# HARNESS_ROOTS in harness/paths.py but not to the shell or PHP copies — see
+# #88 — so this pins all three in agreement the same way the hermes and
+# openclaw cases above do.
+# ---------------------------------------------------------------------------
+home=$(mktemp -d)
+mkdir -p "$home/.claude/workspace"
+printf 'AGENTEIAMAIL_EMAIL=agent@example.com\n' >"$home/.claude/workspace/.env"
+agree_all "claude harness" "$home"
+check "claude harness: credentials are read where the harness keeps them" \
+    "$home/.claude/workspace/.env" "$(py "$home" "" env)"
+check "claude harness: state still hangs off the clone" "$ROOT/state" "$(py "$home" "" state)"
+check "claude harness: runtime config still hangs off the clone" \
+    "$ROOT/runtime.env" "$(py "$home" "" runtime-env)"
+check "claude harness: hermes secrets still hang off the clone" \
+    "$ROOT/hermes" "$(py "$home" "" hermes)"
+check "claude harness: this is not the legacy layout" "no" \
+    "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
+check "claude harness: an explicit override still wins" "/srv/named.env" \
+    "$(py "$home" /srv/named.env env)"
+rm -rf "$home"
+
+# ---------------------------------------------------------------------------
 # The runtime's own config is not the agent's mailbox.
 #
 # ~/.hermes/.env holds Hermes' gateway token. The rule matches

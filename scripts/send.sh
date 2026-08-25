@@ -69,14 +69,32 @@ if [ ! -f "$ROSTER" ]; then
     exit 2
 fi
 
-# Roster lines are "Name | email". Take the field after the last "|", strip
-# blanks, and match the whole thing exactly: -x so a substring cannot pass,
-# -F so nothing in an address is read as a pattern, -i because addresses are
-# case-insensitive. A line holding only an address still works.
+# The address is the field containing "@", not the field after the last "|".
+# Taking the last field held for "Name | email" and breaks the moment a row
+# carries anything after the address, which the Type column now does:
+#
+#     | Julian Flores | jjulianfe@gmail.com | Human |
+#
+# There the last field is "Human"; taking it silently drops that person from
+# the list. scripts/roster.py's roster_addresses() picks the field containing
+# "@" for exactly this reason -- the two must agree, so this mirrors it rather
+# than re-deriving its own rule. Comparison is case-insensitive and blank-
+# stripped, same as before.
+_agenteiamail_want=$(printf '%s' "$to" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
 if ! grep -vE '^[[:space:]]*(#|$)' "$ROSTER" \
-     | sed 's/.*|//' \
-     | tr -d '[:blank:]' \
-     | grep -qixF -- "$to"; then
+     | awk -F'|' -v want="$_agenteiamail_want" '
+         {
+             for (i = 1; i <= NF; i++) {
+                 field = $i
+                 gsub(/[ \t\r]/, "", field)
+                 if (index(field, "@") > 0) {
+                     if (tolower(field) == want) { found = 1 }
+                     break
+                 }
+             }
+         }
+         END { exit !found }
+     '; then
     echo "REFUSED: $to is not in $ROSTER" >&2
     echo "Add it deliberately, or ask your human to send this one." >&2
     exit 2

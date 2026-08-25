@@ -31,7 +31,7 @@ AGENTEIAMAIL_LEGACY_STATE_MARKERS="idle.json events.jsonl dispatch.offset delive
 # an exception to it, and is unreachable through this list: the same file is what
 # agenteiamail_legacy_layout detects, so such a host resolves into the legacy
 # branch first.
-AGENTEIAMAIL_HARNESS_ROOTS=".openclaw .hermes"
+AGENTEIAMAIL_HARNESS_ROOTS=".openclaw .hermes .claude"
 AGENTEIAMAIL_HARNESS_ENV_RELATIVE="workspace/.env"
 
 # True when this host has a pre-single-root install that must stay put.
