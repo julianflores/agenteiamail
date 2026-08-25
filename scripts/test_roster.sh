@@ -196,6 +196,30 @@ assert "missing sender sends nothing"   '[ ! -s "$CAPTURE" ]'
 send_ok "jjulianfe@gmail.com" "$(printf 'Test\nBcc: evil@example.com')" "$body"
 assert "no header injection via subject" '! grep -qi "^Bcc:" "$CAPTURE"'
 
+# --- The shipped template authorises nobody -----------------------------------
+#
+# roster.md.example used to carry two real, working addresses as data rows, so
+# `cp roster.md.example roster.md` -- the step INSTALL.md gives -- handed two
+# real people standing unattended authority on any install that followed it,
+# without the operator having decided anything. INSTALL.md says of that copy:
+# "Until you add a line it is empty, and an empty roster means you can send to
+# nobody." This asserts that sentence is true of the file actually shipped.
+#
+# Checked through roster.py rather than by grepping for "@": the parser is what
+# decides who is authorised, so it is the only thing whose answer counts.
+#
+# The header and separator rows stay -- they carry the format, and neither holds
+# an "@", so neither contributes an address.
+repo=$(cd "$(dirname "$SEND")/.." && pwd)
+template_addrs=$(python3 -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/scripts")
+import roster
+print(" ".join(sorted(roster.roster_addresses(Path(sys.argv[1]) / "roster.md.example"))))
+' "$repo")
+assert "shipped template contributes no addresses" '[ -z "$template_addrs" ]'
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
