@@ -8,7 +8,7 @@ answer someone it may not reply to:
   scripts/idle_listener.py  marks arriving mail so the agent knows it may act
 
 send.sh parses the file in bash. This module is the Python half, and the two
-are kept deliberately identical: last field after "|", every space removed,
+are kept deliberately identical: the field containing "@", every space removed,
 compared case-insensitively as a whole string. Substring matching would let
 evil-human@example.com through on the strength of human@example.com.
 """

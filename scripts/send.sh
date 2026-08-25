@@ -86,7 +86,7 @@ if ! grep -vE '^[[:space:]]*(#|$)' "$ROSTER" \
          {
              for (i = 1; i <= NF; i++) {
                  field = $i
-                 gsub(/[ \t]/, "", field)
+                 gsub(/[ \t\r]/, "", field)
                  if (index(field, "@") > 0) {
                      if (tolower(field) == want) { found = 1 }
                      break
