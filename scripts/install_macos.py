@@ -49,7 +49,6 @@ def plist_path(name: str) -> Path:
 
 
 def agent_env(openclaw_bin: str) -> dict[str, str]:
-    existing = os.environ.get("PATH", "")
     path_parts = [
         str(Path(openclaw_bin).parent),
         "/opt/homebrew/bin",
@@ -59,8 +58,6 @@ def agent_env(openclaw_bin: str) -> dict[str, str]:
         "/usr/sbin",
         "/sbin",
     ]
-    if existing:
-        path_parts.append(existing)
     return {
         "AGENTEIAMAIL_RUNTIME": "openclaw",
         "AGENTEIAMAIL_ENV": str(env_file()),

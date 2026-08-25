@@ -329,6 +329,23 @@ import sys; sys.path.insert(0, '$ROOT/harness')
 import paths; print(paths.repo_root())
 ")
 check "the repo root is this checkout" "$ROOT" "$found"
+home=$(mktemp -d)
+checkout="$home/elsewhere/agenteiamail"
+mkdir -p "$checkout/harness"
+checkout=$(cd "$checkout" && pwd -P)
+cp "$ROOT/harness/paths.py" "$checkout/harness/paths.py"
+found=$(CHECKOUT="$checkout" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["CHECKOUT"], "harness"))
+import paths
+
+print(paths.repo_root())
+PY
+)
+check "the repo root is found from an arbitrary checkout" "$checkout" "$found"
+rm -rf "$home"
 check "the install root is the clone" "$ROOT" "$(py "$(mktemp -d)" "" root)"
 
 # ---------------------------------------------------------------------------
