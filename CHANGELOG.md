@@ -1,5 +1,86 @@
 # Changelog
 
+## 1.8.1 — 2026-08-25
+
+**1.8.0 could not send mail.** Every defect below was found within an hour by the
+first Claude Code install ([#87](https://github.com/julianflores/agenteiamail/issues/87)),
+on the first host that had never run this software before. Anyone who installed
+1.8.0 and followed the documentation should upgrade.
+
+- **`scripts/send.sh` still parsed the pre-1.8.0 roster format**, so every address
+  in a `roster.md` table was refused and the agent could send to nobody
+  ([#91](https://github.com/julianflores/agenteiamail/issues/91)). 1.8.0 rewrote
+  the rule in `roster.py` — find the field containing `@` rather than the field
+  after the last `|` — and left `send.sh` on the old one. On a markdown table the
+  result is worse than the wrong field: rows end in a trailing `|`, so a greedy
+  match consumed the whole line and yielded nothing at all.
+- **Inbound and outbound disagreed about who was on the roster**, which is what
+  made it quiet. Mail arrived, was tagged `roster` by the Python half, and the
+  agent acted on it — and then could not reply to any of it. `REFUSED` reads like
+  a roster nobody has filled in, and the message even says "Add it deliberately",
+  pointing at a file where the address is already sitting.
+- **`~/.claude` never reached the shell and PHP resolvers**
+  ([#88](https://github.com/julianflores/agenteiamail/issues/88)). 1.8.0 added it
+  to `HARNESS_ROOTS` in `harness/paths.py` and not to `scripts/envpath.sh` or
+  `webapp/lib/envfile.php`, both of which carry a comment saying to keep all
+  three in step. Everything that sources `envpath.sh` inherited the wrong answer,
+  and on a live host that pointed the generated systemd unit's `--env` at a file
+  that does not exist — the listener crash-looped, which is the outcome
+  `install.sh`'s own comment says a fourth copy of the list would cause.
+- **The two halves also disagreed on a CRLF roster**, which the fix for #91 would
+  otherwise have preserved. `send.sh` stripped space and tab; `roster.py` strips
+  all whitespace. `send.sh` already tolerates CRLF in `.env`, and says there that
+  it "has bitten this repo" — same script, same hazard, one of the two handled.
+- **`roster.md.example` shipped two real, working addresses**
+  ([#89](https://github.com/julianflores/agenteiamail/issues/89)). The repository
+  is public and `cp roster.md.example roster.md` is the documented step, so
+  following the instructions handed two real people standing unattended authority
+  on a stranger's install. That list carries two powers, per the template's own
+  header: an address on it may be written to unattended, **and** mail from it is
+  treated as instructions the agent carries out. A `From:` header is forged
+  trivially. The rows are gone; the format stays in the header and the table
+  headings, neither of which holds an `@`. `INSTALL.md` already promised this —
+  "Until you add a line it is empty" — and was describing a file we were not
+  shipping.
+
+The tests that should have caught all of this were green throughout, which is the
+part worth keeping.
+
+- **`scripts/test_paths.sh` had no case for the runtime 1.8.0 added.** It asserted
+  shell/Python/PHP agreement for OpenClaw, Hermes and two-harness hosts, reported
+  `0 failed`, and never touched `~/.claude`. It now has a `claude harness` case
+  mirroring the other two.
+- **`scripts/test_roster.sh`'s fixture predated the format change**, still written
+  as `Name | email` with no outer pipes and no `Type` column — so it exercised a
+  shape the project no longer ships and never the one it does. It now carries
+  five cases against the real template shape, including refusing `Human` as an
+  address.
+- **The shipped template is now asserted to authorise nobody**, resolved through
+  `roster.py` rather than by grepping for `@`, because the parser is what decides
+  who is allowed.
+- **`scripts/test_paths.sh` still drops all PHP checks silently when `php` is
+  absent** — 255 assertions with it, 211 without, `0 failed` either way. Not fixed
+  here; it is [#90](https://github.com/julianflores/agenteiamail/issues/90). It is
+  why the PHP half of #88 could be repaired on a host that never ran it.
+
+Documentation, from the tester's recommendations.
+
+- **`INSTALL.md` §1.1 checks user lingering** alongside systemd and `loginctl`.
+  The installer already refused without it and named the exact command, so nothing
+  failed wrongly; what was lost was a round trip, because an agent has no password
+  and by the time the dry-run stops, the human who was just asked for credentials
+  has gone.
+- **`INSTALL.md` §3's harness table names Claude Code.** `AGENTS.md` has carried
+  all three since 1.8.0. The paragraph directly beneath that table is the
+  procedure that would have prevented #88 — add the root to all three files
+  together, with `test_paths.sh` asserting they agree. It was published, then not
+  followed, under a table that was itself not updated, with a promise about a test
+  that had no case for the new root.
+
+One rule stated in several places, kept in step by hand, is the cause of #88, #90,
+#91 and the table above. Each is fixed as an instance;
+[#95](https://github.com/julianflores/agenteiamail/issues/95) tracks the class.
+
 ## 1.8.0 — 2026-08-23
 
 **Claude Code is a third runtime**, and the roster is `roster.md`. Everything
