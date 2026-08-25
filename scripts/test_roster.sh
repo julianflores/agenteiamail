@@ -97,6 +97,28 @@ check refuse ""                                            "empty recipient"
 # A missing roster must refuse, not fall open.
 ROSTER="$tmp/does-not-exist.txt" check refuse "jjulianfe@gmail.com" "roster file missing"
 
+# --- The shipped template's format, not just "Name | email" -----------------
+#
+# roster.md.example is a full markdown table -- leading "|", a Type column,
+# and a trailing "|" -- which is exactly the shape that broke "take the field
+# after the last |": the last field there is "Human", not the address. #88's
+# sibling defect. This roster is the example file verbatim.
+table_roster="$tmp/roster-table.md"
+cat >"$table_roster" <<'EOF'
+# The people this agent works for.
+
+| Name | Email | Type |
+|---|---|---|
+| Julian Flores | jjulianfe@gmail.com | Human |
+| Metis Claude-Tob | metis.claude.tob@gmail.com | AI Agent |
+EOF
+
+ROSTER="$table_roster" check allow  "jjulianfe@gmail.com"          "table row, address before Type"
+ROSTER="$table_roster" check allow  "metis.claude.tob@gmail.com"   "second table row"
+ROSTER="$table_roster" check allow  "JJulianFe@Gmail.com"          "table row, case-insensitive"
+ROSTER="$table_roster" check refuse "Human"                        "the Type column, not the address"
+ROSTER="$table_roster" check refuse "stranger@example.com"         "not on the table roster"
+
 # --- The message Himalaya actually receives ----------------------------------
 #
 # Himalaya v2 rejects a raw message with no From:, so "the gate let it through"
