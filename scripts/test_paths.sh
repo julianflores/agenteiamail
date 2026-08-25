@@ -19,6 +19,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 pass=0
 fail=0
+skip=0
 
 check() {   # description, expected, actual
     if [ "$2" = "$3" ]; then
@@ -55,13 +56,22 @@ sh_() (
     esac
 )
 php_() {
-    command -v php >/dev/null 2>&1 || { echo SKIP; return; }
+    # Two different reasons to answer nothing, and they must not be conflated.
+    # NA means the form never needed this accessor, so nothing is lost by not
+    # asking. NOPHP means this host cannot check the PHP half of a question it
+    # does answer -- a real gap in coverage, and the only one worth counting.
+    #
+    # Applicability is decided first on purpose. Testing for php first would
+    # report every accessor as a missing check on a php-less host and overstate
+    # the gap by more than double, which is its own kind of wrong number.
+    #
     # The form only ever needs these two, and they are the two that must not
     # disagree with the tools it configures.
     case "${3:-env}" in
         env|state) ;;
-        *) echo SKIP; return ;;
+        *) echo SKIP_NA; return ;;
     esac
+    command -v php >/dev/null 2>&1 || { echo SKIP_NOPHP; return; }
     HOME="$1" AGENTEIAMAIL_ENV="${2:-}" php -r '
         require "'"$ROOT"'/webapp/lib/envfile.php";
         echo "'"${3:-env}"'" === "env" ? env_path() : state_dir();
@@ -78,9 +88,15 @@ agree() {   # description, home, [override], [what]
     s=$(sh_ "$home" "$override" "$what")
     h=$(php_ "$home" "$override" "$what")
     check "$desc: shell agrees with python" "$p" "$s"
-    if [ "$h" != "SKIP" ]; then
-        check "$desc: php agrees with python" "$p" "$h"
-    fi
+    case "$h" in
+        SKIP_NA)   ;;
+        SKIP_NOPHP)
+            # Not silence. A run without php checks two implementations of
+            # three, and a suite reporting "0 failed" either way is how #88's
+            # PHP half came to be "verified" on a host that never ran it.
+            skip=$((skip + 1)) ;;
+        *) check "$desc: php agrees with python" "$p" "$h" ;;
+    esac
     RESOLVED="$p"
 }
 
@@ -514,5 +530,13 @@ check "two harnesses: an explicit override is how you say which" "/srv/named.env
     "$(py "$home" /srv/named.env env)"
 rm -rf "$home"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
+if [ "$skip" -gt 0 ]; then
+    # php is not a prerequisite for running agenteiamail -- AGENTS.md wants it
+    # only for the setup form -- so a host without it is fully supported and
+    # this is not a failure. It is only allowed to pass while it says so.
+    printf '\nskip %d php agreement checks (php not on PATH)\n' "$skip"
+    printf '\n%d passed, %d failed, %d skipped (no php)\n' "$pass" "$fail" "$skip"
+else
+    printf '\n%d passed, %d failed\n' "$pass" "$fail"
+fi
 [ "$fail" -eq 0 ]
