@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.9.0 — 2026-08-25
+
+**macOS is a supported host.** An OpenClaw agent on a Mac can now install and
+supervise this the way a Linux one does, without WSL, Ubuntu, or a
+`systemd --user` session. Written and proved on the only Mac in the fleet by the
+agent that runs on it, against [#81](https://github.com/julianflores/agenteiamail/issues/81).
+
+- **`scripts/install_macos.py` renders and converges two LaunchAgents** in
+  `~/Library/LaunchAgents`, with `KeepAlive` and `RunAtLoad`, doing for launchd
+  what the installer already did for systemd units.
+- **`scripts/install.sh` delegates on Darwin**, which also disposes of a problem
+  rather than fighting it: Apple ships bash 3.2, and the installer uses `declare -A`
+  and `mapfile -d ''` in nine places. A fresh clone on macOS did not fail somewhere
+  informative — it died at line 143 with `declare: -A: invalid option`, before any
+  install logic ran at all. Moving the macOS path into Python means the question
+  does not arise, instead of nine rewrites for a shell nobody wants to target.
+- **`scripts/env_secret.py` prints one value from the env file**, so Himalaya's
+  `password.cmd` reads the password at need and `config.toml` never holds it.
+  It tolerates a UTF-8 BOM and CRLF, both of which have bitten this repository
+  before.
+- **The generated plists carry a deliberate `PATH`** — the OpenClaw binary's
+  directory, Homebrew, then the standard system directories — and specifically do
+  not append the installing shell's own `PATH`. The hand-written plists this
+  replaced had frozen a per-run temporary directory into a service definition
+  meant to outlive reboots.
+
+### What the LaunchAgents do and do not promise
+
+A LaunchAgent runs as the user, which is what a mailbox with a mode `600`
+credentials file needs, and is tied to a login session. There is no macOS
+equivalent of `enable-linger` that would keep it unprivileged and survive logout
+both at once.
+
+That is not a shortfall against the other runtimes, and it is worth writing down
+rather than leaving to be rediscovered: **on every host this project currently
+runs on, the listener's availability follows the user session.** A WSL host's
+`enable-linger` keeps the units alive across a logout inside the Linux session,
+but the whole session is down until Windows starts it. No supported host today
+returns from a cold boot without a human, and a macOS one is no different. A
+native Linux host would be, and none exists yet.
+
+### A test that had never been run by anyone it applied to
+
+`scripts/test_paths.sh` asserted "the repo root does not assume a harness" by
+matching the resolved path against `*.openclaw*`. That fails on a clone at
+`~/.openclaw/workspace/agenteiamail` — which is the location `README.md`
+recommends — so the suite asserted that a documented install location was wrong.
+It survived because nobody who had followed that line had run the suite. The
+first host to do so was the Mac.
+
+The assertion could not do what its name claimed either: where a clone sits and
+how `repo_root()` derives its answer are unrelated, and matching the result
+against a substring conflates them. It is replaced by one that copies `paths.py`
+to an arbitrary path holding no harness name and requires `repo_root()` to
+resolve from the file's own location — the property, rather than the spelling of
+the answer. Removing it was right; removing it silently would not have been.
+
+### Not covered
+
+`scripts/test_install.sh` and `scripts/test_migrate.sh` exercise systemd and are
+not a signal on macOS. They were skipped there by the tester's judgement rather
+than by the suites saying so, which is
+[#101](https://github.com/julianflores/agenteiamail/issues/101). Both were run on
+Linux against this release.
+
 ## 1.8.1 — 2026-08-25
 
 **1.8.0 could not send mail.** Every defect below was found within an hour by the
