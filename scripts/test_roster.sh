@@ -50,11 +50,14 @@ export ENV_FILE="$envfile"
 cat >"$roster" <<'EOF'
 # Comment that should never match.
 #
-# Format:  Name | email
+# Format: | Name | Email | Type |
 
 # 1. Approved contacts; any other contact/email address will be ignored.
-Julian Flores | jjulianfe@gmail.com
-Second Contact | second_contact@example.org
+| Name | Email | Type |
+| --- | --- | --- |
+| Julian Flores | jjulianfe@gmail.com | Human |
+| Second Contact | second_contact@example.org | AI Agent |
+| AI Agent | Reordered Contact | reordered@example.net |
 bare-address-still-works@example.com
 EOF
 
@@ -84,6 +87,7 @@ export ROSTER="$roster"
 
 check allow  "jjulianfe@gmail.com"                         "listed as Name | email"
 check allow  "second_contact@example.org"                  "second listed contact"
+check allow  "reordered@example.net"                       "reordered table row"
 check allow  "bare-address-still-works@example.com"        "line with no Name | prefix"
 check allow  "JJulianFe@Gmail.com"                         "case-insensitive"
 
@@ -91,7 +95,7 @@ check refuse "stranger@example.com"                        "not listed at all"
 check refuse "evil-jjulianfe@gmail.com"                    "substring of a listed address"
 check refuse "jjulianfe@gmail.com.attacker.net"            "listed address as a prefix"
 check refuse "Julian Flores"                               "the name, not the address"
-check refuse "Julian Flores | jjulianfe@gmail.com"         "the whole roster line verbatim"
+check refuse "Julian Flores | jjulianfe@gmail.com | Human" "the whole roster line verbatim"
 check refuse ""                                            "empty recipient"
 
 # A missing roster must refuse, not fall open.
@@ -144,6 +148,7 @@ assert "From: header is present"        'grep -q "^From: " "$CAPTURE"'
 assert "From: carries the env address"  'grep -qx "From: agent@example.com" "$CAPTURE"'
 assert "From: comes before To:"         '[ "$(grep -n -m1 "^From: " "$CAPTURE" | cut -d: -f1)" -lt "$(grep -n -m1 "^To: " "$CAPTURE" | cut -d: -f1)" ]'
 assert "To: is the approved recipient"  'grep -qx "To: jjulianfe@gmail.com" "$CAPTURE"'
+assert "direct human recipient is not duplicated as Cc" '! grep -q "^Cc: " "$CAPTURE"'
 assert "accented Subject is encoded"    'grep -qE "^Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=\$" "$CAPTURE"'
 assert "encoded Subject round-trips"    '[ "$(grep -m1 "^Subject: " "$CAPTURE" | sed -e "s/^Subject: =?UTF-8?B?//" -e "s/?=\$//" | base64 -d)" = "Prueba de correo — ñ, á" ]'
 assert "blank line separates the body"  'awk "/^\$/{found=1} END{exit !found}" "$CAPTURE"'
@@ -163,6 +168,10 @@ first_id=$(grep -m1 "^Message-ID: " "$CAPTURE")
 : >"$CAPTURE"
 send_ok "jjulianfe@gmail.com" "second" "$body"
 assert "Message-ID differs per send"    '[ "$first_id" != "$(grep -m1 "^Message-ID: " "$CAPTURE")" ]'
+
+: >"$CAPTURE"
+send_ok "second_contact@example.org" "cc check" "$body"
+assert "Type is informational and does not add Cc" '! grep -q "^Cc:" "$CAPTURE"'
 
 # A sender with no domain would produce a nonsense Message-ID; refuse instead.
 printf 'AGENTEIAMAIL_EMAIL=agent-without-a-domain\n' >"$tmp/env-nodomain"

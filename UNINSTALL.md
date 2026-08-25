@@ -52,6 +52,31 @@ git -C "$REPO" remote get-url origin
 
 ## 1. Stop and remove the services
 
+### macOS launchd
+
+For an OpenClaw macOS install:
+
+```bash
+scripts/install.sh --runtime openclaw --uninstall --dry-run
+scripts/install.sh --runtime openclaw --uninstall
+```
+
+Manual equivalent:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.agenteiamail.idle.plist 2>/dev/null || true
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.agenteiamail.dispatch.plist 2>/dev/null || true
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.agenteiamail.logrotate.plist 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/com.agenteiamail.idle.plist
+rm -f ~/Library/LaunchAgents/com.agenteiamail.dispatch.plist
+rm -f ~/Library/LaunchAgents/com.agenteiamail.logrotate.plist
+```
+
+Credentials, roster, state, journal, cursor and logs are preserved unless you
+remove them explicitly.
+
+### systemd
+
 **Take an inventory first.** The names below are the usual ones, not necessarily
 yours, and everything after this point is destructive:
 

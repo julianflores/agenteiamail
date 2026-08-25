@@ -30,6 +30,14 @@ check() {   # description, expected, actual
     fi
 }
 
+matches() {  # value, shell-pattern
+    case "$1" in $2) echo yes ;; *) echo no ;; esac
+}
+
+known_roster_name() {
+    case "$1" in roster.md|roster.txt) echo yes ;; *) echo no ;; esac
+}
+
 py() { HOME="$1" AGENTEIAMAIL_ENV="${2:-}" python3 "$ROOT/harness/paths.py" "${3:-env}"; }
 sh_() (
     HOME="$1"
@@ -101,11 +109,11 @@ check "fresh host: hermes secrets are in the clone" "$ROOT/hermes" "$(py "$home"
 # name here would fail on any clone that still has the old file.
 check "fresh host: roster is in the clone" "$ROOT" "$(dirname "$(py "$home" "" roster)")"
 check "fresh host: roster is one of the two known names" "yes" \
-    "$(case $(basename "$(py "$home" "" roster)") in roster.md|roster.txt) echo yes ;; *) echo no ;; esac)"
+    "$(known_roster_name "$(basename "$(py "$home" "" roster)")")"
 check "fresh host: nothing resolves under ~/.config" "no" \
-    "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
+    "$(matches "$(py "$home" "" config)" "$home/.config/*")"
 check "fresh host: nothing resolves under ~/.local/state" "no" \
-    "$(case $(py "$home" "" state) in "$home"/.local/state/*) echo yes ;; *) echo no ;; esac)"
+    "$(matches "$(py "$home" "" state)" "$home/.local/state/*")"
 rm -rf "$home"
 
 # ---------------------------------------------------------------------------
@@ -321,8 +329,23 @@ import sys; sys.path.insert(0, '$ROOT/harness')
 import paths; print(paths.repo_root())
 ")
 check "the repo root is this checkout" "$ROOT" "$found"
-check "the repo root does not assume a harness" "no" \
-    "$(case $found in *.openclaw*) echo yes ;; *) echo no ;; esac)"
+home=$(mktemp -d)
+checkout="$home/elsewhere/agenteiamail"
+mkdir -p "$checkout/harness"
+checkout=$(cd "$checkout" && pwd -P)
+cp "$ROOT/harness/paths.py" "$checkout/harness/paths.py"
+found=$(CHECKOUT="$checkout" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["CHECKOUT"], "harness"))
+import paths
+
+print(paths.repo_root())
+PY
+)
+check "the repo root is found from an arbitrary checkout" "$checkout" "$found"
+rm -rf "$home"
 check "the install root is the clone" "$ROOT" "$(py "$(mktemp -d)" "" root)"
 
 # ---------------------------------------------------------------------------
@@ -379,7 +402,7 @@ check "hermes harness: runtime config still hangs off the clone" \
 check "hermes harness: hermes secrets still hang off the clone" \
     "$ROOT/hermes" "$(py "$home" "" hermes)"
 check "hermes harness: this is not the legacy layout" "no" \
-    "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
+    "$(matches "$(py "$home" "" config)" "$home/.config/*")"
 check "hermes harness: an explicit override still wins" "/srv/named.env" \
     "$(py "$home" /srv/named.env env)"
 # The file is asked about as a link too: an operator may point the harness path
@@ -408,8 +431,12 @@ check "claude harness: runtime config still hangs off the clone" \
     "$ROOT/runtime.env" "$(py "$home" "" runtime-env)"
 check "claude harness: hermes secrets still hang off the clone" \
     "$ROOT/hermes" "$(py "$home" "" hermes)"
+case "$(py "$home" "" config)" in
+    "$home"/.config/*) claude_legacy=yes ;;
+    *) claude_legacy=no ;;
+esac
 check "claude harness: this is not the legacy layout" "no" \
-    "$(case $(py "$home" "" config) in "$home"/.config/*) echo yes ;; *) echo no ;; esac)"
+    "$claude_legacy"
 check "claude harness: an explicit override still wins" "/srv/named.env" \
     "$(py "$home" /srv/named.env env)"
 rm -rf "$home"
@@ -456,7 +483,7 @@ check "openclaw harness: a credentials file is not an install (state)" \
 check "openclaw harness: a credentials file is not an install (config)" \
     "$ROOT/config-is-the-clone" "$(py "$home" "" config)/config-is-the-clone"
 check "openclaw harness: nothing resolves under ~/.local/state" "no" \
-    "$(case $(py "$home" "" state) in "$home"/.local/state/*) echo yes ;; *) echo no ;; esac)"
+    "$(matches "$(py "$home" "" state)" "$home/.local/state/*")"
 check "openclaw harness: the hermes secrets stay in the clone" "$ROOT/hermes" \
     "$(py "$home" "" hermes)"
 rm -rf "$home"
@@ -480,7 +507,7 @@ printf 'AGENTEIAMAIL_EMAIL=hermes@example.com\n' >"$home/.hermes/workspace/.env"
 printf 'AGENT_EMAIL_ACCOUNT=openclaw@example.com\n' >"$home/.openclaw/workspace/.env"
 agree_all "two harnesses" "$home"
 check "two harnesses: neither agent's mailbox is guessed at" "no" \
-    "$(case $(py "$home" "" env) in "$home"/.hermes/*) echo yes ;; *) echo no ;; esac)"
+    "$(matches "$(py "$home" "" env)" "$home/.hermes/*")"
 check "two harnesses: the fallback is the file this install owns" "$ROOT/.env" \
     "$(py "$home" "" env)"
 check "two harnesses: an explicit override is how you say which" "/srv/named.env" \

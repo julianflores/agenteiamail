@@ -1,12 +1,14 @@
 # Installing agenteiamail on a new host
 
 **Audience:** an AI agent or operator deploying this repository on Ubuntu 24.04
-for either OpenClaw or Hermes Agent, with access to a systemd user session.
+for either OpenClaw or Hermes Agent, with access to a systemd user session, or
+deploying it on macOS for OpenClaw with access to launchd.
 
 `scripts/install.sh` is the runtime-neutral, idempotent path for the owned
-systemd-user boundary. The established manual procedure below remains useful for
-mailbox credentials, `roster.md`, and end-to-end delivery verification, which the
-installer deliberately does not create or infer.
+supervision boundary. On Ubuntu it owns systemd-user units; on macOS with
+OpenClaw it owns per-user launchd LaunchAgents. The established manual procedure
+below remains useful for mailbox credentials, `roster.md`, and end-to-end
+delivery verification, which the installer deliberately does not create or infer.
 
 ### FR7 installer boundary and exit statuses
 
@@ -20,9 +22,10 @@ scripts/install.sh --runtime hermes --uninstall --dry-run
 
 Install is the default mode. `--upgrade` and `--uninstall` are mutually exclusive
 modes that share prerequisite discovery and a mode-0600 ownership manifest.
-Install and upgrade atomically converge four unit files and `runtime.env`, verify
-the units and runtime-specific route/runtime probes, then enable the idle listener,
-dispatcher, and rotation timer. A changed owned runtime boundary is restarted;
+Install and upgrade atomically converge four systemd unit files on Ubuntu or
+three launchd plist files on macOS and `runtime.env`, verify the service
+artifacts and runtime-specific route/runtime probes, then enable the idle
+listener, dispatcher, and rotation timer. A changed owned runtime boundary is restarted;
 an unchanged rerun makes no service change. Runtime migration is allowed only with
 `--upgrade`; generated Hermes secrets remain accounted for across migration.
 
@@ -33,11 +36,13 @@ cursor, and logs are preserved. On a degraded host without a user manager,
 filesystem cleanup continues with an explicit warning that deactivation is
 unconfirmed.
 
-`--dry-run` resolves the systemd-user service `PATH` and reports planned versus
-preserved artifacts without executing OpenClaw or Hermes and without modifying
-files, secrets, services, or state. The application currently uses fixed paths
-under `$HOME`; ambient `XDG_CONFIG_HOME` and `XDG_STATE_HOME` overrides are
-reported and ignored so the inventory cannot disagree with runtime code.
+`--dry-run` resolves the service environment and reports planned versus preserved
+artifacts without executing OpenClaw or Hermes and without modifying files,
+secrets, services, or state. On Ubuntu that means the systemd-user service
+`PATH`; on macOS that means the launchd environment and the resolved OpenClaw
+executable. The application currently uses fixed paths under `$HOME`; ambient
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` overrides are reported and ignored so the
+inventory cannot disagree with runtime code.
 
 **Exit status `10` is success:** for dry-run it means the plan contains create,
 modify, or remove work; for a mutating run it means convergence made changes.
@@ -61,6 +66,11 @@ validation-only external artifacts.
 For OpenClaw, discovery accepts only a `PATH` actually reported by the systemd
 user manager. A missing `PATH=` entry is a configuration failure; the installer
 does not invent a fallback or add `$HOME/.local/bin`.
+
+For OpenClaw on macOS, discovery resolves an explicit OpenClaw executable for
+the LaunchAgent environment, usually under `/opt/homebrew/bin` or the npm global
+installation. Set `OPENCLAW=/absolute/path/to/openclaw` if autodetection finds
+the wrong one.
 
 ### Hermes profile and guided-delivery boundary
 
@@ -156,6 +166,38 @@ proceed without it and names this same command, so nothing is lost by finding
 out later; it is here because an agent has no password and cannot fix it alone.
 Discovering it now means asking once, at the point your human is already being
 asked for credentials, rather than stopping the install to go and find them.
+
+### 1.1a macOS OpenClaw host
+
+On macOS there is no `systemd --user` or `loginctl`. For OpenClaw, use launchd:
+
+```bash
+command -v launchctl >/dev/null && echo "launchctl: present" || echo "launchctl: MISSING"
+command -v openclaw >/dev/null && openclaw --version
+command -v himalaya >/dev/null && himalaya --version
+scripts/install.sh --runtime openclaw --dry-run
+```
+
+If Himalaya is missing and Homebrew is available:
+
+```bash
+brew install himalaya
+```
+
+The macOS installer creates:
+
+```text
+~/Library/LaunchAgents/com.agenteiamail.idle.plist
+~/Library/LaunchAgents/com.agenteiamail.dispatch.plist
+~/Library/LaunchAgents/com.agenteiamail.logrotate.plist
+```
+
+Service status is checked with:
+
+```bash
+launchctl print gui/$(id -u)/com.agenteiamail.idle
+launchctl print gui/$(id -u)/com.agenteiamail.dispatch
+```
 
 ### 1.2 Does the mail server advertise IDLE?
 
@@ -323,7 +365,10 @@ Prove it resolved before you rely on it; this sends nothing:
 
 ```bash
 echo hi > /tmp/b.txt
-scripts/send.sh --check "$(grep -m1 -v '^[[:space:]]*#' roster.md | sed 's/.*|//' | tr -d '[:blank:]')" "check" /tmp/b.txt
+scripts/send.sh --check "$(awk -F'|' '
+    /^[[:space:]]*(#|$)/ { next }
+    { for (i = 1; i <= NF; i++) if (index($i, "@")) { gsub(/[[:blank:]]/, "", $i); print $i; exit } }
+' roster.md)" "check" /tmp/b.txt
 ```
 
 A `From:` line carrying your agent's address means it found them. `no sender
@@ -649,9 +694,11 @@ reports what is still queued and stops there.
 there is no `--stream-command` in its cron. Do not go looking for one; that search
 has already been done and it is a dead end.
 
-The working pattern is the inverse: the OpenClaw adapter **pushes** into the
-session with `openclaw system event --mode now`. It is an active producer, not a
-passive stream.
+The working pattern is the inverse: the OpenClaw adapter **pushes** into
+OpenClaw. Mail goes in as a live notification with `openclaw system event --mode
+now`; roster mail carries the `roster` tag in that rendered line, but the
+OpenClaw adapter does not start an agent run from incoming mail. It is an active
+producer, not a passive stream.
 
 The one piece that may need adapting to your harness version is the output payload
 of `session_start.py`; it is marked in the file.

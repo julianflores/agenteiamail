@@ -19,6 +19,7 @@ import argparse
 import calendar
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -42,6 +43,8 @@ IDLE_ERR = STATE_DIR / "idle.err.log"
 
 LISTENER_UNIT = "agenteiamail-idle.service"
 DISPATCH_UNIT = "agenteiamail-dispatch.service"
+LISTENER_LAUNCHD_LABEL = "com.agenteiamail.idle"
+DISPATCH_LAUNCHD_LABEL = "com.agenteiamail.dispatch"
 
 # Long enough that a slow delivery is not a fault, short enough that a queue
 # nobody is draining is noticed within a working session.
@@ -92,8 +95,29 @@ def load_runtime_env(path=None):
     return path
 
 
+def launchd_state(label):
+    """active / loaded / inactive / unknown for a per-user macOS LaunchAgent."""
+    try:
+        run = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if run.returncode != 0:
+        return "inactive"
+    if "state = running" in (run.stdout or ""):
+        return "active"
+    return "loaded"
+
+
 def unit_state(unit):
     """active / inactive / failed / unknown, without guessing when we cannot ask."""
+    if platform.system() == "Darwin":
+        labels = {
+            LISTENER_UNIT: LISTENER_LAUNCHD_LABEL,
+            DISPATCH_UNIT: DISPATCH_LAUNCHD_LABEL,
+        }
+        return launchd_state(labels.get(unit, unit))
     try:
         run = subprocess.run(["systemctl", "--user", "is-active", unit],
                              capture_output=True, text=True, timeout=5)

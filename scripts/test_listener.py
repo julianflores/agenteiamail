@@ -38,14 +38,18 @@ def main():
         roster.write_text(
             "# Addresses this agent may write to unattended.\n"
             "\n"
-            "Julian Flores | jjulianfe@gmail.com\n"
-            "  Spaced Out |  Spaced@Example.COM  \n"
+            "| Name | Email | Type |\n"
+            "| --- | --- | --- |\n"
+            "| Julian Flores | jjulianfe@gmail.com | Human |\n"
+            "| Spaced Out |  Spaced@Example.COM | AI Agent |\n"
+            "| AI Agent | Reordered Contact | reordered@example.net |\n"
             "bare@example.com\n",
             encoding="utf-8",
         )
         allowed = roster_addresses(roster)
 
-        check(allowed == {"jjulianfe@gmail.com", "spaced@example.com", "bare@example.com"},
+        check(allowed == {"jjulianfe@gmail.com", "spaced@example.com",
+                          "reordered@example.net", "bare@example.com"},
               f"roster parsed to {allowed}")
 
         # --- the file is roster.md, with a Type column ----------------------
@@ -92,6 +96,8 @@ def main():
               "matching is case-insensitive")
         check(sender_is_listed(message("bare@example.com"), allowed),
               "roster line holding only an address")
+        check(sender_is_listed(message("reordered@example.net"), allowed),
+              "reordered table row still finds the address")
 
         # --- must not be tagged ---------------------------------------------
         check(not sender_is_listed(message("stranger@example.com"), allowed),
