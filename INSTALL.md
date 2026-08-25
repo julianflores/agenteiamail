@@ -127,6 +127,8 @@ hour of setup.
 ```bash
 systemctl --user status >/dev/null 2>&1 && echo "systemd --user: OK" || echo "systemd --user: NOT AVAILABLE"
 command -v loginctl >/dev/null && echo "loginctl: present" || echo "loginctl: MISSING"
+loginctl show-user "$USER" -p Linger --value 2>/dev/null | grep -qx yes \
+  && echo "linger: enabled" || echo "linger: DISABLED"
 # logrotate usually lives in /usr/sbin, which is often not on a user PATH,
 # so `command -v` alone reports it missing on a machine that has it.
 command -v logrotate >/dev/null 2>&1 || [ -x /usr/sbin/logrotate ] || [ -x /sbin/logrotate ] \
@@ -140,6 +142,20 @@ neither survives a reboot nor restarts on crash.
 
 `logrotate` being absent is fine. `harness/rotate_logs.py` in this repo does the
 same job.
+
+**If `linger` is disabled, your human has to enable it**, and it needs root:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Without it the units stop when your human logs out and do not come back at boot,
+so the listener is running exactly when someone is already sitting at the
+machine — which is when it is least needed. `scripts/install.sh` refuses to
+proceed without it and names this same command, so nothing is lost by finding
+out later; it is here because an agent has no password and cannot fix it alone.
+Discovering it now means asking once, at the point your human is already being
+asked for credentials, rather than stopping the install to go and find them.
 
 ### 1.2 Does the mail server advertise IDLE?
 
@@ -254,6 +270,7 @@ in the workspace folder of its own installation directory:
 |---|---|
 | OpenClaw | `~/.openclaw/workspace/.env` |
 | Hermes Agent | `~/.hermes/workspace/.env` |
+| Claude Code | `~/.claude/workspace/.env` |
 
 The resolver reads that file where it lies; nothing needs to be moved, copied or
 linked. Only the credentials resolve to the harness — state, `runtime.env`, the
