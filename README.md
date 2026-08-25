@@ -6,9 +6,17 @@ Push-style email for an AI agent. It finds out about new mail within about a
 second, without polling, and can read and send under a recipient allowlist.
 
 Built around [Himalaya](https://github.com/pimalaya/himalaya) for a plain
-IMAP/SMTP account, running on Ubuntu 24.04 with either the OpenClaw or Hermes
-Agent harness. Hermes operators configure two authenticated routes as described
-in [`HERMES.md`](HERMES.md).
+IMAP/SMTP account, running on Ubuntu 24.04 under the OpenClaw, Hermes Agent or
+Claude Code harness. Hermes operators configure two authenticated routes as
+described in [`HERMES.md`](HERMES.md).
+
+Claude Code works differently from the other two and it is worth knowing before
+you start: nothing outside a Claude Code session can speak into it, so mail is
+not pushed to the agent — the agent comes and gets it. Its session-start hook
+replays what arrived while nothing was running and then asks the agent to arm a
+watch for what lands next. Nothing can enforce that from outside, so it is the
+one step that rests on the agent doing as it is told. See
+[`INSTALL.md`](INSTALL.md) §6.
 
 ---
 
@@ -22,8 +30,9 @@ minutes of checking that it really works.
 The agent needs an email account of its own and the connection details for it,
 written into a `.env` file. **If your agent runs under a harness, that file
 belongs in the harness's own workspace folder** — `~/.hermes/workspace/.env`,
-`~/.openclaw/workspace/.env` — which is where the agent is told to look and where
-this tool reads it from. On a host with no harness, put it in the clone.
+`~/.openclaw/workspace/.env`, `~/.claude/workspace/.env` — which is where the
+agent is told to look and where this tool reads it from. On a host with no
+harness, put it in the clone.
 
 **[MAILBOX_SETUP.md](MAILBOX_SETUP.md) walks through it**: which account to use,
 where to find the server hostname (the one part that reliably goes wrong), and the
@@ -211,8 +220,8 @@ scripts/idle_listener.py  systemd --user service. Holds an IMAP IDLE connection
   ├─► harness/dispatch.py         the one supervised consumer. Reads the journal,
   │                               hands each event to a runtime adapter, and moves
   │                               the cursor only once the runtime accepts it
-  │     └─► harness/adapters/     openclaw today, hermes next. The only code here
-  │                               that knows what a harness is
+  │     └─► harness/adapters/     openclaw, hermes and claudecode. The only code
+  │                               here that knows what a harness is
   ├─► harness/session_start.py    shows what is still queued; never acknowledges
   └─► harness/rotate_logs.py      copytruncate rotation, on a user timer
 
@@ -232,7 +241,8 @@ The clone is the install. Everything it owns lives inside it, so choosing where
 to clone is how you choose where to install.
 
 - Repo: anywhere. `~/.openclaw/workspace/agenteiamail` on OpenClaw,
-  `~/.hermes/workspace/agenteiamail` on Hermes Agent, if you have no preference;
+  `~/.hermes/workspace/agenteiamail` on Hermes Agent,
+  `~/.claude/workspace/agenteiamail` on Claude Code, if you have no preference;
   every generated path is resolved from where the scripts are, so an existing
   clone needs no move.
 - Secret env: `<clone>/.env`: mode `600`, ignored by git, never committed. An
