@@ -80,21 +80,13 @@ fi
 # "@" for exactly this reason -- the two must agree, so this mirrors it rather
 # than re-deriving its own rule. Comparison is case-insensitive and blank-
 # stripped, same as before.
+#
+# The extraction itself lives in roster_extract.sh, not here, so there is one
+# bash implementation of it rather than a copy that can drift from what a test
+# exercises -- which is exactly how send.sh drifted from roster.py in #91.
 _agenteiamail_want=$(printf '%s' "$to" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
-if ! grep -vE '^[[:space:]]*(#|$)' "$ROSTER" \
-     | awk -F'|' -v want="$_agenteiamail_want" '
-         {
-             for (i = 1; i <= NF; i++) {
-                 field = $i
-                 gsub(/[ \t\r]/, "", field)
-                 if (index(field, "@") > 0) {
-                     if (tolower(field) == want) { found = 1 }
-                     break
-                 }
-             }
-         }
-         END { exit !found }
-     '; then
+_agenteiamail_scriptdir="$(cd "$(dirname "$0")" && pwd)"
+if ! "$_agenteiamail_scriptdir/roster_extract.sh" "$ROSTER" | grep -qxF "$_agenteiamail_want"; then
     echo "REFUSED: $to is not in $ROSTER" >&2
     echo "Add it deliberately, or ask your human to send this one." >&2
     exit 2
