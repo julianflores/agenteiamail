@@ -151,6 +151,53 @@ class SpoolReplay(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def _emit(self, **stubs):
+        """Run main() with a stubbed host and return (raw stdout, parsed)."""
+        import contextlib, io, json as _json
+        ss = self.ss
+        defaults = {
+            "unit_down": lambda unit: False,
+            "dispatcher_faults": lambda: [],
+            "read_backlog": lambda: ([], False),
+            "read_spool_backlog": lambda: (["[mail] one"], False, 32),
+            "selected_runtime": lambda: "claudecode",
+            "version_line": lambda: None,
+        }
+        defaults.update(stubs)
+        patchers = [mock.patch.object(ss, name, value) for name, value in defaults.items()]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ss.main()
+        raw = buf.getvalue()
+        return raw, _json.loads(raw)
+
+    def test_a_healthy_host_emits_no_null_system_message(self):
+        """
+        Claude Code validates this payload and rejects `"systemMessage": null`
+        with `Hook JSON output validation failed — (root): Invalid input`, which
+        discards the whole hook: no replay, no watch command, no offset.
+
+        The failure is inverted, which is how it survived a release. Every branch
+        that fills systemMessage is a branch where something is broken, so the
+        hook worked on every unhealthy install and failed only on a healthy one
+        with mail waiting — the case it exists for. Found by #78 criterion 6, on
+        the second session of the first Claude Code host, after the install that
+        had been masking it was repaired.
+        """
+        raw, payload = self._emit()
+        self.assertNotIn('"systemMessage": null', raw)
+        self.assertNotIn("systemMessage", payload)
+        self.assertIn("additionalContext", payload["hookSpecificOutput"])
+
+    def test_a_problem_still_reaches_the_status_line(self):
+        """Omitting the key when empty must not omit it when there is a problem."""
+        _, payload = self._emit(unit_down=lambda unit: unit == self.ss.SERVICE)
+        self.assertIn("systemMessage", payload)
+        self.assertIn("DOWN", payload["systemMessage"])
+
     def test_everything_is_replayed_from_a_cold_start(self):
         self.spool.write_text("one\ntwo\n", encoding="utf-8")
         lines, capped, through = self.ss.read_spool_backlog()
