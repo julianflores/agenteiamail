@@ -7,6 +7,9 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "harness"))
+import paths as harness_paths  # noqa: E402
+
 passed = failed = 0
 
 
@@ -70,6 +73,38 @@ def manually_created_files(document):
             created.add(match.group(1))
     return created
 
+
+def documented_harness_roots(document):
+    """
+    Root names (e.g. ".claude") claimed by a `Runtime | Credentials` table row.
+
+    #88 shipped `~/.claude` in harness/paths.py's HARNESS_ROOTS with neither
+    scripts/envpath.sh nor INSTALL.md's table updated to match -- three code
+    copies and two prose copies of one list, agreeing only by luck. #90 pinned
+    the code copies; this is the doc half, #95.
+
+    A row counts only when a cell is exactly a backtick-quoted
+    `~/<root>/workspace/.env` -- that is the one shape that is unambiguously a
+    claim about HARNESS_ROOTS, so nothing else in either table (an OS note, a
+    blank cell) can be misread as one.
+    """
+    text = (ROOT / document).read_text()
+    return set(re.findall(r"`~/(\.[A-Za-z0-9_-]+)/workspace/\.env`", text))
+
+
+expected_harness_roots = {root.removeprefix("~/") for root in harness_paths.HARNESS_ROOTS}
+for document in ("INSTALL.md", "AGENTS.md"):
+    documented = documented_harness_roots(document)
+    check(
+        f"{document}: every HARNESS_ROOTS entry is documented",
+        set(),
+        expected_harness_roots - documented,
+    )
+    check(
+        f"{document}: no undocumented runtime is claimed",
+        set(),
+        documented - expected_harness_roots,
+    )
 
 shipped = {path.name for path in (ROOT / "systemd").iterdir() if path.is_file()}
 installed = installed_units("INSTALL.md")
