@@ -700,8 +700,16 @@ now`; roster mail carries the `roster` tag in that rendered line, but the
 OpenClaw adapter does not start an agent run from incoming mail. It is an active
 producer, not a passive stream.
 
-The one piece that may need adapting to your harness version is the output payload
-of `session_start.py`; it is marked in the file.
+**Nothing here invokes `harness/session_start.py`, and nothing should.** That hook
+is Claude Code's, and the marked block inside it is Claude Code's payload format.
+On a push runtime the queue is the catch-up: `dispatch.py` moves its cursor only
+once the runtime has accepted an event, and a session that is not up yet is a
+retryable failure rather than a lost message. See `DESIGN.md`, *"What the other
+two runtimes use instead"*.
+
+Earlier versions of this section said the payload "may need adapting to your
+harness version", which implied a mechanism that does not exist on this runtime
+and sent at least one operator looking for what was calling it.
 
 ### Claude Code
 

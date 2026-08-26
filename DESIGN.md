@@ -280,6 +280,38 @@ The offset is what makes two readers safe: the hook replays through byte *N* and
 asks for the watch to be armed **at** *N*, so nothing falls in the gap between the
 hook finishing and the monitor attaching, and nothing is shown twice.
 
+### What the other two runtimes use instead
+
+The obvious question is why OpenClaw and Hermes need no equivalent, and the
+answer is that they already have one: **the queue is their catch-up.**
+
+`dispatch.py` moves the cursor only once a runtime has accepted an event, and
+`adapters/openclaw.py` treats a failed injection as retryable rather than fatal —
+its own words are that *"openclaw restarting, or a session not yet up, is a
+condition that clears on its own."* So on a push runtime, mail arriving with
+nothing running is not delivered, the cursor does not advance, and the dispatcher
+keeps trying until it lands. Nothing needs replaying because nothing was
+consumed.
+
+Claude Code cannot borrow that, because its delivery always succeeds. Appending
+to a spool is a write to a file, so the adapter returns `ACCEPTED` and the cursor
+moves whether or not any session ever reads the line — *spooled means durable,
+not seen*. The queue stops being a backstop the moment delivery cannot fail, and
+the hook is what replaces it.
+
+**Session catch-up is therefore a Claude Code mechanism by necessity, not a
+feature the other runtimes are missing.** `harness/session_start.py` exists for
+this runtime; on the other two, nothing invokes it and nothing should. It is
+worth saying plainly because the reverse was implied for two releases, and it
+cost an investigation.
+
+One limit of the claim, stated rather than glossed: this rests on a failed
+injection being visible to the dispatcher. If a runtime were to *accept* an event
+while no session was attached to see it, it would have its own quieter version of
+*spooled means durable, not seen*, and the queue would drain with nobody having
+read anything. That is a property of the runtime rather than of this repository,
+and it has not been confirmed for `openclaw system event --mode now`.
+
 ### The spool is not named `*.log`, and that is load-bearing
 
 `rotate_logs.py` rotates every `*.log` in the state directory. Rotation renumbers

@@ -90,9 +90,14 @@ git status --short
 **Expect it to be empty apart from untracked files.** If a tracked file has
 local changes, `git pull --ff-only` will refuse, and that refusal is correct: on
 this tool the file most likely to be edited in place is
-`harness/session_start.py`, whose marked block is meant to be adapted per
-harness. Reapply your adaptation onto the new version rather than keeping your
-copy of the old file.
+`harness/session_start.py`, whose marked block is Claude Code's payload format.
+Reapply your adaptation onto the new version rather than keeping your copy of the
+old file.
+
+**Only Claude Code installs have any reason to have edited it.** On OpenClaw and
+Hermes nothing invokes that script, so a local change to it there is almost
+certainly a leftover from following older instructions, and reverting is safer
+than reapplying.
 
 `roster.md` and your credentials will show as untracked or not at all. That is
 correct and covered in §7.

@@ -274,10 +274,19 @@ def main():
     if version:
         parts.append(version)
 
-    # ---- ADAPT THIS BLOCK TO OPENCLAW'S HOOK CONTRACT ----------------------
-    # The original emits Claude Code's shape. Replace with whatever OpenClaw
-    # expects for "inject this text as session context" plus an optional
-    # one-line status for the UI. The logic above does not change.
+    # ---- CLAUDE CODE'S HOOK CONTRACT ---------------------------------------
+    # This is the payload Claude Code's SessionStart hook accepts, and this hook
+    # runs on Claude Code only. `scripts/claude_hook.py --install` registers it
+    # there; nothing on OpenClaw or Hermes invokes this script, and nothing
+    # should -- on a push runtime the queue is the catch-up, because delivery
+    # can fail and the cursor does not move until it succeeds. DESIGN.md, "What
+    # the other two runtimes use instead", has the full account.
+    #
+    # This comment used to read "ADAPT THIS BLOCK TO OPENCLAW'S HOOK CONTRACT",
+    # which sent operators of a runtime that never runs this file looking for
+    # what was calling it. If you are porting to a fourth runtime, the question
+    # to answer first is not what shape to emit -- it is whether that runtime's
+    # delivery can fail. If it can, it needs no hook at all.
     payload = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
