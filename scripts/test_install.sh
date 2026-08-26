@@ -9,6 +9,27 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 pass=0
 fail=0
 
+# ---------------------------------------------------------------------------
+# This suite exercises systemd units, `loginctl` and ~/.config/systemd/user.
+# On a host without a systemd user session there is nothing here to test, and
+# the right answer is to say so rather than to fail or to be quietly omitted
+# from a report.
+#
+# The tester on the first macOS install skipped both Linux suites and said which
+# and why, which was correct -- and rested entirely on their noticing. The suite
+# knew less about its own applicability than the person running it. #101.
+#
+# Exit 0, not a distinct failure code, for the same reason test_paths.sh passes
+# without php: this is a host the project supports, running a suite that does
+# not apply to it. The rule is not "be Linux", it is "do not claim to have
+# checked what you did not check".
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+    printf 'skip %s (no systemd --user session on this host: %s)\n' \
+        "$(basename "$0")" "$(uname -s)"
+    printf '\n0 passed, 0 failed, 1 suite skipped (no systemd --user)\n'
+    exit 0
+fi
+
 # The clone is the install, so the installer under test has to be a clone inside
 # the sandbox — not this working copy. Running $ROOT/scripts/install.sh against
 # a fake HOME would have it converge into the real repository.
