@@ -14,6 +14,12 @@
 # Environment:
 #   ROSTER    path to the allowlist        (default: repo root/roster.md)
 #   ENV_FILE  path to the credentials file (default: from envpath.sh)
+#   CC        address to Cc                (default: none)
+#
+# CC is gated by the same roster as To -- a Cc is still a recipient, and this
+# script exists so that every recipient comes off one list. Set it, don't
+# bake a Cc into a subject or body: those are stripped of newlines precisely
+# so mail content cannot forge a header this script did not intend to send.
 #
 # ENV_FILE matters on any host whose credentials live somewhere else — the
 # OpenClaw workspace `.env`, say. The listener is told with `--env` on its unit;
@@ -62,6 +68,7 @@ bodyfile=${3:?missing body file}
 # than trust. Everything after the first line of a header is not a header.
 to=$(printf '%s' "$to" | tr -d '\r\n')
 subject=$(printf '%s' "$subject" | tr -d '\r\n')
+cc=$(printf '%s' "${CC:-}" | tr -d '\r\n')
 
 if [ ! -f "$ROSTER" ]; then
     echo "no roster at $ROSTER — refusing to send" >&2
@@ -84,12 +91,23 @@ fi
 # The extraction itself lives in roster_extract.sh, not here, so there is one
 # bash implementation of it rather than a copy that can drift from what a test
 # exercises -- which is exactly how send.sh drifted from roster.py in #91.
-_agenteiamail_want=$(printf '%s' "$to" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
 _agenteiamail_scriptdir="$(cd "$(dirname "$0")" && pwd)"
-if ! "$_agenteiamail_scriptdir/roster_extract.sh" "$ROSTER" | grep -qxF "$_agenteiamail_want"; then
+_agenteiamail_roster_addrs="$("$_agenteiamail_scriptdir/roster_extract.sh" "$ROSTER")"
+
+_agenteiamail_want=$(printf '%s' "$to" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
+if ! printf '%s\n' "$_agenteiamail_roster_addrs" | grep -qxF "$_agenteiamail_want"; then
     echo "REFUSED: $to is not in $ROSTER" >&2
     echo "Add it deliberately, or ask your human to send this one." >&2
     exit 2
+fi
+
+if [ -n "$cc" ]; then
+    _agenteiamail_cc_want=$(printf '%s' "$cc" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
+    if ! printf '%s\n' "$_agenteiamail_roster_addrs" | grep -qxF "$_agenteiamail_cc_want"; then
+        echo "REFUSED: Cc $cc is not in $ROSTER" >&2
+        echo "A Cc is still a recipient -- add it deliberately, same as To." >&2
+        exit 2
+    fi
 fi
 
 # --- Who the message is from -------------------------------------------------
@@ -195,6 +213,9 @@ build_message() {
         printf 'From: %s\n' "$from_addr"
     fi
     printf 'To: %s\n' "$to"
+    if [ -n "$cc" ]; then
+        printf 'Cc: %s\n' "$cc"
+    fi
     printf 'Subject: %s\n' "$(encode_header "$subject")"
     printf '\n'
     cat "$bodyfile"
