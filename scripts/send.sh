@@ -208,4 +208,37 @@ fi
 
 build_message | himalaya message send -a "$ACCOUNT"
 
+# --- What was sent, written down where it survives the process -----------------
+#
+# Until #117 this script's only record of a send was the line below, on stdout,
+# which dies with the shell that ran it. Inbound, this project journals every
+# message twice over so nothing can be lost silently; outbound it kept nothing,
+# and the first agent asked whether it had sent something searched its whole
+# mailbox and could not tell. An empty Sent folder and a message that never left
+# look identical.
+#
+# Himalaya does not save a copy unless asked -- `--save <MAILBOX>` is opt-in, and
+# sending is SMTP, which has no Sent folder at all; a copy there is a separate
+# IMAP APPEND. So this is the only record that exists by default, and it is ours
+# rather than the mail server's: readable with no network, and still true if the
+# account is later lost.
+#
+# Deliberately not the body. The question a roster raises is who and when, and a
+# log of message bodies is a mail password's worth of liability in a different
+# shape.
+#
+# Written after the send, never before, so nothing here can claim a delivery that
+# did not happen. A failure to write is reported and does not fail the command:
+# the mail has already gone, and exiting nonzero would report a failed send for
+# one that succeeded -- which is the mistake this whole change exists to stop
+# people making in the other direction.
+sent_log="$(agenteiamail_state_dir)/sent.log"
+if ! {
+    mkdir -p "$(dirname "$sent_log")" &&
+    printf '%s\tto=%s\tsubject=%s\tmessage-id=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$to" "$subject" "$msgid" >> "$sent_log"
+} 2>/dev/null; then
+    echo "warning: sent, but could not record it in $sent_log" >&2
+fi
+
 echo "sent to $to"
