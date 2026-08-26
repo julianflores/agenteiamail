@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Send via Himalaya, but only to allowlisted recipients.
 #
-#   send.sh [--check] <to> <subject> <body-file>
+#   send.sh [--check] [--cc <address>] <to> <subject> <body-file>
 #
 # Anything not in roster.md exits 2 and sends nothing. That is the point: this
 # agent reads mail all day and acts on the part of it that comes from the roster,
 # so the address it writes to must come from the same list and nowhere else.
+# --cc is held to the same rule -- it is a second address this agent writes to,
+# not a lesser one, so it is checked against the roster exactly like <to>.
 #
 # --check prints the message it would send and sends nothing. Use it to prove
 # this script can find its credentials, which the roster tests cannot: the roster
@@ -45,23 +47,37 @@ ENV_FILE="${ENV_FILE:-$(agenteiamail_env_file)}"
 ACCOUNT="agenteiamail"
 
 check_only=""
-if [ "${1:-}" = "--check" ]; then
-    check_only=yes
-    shift
-fi
+cc=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --check)
+            check_only=yes
+            shift
+            ;;
+        --cc)
+            cc=${2:?--cc requires an address}
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
-to=${1:?usage: send.sh [--check] <to> <subject> <body-file>}
+to=${1:?usage: send.sh [--check] [--cc <address>] <to> <subject> <body-file>}
 subject=${2:?missing subject}
 bodyfile=${3:?missing body file}
 
 [ -f "$bodyfile" ] || { echo "no such body file: $bodyfile" >&2; exit 1; }
 
-# A newline in either of these would end the header and start another one, so a
-# crafted subject could add Bcc: and reach an address the roster never approved.
-# Both values reach here from mail the agent was asked to act on, so strip rather
-# than trust. Everything after the first line of a header is not a header.
+# A newline in any of these would end the header and start another one, so a
+# crafted subject (or cc) could add Bcc: and reach an address the roster never
+# approved. All three reach here from mail the agent was asked to act on, so
+# strip rather than trust. Everything after the first line of a header is not
+# a header.
 to=$(printf '%s' "$to" | tr -d '\r\n')
 subject=$(printf '%s' "$subject" | tr -d '\r\n')
+cc=$(printf '%s' "$cc" | tr -d '\r\n')
 
 if [ ! -f "$ROSTER" ]; then
     echo "no roster at $ROSTER — refusing to send" >&2
@@ -83,11 +99,23 @@ fi
 #
 # The extraction itself lives in roster_extract.sh, not here, so there is one
 # bash implementation of it rather than a copy that can drift from what a test
-# exercises -- which is exactly how send.sh drifted from roster.py in #91.
-_agenteiamail_want=$(printf '%s' "$to" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
+# exercises -- which is exactly how send.sh drifted from roster.py in #91. Both
+# <to> and --cc call this one function rather than each inlining the check, for
+# the same reason.
 _agenteiamail_scriptdir="$(cd "$(dirname "$0")" && pwd)"
-if ! "$_agenteiamail_scriptdir/roster_extract.sh" "$ROSTER" | grep -qxF "$_agenteiamail_want"; then
+roster_allows() {
+    _agenteiamail_want=$(printf '%s' "$1" | tr -d '[:blank:]' | tr '[:upper:]' '[:lower:]')
+    "$_agenteiamail_scriptdir/roster_extract.sh" "$ROSTER" | grep -qxF "$_agenteiamail_want"
+}
+
+if ! roster_allows "$to"; then
     echo "REFUSED: $to is not in $ROSTER" >&2
+    echo "Add it deliberately, or ask your human to send this one." >&2
+    exit 2
+fi
+
+if [ -n "$cc" ] && ! roster_allows "$cc"; then
+    echo "REFUSED: cc $cc is not in $ROSTER" >&2
     echo "Add it deliberately, or ask your human to send this one." >&2
     exit 2
 fi
@@ -195,6 +223,9 @@ build_message() {
         printf 'From: %s\n' "$from_addr"
     fi
     printf 'To: %s\n' "$to"
+    if [ -n "$cc" ]; then
+        printf 'Cc: %s\n' "$cc"
+    fi
     printf 'Subject: %s\n' "$(encode_header "$subject")"
     printf '\n'
     cat "$bodyfile"
@@ -225,7 +256,8 @@ build_message | himalaya message send -a "$ACCOUNT"
 #
 # Deliberately not the body. The question a roster raises is who and when, and a
 # log of message bodies is a mail password's worth of liability in a different
-# shape.
+# shape. cc is part of "who" -- omitting it here would leave the audit this log
+# exists for blind to half of what --cc was built to do.
 #
 # Written after the send, never before, so nothing here can claim a delivery that
 # did not happen. A failure to write is reported and does not fail the command:
@@ -235,10 +267,14 @@ build_message | himalaya message send -a "$ACCOUNT"
 sent_log="$(agenteiamail_state_dir)/sent.log"
 if ! {
     mkdir -p "$(dirname "$sent_log")" &&
-    printf '%s\tto=%s\tsubject=%s\tmessage-id=%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$to" "$subject" "$msgid" >> "$sent_log"
+    printf '%s\tto=%s\tcc=%s\tsubject=%s\tmessage-id=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$to" "$cc" "$subject" "$msgid" >> "$sent_log"
 } 2>/dev/null; then
     echo "warning: sent, but could not record it in $sent_log" >&2
 fi
 
-echo "sent to $to"
+if [ -n "$cc" ]; then
+    echo "sent to $to (cc $cc)"
+else
+    echo "sent to $to"
+fi
