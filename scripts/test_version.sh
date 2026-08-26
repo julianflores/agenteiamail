@@ -138,6 +138,17 @@ assert "--line current exits 0"          '[ "$rc" -eq 0 ]'
 assert "--line current is one line"      '[ "$(wc -l <<<"$out")" -eq 1 ]'
 assert "--line current names the version" 'grep -q "agenteiamail 1.10.0 (latest)" <<<"$out"'
 
+# Ahead of every tag is a third answer, and --line used to round it into the
+# catch-all and report "(latest)". The long form has always described it
+# correctly; --line is the form that gets read, because it feeds the session-start
+# hook and healthcheck.py's version field. An agent was told it was on the newest
+# release while running code nobody had tagged. #64.
+fresh; run 1.11.0 --line
+assert "--line ahead exits 0"            '[ "$rc" -eq 0 ]'
+assert "--line ahead is one line"        '[ "$(wc -l <<<"$out")" -eq 1 ]'
+assert "--line ahead does not claim latest" '! grep -q "(latest)" <<<"$out"'
+assert "--line ahead names the newest tag" 'grep -q "AHEAD of the newest tag (1.10.0)" <<<"$out"'
+
 fresh; run 1.0.0 --line
 assert "--line behind exits 2"           '[ "$rc" -eq 2 ]'
 assert "--line behind says OUT OF DATE"  'grep -q "OUT OF DATE" <<<"$out"'

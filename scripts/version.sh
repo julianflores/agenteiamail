@@ -105,6 +105,19 @@ if [ "$mode" = "--line" ]; then
         exit 2
     fi
 
+    if is_newer "$cached" "$inst"; then
+        # Ahead of every tag is neither current nor out of date, and the full
+        # report has always said so. --line rounded it into the catch-all below
+        # and answered "(latest)", which is the one form that gets read: it feeds
+        # this hook and healthcheck.py's version field, so the agent was told it
+        # was on the newest release while running code nobody had tagged.
+        #
+        # Exit 0 matches the report, where this is not an error: there is
+        # genuinely nothing to pull.
+        echo "agenteiamail $inst is AHEAD of the newest tag ($cached): running untagged code, so there is nothing to pull. Run scripts/version.sh for the long form."
+        exit 0
+    fi
+
     echo "agenteiamail $inst (latest)"
     exit 0
 fi
