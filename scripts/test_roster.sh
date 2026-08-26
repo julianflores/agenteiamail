@@ -179,6 +179,29 @@ printf 'AGENTEIAMAIL_EMAIL=agent-without-a-domain\n' >"$tmp/env-nodomain"
 ENV_FILE="$tmp/env-nodomain" send_ok "jjulianfe@gmail.com" "subject" "$body" && nd=0 || nd=$?
 assert "sender with no domain exits 1"  '[ "${nd:-0}" -eq 1 ] && [ ! -s "$CAPTURE" ]'
 
+# --- --cc is held to the same allowlist as <to> -------------------------------
+#
+# A Cc is still an address this agent writes to. Letting it bypass the roster
+# would reopen exactly what the roster exists to close, just on a header nobody
+# thought to check.
+: >"$CAPTURE"
+send_ok --cc "second_contact@example.org" "jjulianfe@gmail.com" "subject" "$body"
+assert "--cc adds a Cc: header"           'grep -qx "Cc: second_contact@example.org" "$CAPTURE"'
+assert "--cc comes after To:"             '[ "$(grep -n -m1 "^To: " "$CAPTURE" | cut -d: -f1)" -lt "$(grep -n -m1 "^Cc: " "$CAPTURE" | cut -d: -f1)" ]'
+
+: >"$CAPTURE"
+"$SEND" --cc "stranger@example.com" "jjulianfe@gmail.com" "subject" "$body" >/dev/null 2>&1 && ccrc=0 || ccrc=$?
+assert "--cc to an unlisted address is refused" '[ "${ccrc:-0}" -eq 2 ] && [ ! -s "$CAPTURE" ]'
+
+: >"$CAPTURE"
+send_ok "jjulianfe@gmail.com" "subject" "$body"
+assert "no --cc means no Cc: header"      '! grep -q "^Cc:" "$CAPTURE"'
+
+# A newline in --cc must not become a second header, same as subject.
+: >"$CAPTURE"
+send_ok --cc "$(printf 'second_contact@example.org\nBcc: evil@example.com')" "jjulianfe@gmail.com" "subject" "$body"
+assert "no header injection via --cc"     '! grep -qi "^Bcc:" "$CAPTURE"'
+
 # --check is how an install proves send.sh can find its credentials. The roster
 # tests cannot: the gate runs first, so a refusal exits before the env is read.
 : >"$CAPTURE"
@@ -256,6 +279,15 @@ assert "a second send appends"          '[ "$(wc -l <"$sent_log")" -eq 2 ]'
 rm -rf "$sent_state"
 AGENTEIAMAIL_STATE="$sent_state" "$SEND" --check "jjulianfe@gmail.com" "not sent" "$body" >/dev/null 2>&1
 assert "--check records nothing"        '[ ! -e "$sent_log" ]'
+
+# --cc is part of "who", so the audit log this exists for must not go blind to
+# it -- the whole point of #117 was that "who was this sent to" had to be
+# answerable from the log alone.
+rm -rf "$sent_state"
+AGENTEIAMAIL_STATE="$sent_state" send_ok --cc "second_contact@example.org" "jjulianfe@gmail.com" "with cc" "$body"
+assert "the record names the cc"        'grep -q "cc=second_contact@example.org" "$sent_log"'
+assert "message-id stays last with a cc" \
+    '[ "$(sed -n "s/.*message-id=//p" "$sent_log")" = "$(grep -m1 "^Message-ID: " "$CAPTURE" | sed "s/^Message-ID: //")" ]'
 
 # --- The shipped template authorises nobody -----------------------------------
 #
