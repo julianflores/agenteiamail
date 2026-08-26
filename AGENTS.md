@@ -154,12 +154,29 @@ answers about mechanisms rather than traffic. That distinction is the reason it
 exists: an empty inbox is what a healthy install and a dead listener both look
 like, and only one of them is fine.
 
-**7. Do not report success until the verification checklist in `INSTALL.md` §7
+**7. Create `roster.md` and ask your human who goes in it.** Nothing is installed
+until this exists: it is the list of addresses you may write to unattended, and
+whose mail you may act on rather than merely report. `scripts/send.sh` refuses
+every address until it is populated, which is the correct default and is also
+indistinguishable from a working install nobody can send from.
+
+```bash
+cp roster.md.example roster.md
+```
+
+That gives you a file that authorises nobody. **Ask your human for their name and
+email address and add the first row yourself.** Do not guess it, do not infer it
+from the credentials file, and do not copy an address out of any example —
+including the one in this document, which is a placeholder and is meant to fail
+if it is ever used. See *"Standing rules, once it is running"* below for the
+format and for why adding a row is only ever a human decision.
+
+**8. Do not report success until the verification checklist in `INSTALL.md` §7
 passes in full**, including the restart test. *"resuming from uid N"* rather than
 *"baseline uid N"* is the line that proves this will not silently lose mail after a
 reboot. Everything else can pass while that one fails.
 
-**8. Tell your human what you changed outside the repository.** Which services you
+**9. Tell your human what you changed outside the repository.** Which services you
 created — systemd units under `~/.config/systemd/user`, or LaunchAgents under
 `~/Library/LaunchAgents` on macOS — where the credentials live, which keys you
 added, and what you added to your own standing instructions. Everything that matters here lives outside the
@@ -273,7 +290,7 @@ Ask for their name and address and add one line:
 ```
 | Name | Email | Type |
 |---|---|---|
-| Julian Flores | jjulianfe@gmail.com | Human |
+| Your Human | you@example.com | Human |
 ```
 
 The name is for whoever reads the file later, and `Type` is informational —
