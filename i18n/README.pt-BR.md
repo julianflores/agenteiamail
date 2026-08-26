@@ -60,6 +60,11 @@ Depois instale este repositório para poder usá-la:
 https://github.com/julianflores/agenteiamail
 
 Siga o arquivo AGENTS.md dentro do repositório.
+
+Você vai precisar do meu endereço de e-mail para o roster — a lista de pessoas
+para quem você pode escrever e de quem pode atender o correio. Peça para mim;
+não adivinhe nem copie de nenhum arquivo.
+
 Pergunte o que precisar.
 ```
 

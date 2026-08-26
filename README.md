@@ -56,6 +56,11 @@ Then install this repository so you can use it:
 https://github.com/julianflores/agenteiamail
 
 Follow the AGENTS.md file inside the repository.
+
+You will need my email address for the roster — the list of people you may
+write to and act on mail from. Ask me for it; do not guess it, and do not
+copy one out of any file.
+
 Ask me anything you need.
 ```
 
@@ -72,6 +77,11 @@ Luego instala este repositorio para poder usarla:
 https://github.com/julianflores/agenteiamail
 
 Sigue el archivo AGENTS.md dentro del repositorio.
+
+Vas a necesitar mi dirección de correo para el roster — la lista de personas a
+las que puedes escribir y cuyo correo puedes atender. Pídemela; no la adivines
+ni la copies de ningún archivo.
+
 Pregúntame lo que necesites.
 ```
 
