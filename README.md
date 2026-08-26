@@ -232,6 +232,9 @@ scripts/version.sh        installed version against the newest release, and
                           what to do about the difference.
 himalaya                  reads and sends. The listener never fetches bodies.
 scripts/send.sh + roster.md  sending is restricted to allowlisted recipients.
+<clone>/state/sent.log     what was sent, and to whom. Himalaya saves no copy
+                          unless asked and SMTP has no Sent folder, so this is
+                          the only record by default. No message bodies.
 scripts/roster.py         the same allowlist, read by the listener to tag senders.
 scripts/preflight.py      proves a host can run this before you install it.
 webapp/ + setup_web.sh    a local form that writes the credentials file, for

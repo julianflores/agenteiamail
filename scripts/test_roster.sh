@@ -227,6 +227,36 @@ assert "missing sender sends nothing"   '[ ! -s "$CAPTURE" ]'
 send_ok "jjulianfe@gmail.com" "$(printf 'Test\nBcc: evil@example.com')" "$body"
 assert "no header injection via subject" '! grep -qi "^Bcc:" "$CAPTURE"'
 
+# --- What was sent is written down ---------------------------------------------
+#
+# #117: the only record of a send used to be a line on stdout that died with the
+# process, so an agent asked whether it had sent something searched its whole
+# mailbox and could not tell. Himalaya saves no copy unless asked, and sending is
+# SMTP, which has no Sent folder at all -- so this log is the only record that
+# exists by default.
+sent_state="$tmp/sentlog-state"
+sent_log="$sent_state/sent.log"
+
+AGENTEIAMAIL_STATE="$sent_state" send_ok "jjulianfe@gmail.com" "Acentuación ñ" "$body"
+assert "a send is recorded"             '[ -s "$sent_log" ]'
+assert "the record is one line"         '[ "$(wc -l <"$sent_log")" -eq 1 ]'
+assert "the record names the recipient" 'grep -q "to=jjulianfe@gmail.com" "$sent_log"'
+assert "the record carries the subject" 'grep -q "subject=Acentuación ñ" "$sent_log"'
+assert "the record carries a message-id that matches what was sent" \
+    '[ "$(sed -n "s/.*message-id=//p" "$sent_log")" = "$(grep -m1 "^Message-ID: " "$CAPTURE" | sed "s/^Message-ID: //")" ]'
+
+# Appended, not replaced. A log that keeps only the last send answers "did I ever
+# write to them" with "no" for everyone but the most recent recipient.
+AGENTEIAMAIL_STATE="$sent_state" send_ok "jjulianfe@gmail.com" "second" "$body"
+assert "a second send appends"          '[ "$(wc -l <"$sent_log")" -eq 2 ]'
+
+# --check must never record anything. A log entry for a message that was
+# deliberately not sent is worse than no log at all: it is a false record of an
+# action, in the file whose whole purpose is to be believed.
+rm -rf "$sent_state"
+AGENTEIAMAIL_STATE="$sent_state" "$SEND" --check "jjulianfe@gmail.com" "not sent" "$body" >/dev/null 2>&1
+assert "--check records nothing"        '[ ! -e "$sent_log" ]'
+
 # --- The shipped template authorises nobody -----------------------------------
 #
 # roster.md.example used to carry two real, working addresses as data rows, so
