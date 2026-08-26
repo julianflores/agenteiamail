@@ -278,18 +278,33 @@ def main():
     # The original emits Claude Code's shape. Replace with whatever OpenClaw
     # expects for "inject this text as session context" plus an optional
     # one-line status for the UI. The logic above does not change.
-    print(json.dumps({
+    payload = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n\n".join(parts),
         },
-        "systemMessage": (
-            "Mail listener is DOWN — new mail is not being detected" if down
-            else "Mail dispatcher is DOWN — mail is journalled but not delivered" if dispatch_down
-            else "Dispatcher reported errors — mail may not be reaching the session" if faults
-            else (f"{len(lines)} unseen mail notification(s)" if lines else None)
-        ),
-    }))
+    }
+    system_message = (
+        "Mail listener is DOWN — new mail is not being detected" if down
+        else "Mail dispatcher is DOWN — mail is journalled but not delivered" if dispatch_down
+        else "Dispatcher reported errors — mail may not be reaching the session" if faults
+        else (f"{len(lines)} unseen mail notification(s)" if lines else None)
+    )
+    # Omitted rather than sent as null when there is nothing to say. Claude Code
+    # validates this payload and rejects `"systemMessage": null` with
+    # `Hook JSON output validation failed — (root): Invalid input`, which kills
+    # the whole hook: no replay, no watch command, no offset.
+    #
+    # The failure is inverted, which is what made it survive. Every branch above
+    # that produces a string is a branch where something is wrong, so the hook
+    # worked whenever the install was broken and failed only once it was healthy
+    # with mail waiting in the spool — the one case it exists to serve. The first
+    # Claude Code host saw it work on day one because its dispatcher was still
+    # reporting errors from a crash-loop; the same host's next session, after the
+    # install was repaired, got nothing at all.
+    if system_message is not None:
+        payload["systemMessage"] = system_message
+    print(json.dumps(payload))
     # -----------------------------------------------------------------------
     return 0
 
