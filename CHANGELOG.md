@@ -1,5 +1,105 @@
 # Changelog
 
+## 1.9.1 — 2026-08-26
+
+**The session-start hook failed on every healthy Claude Code host.** If you run
+this on Claude Code, upgrade. Everything else here is tests and documentation.
+
+- **`harness/session_start.py` emitted `"systemMessage": null`** when it had
+  nothing to say, and Claude Code rejects that payload with
+  `Hook JSON output validation failed — (root): Invalid input`, discarding the
+  whole output: no replay of mail that arrived while nothing was running, no
+  watch command, no byte offset. The key is now omitted rather than sent as null
+  ([#104](https://github.com/julianflores/agenteiamail/issues/104)).
+
+  The failure was inverted, which is how it survived two releases. Every branch
+  that fills `systemMessage` is a branch where something is broken — listener
+  down, dispatcher down, dispatcher reporting errors — so the hook worked on
+  every unhealthy install and failed only on a healthy one with mail waiting,
+  which is the single case it exists to serve. The first Claude Code host saw it
+  work on day one because its dispatcher was still logging errors from a
+  crash-loop; the next session, after that install was repaired, got nothing at
+  all. **Fixing the install is what exposed it.**
+
+  Found by running the acceptance test nobody had run — #78's criterion 6, which
+  the PRD had called *"the test that distinguishes this runtime from the other
+  two and the one most likely to fail"*, in bold, a week before it failed.
+
+  The offset held throughout. The hook failed for a day without consuming
+  anything, so nothing was lost and the next session could still be told —
+  `session_start.py` chooses repetition over silence deliberately, and that
+  choice held against a fault nobody had anticipated.
+
+### What the tools now admit they did not do
+
+Four separate places where something reported success while quietly checking
+less than it appeared to. They are one habit, not four bugs.
+
+- **`scripts/version.sh --line` called an untagged install `(latest)`**
+  ([#64](https://github.com/julianflores/agenteiamail/issues/64)). Its three
+  branches were unknown, out of date, and a catch-all; ahead-of-tag fell into the
+  catch-all. The long report had always described it correctly, and `--line` is
+  the form that gets read — it feeds the session-start hook and
+  `healthcheck.py`'s version field.
+- **`scripts/test_paths.sh` dropped every PHP assertion when `php` was absent**
+  and still said `0 failed`
+  ([#90](https://github.com/julianflores/agenteiamail/issues/90)). 271 with php,
+  225 without, nothing in the verdict to tell them apart. It now reports
+  `46 skipped (no php)`. A php-less host still passes, deliberately: php is not
+  a prerequisite for running this, only for the setup form.
+- **`test_install.sh` and `test_migrate.sh` were skipped on macOS by the
+  tester's judgement rather than by the suites saying so**
+  ([#101](https://github.com/julianflores/agenteiamail/issues/101)). They now
+  announce it themselves and exit 0, because a macOS host is supported and the
+  rule is not *be Linux* but *do not claim to have checked what you did not
+  check*.
+- **Nothing recorded what was sent**
+  ([#117](https://github.com/julianflores/agenteiamail/issues/117)).
+  `scripts/send.sh` now appends one line per send to `state/sent.log` —
+  timestamp, recipient, subject, message-id, no bodies. Himalaya saves no copy
+  unless asked, and sending is SMTP, which has no Sent folder at all; a copy
+  there is a separate IMAP `APPEND`. So there was no record anywhere by default,
+  and an agent asked whether it had sent something searched its entire mailbox
+  and could not tell.
+
+### One rule, five statements, now mechanically pinned
+
+`HARNESS_ROOTS` is written down in `harness/paths.py`, `scripts/envpath.sh`,
+`webapp/lib/envfile.php` and two documentation tables. 1.8.0 updated one of them.
+`scripts/test_paths.sh` pinned the first three; `scripts/test_docs.py` now pins
+the last two, failing in both directions — an undocumented runtime and a
+documented-but-unimplemented one
+([#95](https://github.com/julianflores/agenteiamail/issues/95)).
+
+The same shape produced #91, so the address-extraction rule got the same
+treatment: `send.sh`'s awk moved into `scripts/roster_extract.sh`, which the send
+path and the test both call, checked against `roster.py` on five roster shapes
+including CRLF and reordered columns
+([#98](https://github.com/julianflores/agenteiamail/issues/98)). A test that
+reimplements the rule is a third copy of it.
+
+### Documentation that was describing a different program
+
+- **Catch-up is Claude Code's, and the other runtimes need none**
+  ([#79](https://github.com/julianflores/agenteiamail/issues/79)). `INSTALL.md`
+  told OpenClaw operators to maintain the output payload of a program their
+  runtime never runs. On a push runtime the queue is the catch-up: the cursor
+  moves only once the runtime accepts, and *"a session not yet up"* is retryable.
+  Claude Code cannot borrow that because appending to a spool always succeeds.
+- **`AGENTS.md` stopped a macOS install at step 1**
+  ([#110](https://github.com/julianflores/agenteiamail/issues/110)) by testing
+  for systemd unconditionally — three days after 1.9.0 made macOS supported.
+  Step 1 now branches; `UPGRADE.md` gained the launchd half of a trap it already
+  documented for systemd.
+- **`DESIGN.md` described one runtime and one supervisor**
+  ([#68](https://github.com/julianflores/agenteiamail/issues/68)). It now states
+  the delivery boundary for all three — what `ACCEPTED` means to each adapter and
+  what it does not prove — and why supervision inverts on macOS. The honest form
+  of the guarantee is that **mail is never lost before the runtime takes it, and
+  the moment it is taken is recorded**; everything after that belongs to the
+  runtime, and [#108](https://github.com/julianflores/agenteiamail/issues/108)
+  records where OpenClaw's own boundary sits.
+
 ## 1.9.0 — 2026-08-25
 
 **macOS is a supported host.** An OpenClaw agent on a Mac can now install and
