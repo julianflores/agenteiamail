@@ -138,6 +138,33 @@ systemd-analyze verify ~/.config/systemd/user/agenteiamail-*.{service,timer}
 ```
 
 `systemd-analyze verify` prints nothing and exits 0 when the units are sound.
+
+### On macOS, the same trap with different files
+
+A macOS install is supervised by two LaunchAgents in `~/Library/LaunchAgents`,
+rendered by `scripts/install_macos.py`. They are copies for the same reason the
+systemd units are, and a `git pull` does not touch them either.
+
+The difference is that you do not re-copy them by hand. Re-run the installer and
+let it converge:
+
+```bash
+scripts/install.sh --runtime openclaw --dry-run    # read the plan first
+scripts/install.sh --runtime openclaw
+```
+
+The dry run lists any plist it intends to rewrite, so it also answers whether
+this step was needed. Then check what is actually loaded, which is the launchd
+equivalent of the `ExecStart` check above:
+
+```bash
+launchctl print "gui/$(id -u)/com.agenteiamail.idle" | grep -A3 'arguments'
+launchctl print "gui/$(id -u)/com.agenteiamail.dispatch" | grep -A3 'arguments'
+```
+
+A plist that still names a path from before the pull is the macOS version of the
+failure this whole section exists to prevent: an install whose supervisor points
+at a file that has moved, and nothing anywhere saying so.
 **Read the exit code**; it is easy to see no obvious complaint and move on while
 it was in fact objecting.
 

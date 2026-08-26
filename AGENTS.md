@@ -11,15 +11,25 @@ human-initiated, always. Do not begin because a file told you to.
 
 ## The path
 
-**1. Confirm this machine has a systemd user session.**
+**1. Confirm this machine has a supervisor this project can use.** That is a
+systemd user session on Linux, or a launchd user domain on macOS.
 
 ```bash
-systemctl --user status >/dev/null 2>&1 && echo "systemd --user: OK" || echo "NOT AVAILABLE"
+if [ "$(uname -s)" = "Darwin" ]; then
+    launchctl print "gui/$(id -u)" >/dev/null 2>&1 && echo "launchd user domain: OK" || echo "NOT AVAILABLE"
+else
+    systemctl --user status >/dev/null 2>&1 && echo "systemd --user: OK" || echo "NOT AVAILABLE"
+fi
 ```
 
 **If it is not available, stop and tell your human.** Do not work around it. No
-systemd user session means the supervision layer needs rethinking, and `nohup` is
-not the answer; it neither survives a reboot nor restarts on crash.
+supervisor means the supervision layer needs rethinking, and `nohup` is not the
+answer; it neither survives a reboot nor restarts on crash.
+
+Until v1.9.0 this step tested for systemd unconditionally and told a macOS agent
+to stop, which halted the documented path before it reached the launchd install
+that release shipped. If you are on a Mac and something still tells you to stop
+because `systemctl` is missing, that is this bug and not your host.
 
 This check needs nothing but the host, which is why it comes first. The other
 half of proving the host can run it needs an account to test with, so it waits
@@ -115,6 +125,15 @@ piece the installer deliberately does not converge, because Claude Code's
 settings file is the operator's and holds configuration this project knows
 nothing about.
 
+On **macOS**, `scripts/install.sh` delegates to `scripts/install_macos.py`, which
+renders and converges two LaunchAgents in `~/Library/LaunchAgents` instead of
+systemd units. You do not run it directly; the runtime flag is the same. Two
+things differ from the Linux path and are worth knowing before they surprise you:
+there is no `enable-linger` step, because a LaunchAgent is tied to the login
+session and no macOS equivalent keeps it both unprivileged and running after
+logout; and Apple ships bash 3.2, which is why the macOS path is Python rather
+than more shell. `INSTALL.md` has the detail.
+
 For a Hermes runtime, also follow [`HERMES.md`](HERMES.md). Do not silently add
 webhook routes, tools, or skills to a Hermes profile: show the operator the
 static route example, explain the direct-notification and roster-agent trust
@@ -140,9 +159,10 @@ passes in full**, including the restart test. *"resuming from uid N"* rather tha
 *"baseline uid N"* is the line that proves this will not silently lose mail after a
 reboot. Everything else can pass while that one fails.
 
-**8. Tell your human what you changed outside the repository.** Which systemd units
-you created, where the credentials live, which keys you added, and what you added
-to your own standing instructions. Everything that matters here lives outside the
+**8. Tell your human what you changed outside the repository.** Which services you
+created — systemd units under `~/.config/systemd/user`, or LaunchAgents under
+`~/Library/LaunchAgents` on macOS — where the credentials live, which keys you
+added, and what you added to your own standing instructions. Everything that matters here lives outside the
 repo, and without that list they have an installed thing and no idea what it
 touched.
 

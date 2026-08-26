@@ -153,6 +153,11 @@ neither survives a reboot nor restarts on crash.
 `logrotate` being absent is fine. `harness/rotate_logs.py` in this repo does the
 same job.
 
+**On macOS none of this applies.** There is no `loginctl` and no linger; a
+LaunchAgent is tied to the login session by design, and the section below is a
+Linux concern. `install_macos.py` does not ask for it. If the checks above report
+`loginctl: MISSING` on a Mac, that is correct rather than a problem.
+
 **If `linger` is disabled, your human has to enable it**, and it needs root:
 
 ```bash
