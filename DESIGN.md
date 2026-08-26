@@ -305,12 +305,30 @@ this runtime; on the other two, nothing invokes it and nothing should. It is
 worth saying plainly because the reverse was implied for two releases, and it
 cost an investigation.
 
-One limit of the claim, stated rather than glossed: this rests on a failed
-injection being visible to the dispatcher. If a runtime were to *accept* an event
-while no session was attached to see it, it would have its own quieter version of
-*spooled means durable, not seen*, and the queue would drain with nobody having
-read anything. That is a property of the runtime rather than of this repository,
-and it has not been confirmed for `openclaw system event --mode now`.
+### Where that guarantee stops
+
+The paragraph above rests on a failed injection being visible to the dispatcher,
+and it has a boundary that is worth naming precisely, because it was confirmed
+rather than assumed.
+
+`openclaw system event --mode now` **accepts an event with no session attached to
+see it.** OpenClaw enqueues it into the main session and surfaces it on the next
+heartbeat; a probe on a live host returns `{"ok":true}` either way. So acceptance
+happens at OpenClaw's session-queue layer, not at the point anything reads it.
+
+This project's backstop therefore ends the instant OpenClaw says `ok`. From then
+on the event is held by OpenClaw's queue rather than by `events.jsonl`, and
+`dispatch.offset` has already advanced. `ok` is the strongest signal the adapter
+can obtain, so this is invisible from here by construction.
+
+**The queue is the catch-up up to the point of acceptance, and no further.** That
+is still a materially stronger position than Claude Code's, where delivery is a
+file write that cannot fail — but it is not the unconditional claim it would be
+easy to read the previous section as making.
+
+What happens to a queued event if OpenClaw restarts before the heartbeat delivers
+it is
+[#108](https://github.com/julianflores/agenteiamail/issues/108), and unanswered.
 
 ### The spool is not named `*.log`, and that is load-bearing
 
