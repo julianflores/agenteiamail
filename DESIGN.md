@@ -256,6 +256,75 @@ OpenClaw adapter does not start an agent run from incoming mail. If you port
 this to another harness, that runtime delivery boundary is the part to inspect
 first; the rest is harness-independent.
 
+### The three runtimes, and where each stops being ours
+
+That delivery boundary is worth stating for all three, because it is the same
+question answered three different ways, and answering it is most of what porting
+to a fourth would involve.
+
+`dispatch.py` moves its cursor only when an adapter reports `ACCEPTED`. What
+`ACCEPTED` means is the adapter's judgement, and it is never *"a person read
+it"* — no runtime can tell us that. Each one draws the line somewhere earlier:
+
+| Runtime | Delivery | `ACCEPTED` means | What it does not prove |
+|---|---|---|---|
+| OpenClaw | `openclaw system event --mode now` | the event is enqueued on the main session | that the heartbeat injected it, or that the session survived to run one |
+| Hermes | authenticated HTTP route | `200 status=delivered` on the notify route; `202 status=accepted` on the roster route | for `202`, that the queued agent run ever completed |
+| Claude Code | append to `state/session.spool` | the bytes are on disk | that any session ever read them — a file write cannot fail informatively |
+
+Read down the last column and the shape is one thing: **every runtime has a point
+past which this project cannot see, and the runtimes differ only in how early it
+comes.** Claude Code's is the earliest, which is why it is the one that needed a
+session-start hook. Hermes is explicit about it in its own contract, which is why
+`HERMES.md` documents `202` as *"completion is unconfirmed"* rather than as
+success. OpenClaw's looks the latest and is not
+([#108](https://github.com/julianflores/agenteiamail/issues/108)).
+
+The honest way to describe the guarantee, then, is not *"mail reaches the agent"*.
+It is **mail is never lost before the runtime takes it, and the moment it is
+taken is recorded.** Everything after that belongs to the runtime, and the value
+of naming the boundary per runtime is that nobody has to guess which half a
+failure fell in.
+
+### Supervision inverts on macOS, the way delivery inverts on Claude Code
+
+Everything above assumes a supervisor that starts services at boot and restarts
+them on crash, and until v1.9.0 that assumption was spelled `systemd --user`
+throughout.
+
+macOS has no systemd. It has launchd, and the substitution is not one-for-one in
+a way that matters:
+
+- A **LaunchAgent** in `~/Library/LaunchAgents` runs as the user, which is what a
+  mailbox with a mode `600` credentials file requires — and is tied to a login
+  session.
+- A **LaunchDaemon** survives logout and runs as root, which is wrong for a
+  personal mailbox.
+- There is **no `enable-linger` equivalent** that gives both.
+
+So on Linux *"survives logout"* and *"runs unprivileged as the mailbox's owner"*
+are one configuration, and on macOS they are two, and you must choose.
+
+This project chooses the LaunchAgent, and the reason is not a preference about
+availability. **The credentials file is the constraint.** A supervisor running as
+root reading a mode `600` file owned by someone else is either a permissions
+problem or a `chmod` nobody should make, and the second is how a mail password
+stops being a secret.
+
+The consequence is that a macOS host does not return from a cold boot
+unattended. That sounds like a loss against Linux and is not, on the hosts this
+project actually runs on: a WSL host's `enable-linger` survives a logout inside
+the Linux session, but the whole session is down until Windows starts it. **On
+every host supported today, the listener's availability follows the user
+session.** A native Linux host would be the exception and none exists yet.
+
+`scripts/install_macos.py` renders and converges the plists that `install.sh`
+renders and converges for units, and the one thing worth knowing about it is
+negative: the generated plists carry a deliberate `PATH` rather than a copy of
+whatever the installing shell had. A supervisor definition holding a photograph
+of the session that produced it works for months and then does not.
+
+
 ---
 
 ## Why one runtime pulls
