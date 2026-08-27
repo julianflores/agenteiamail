@@ -51,6 +51,7 @@ class Fixture:
         self.units = units or {hc.LISTENER_UNIT: "active", hc.DISPATCH_UNIT: "active"}
         self.reachable = reachable
         self.runtime = runtime
+        self.spool_facts = None
 
         hc.STATE_DIR = self.dir
         hc.LISTENER_STATE = self.dir / "idle.json"
@@ -59,6 +60,7 @@ class Fixture:
         hc.DISPATCH_ERR = self.dir / "dispatch.err.log"
         hc.IDLE_ERR = self.dir / "idle.err.log"
         hc.DELIVERY = self.dir / "delivery.json"
+        hc.SENT_LOG = self.dir / "sent.log"
 
         hc.LISTENER_STATE.write_text(json.dumps(
             {"mailbox": "INBOX", "uidvalidity": "42", "last_uid": 117}))
@@ -100,6 +102,31 @@ class Fixture:
         ev.write_cursor(hc.CURSOR, hc.JOURNAL.stat().st_size)
         return self
 
+    def spool(self, bytes_unread, bytes_total=None):
+        """Stand in for spool_facts(), which reads the real Claude Code spool."""
+        self.spool_facts = {"spool": str(self.dir / "session.spool"),
+                            "bytes_total": bytes_total if bytes_total is not None
+                            else bytes_unread,
+                            "bytes_unread": bytes_unread,
+                            "session_arming": "unobservable"}
+        return self
+
+    def sent(self, count=1, age_seconds=0, rotated=False):
+        """Write send records in scripts/send.sh's format, live or rotated away."""
+        path = hc.SENT_LOG.with_name("sent.log.1") if rotated else hc.SENT_LOG
+        lines = []
+        for i in range(count):
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                  time.gmtime(time.time() - age_seconds))
+            lines.append(f"{stamp}\tto=d@x.com\tcc=\tsubject=Re: waiting {i}"
+                         f"\tmessage-id=<{i}@example.com>")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        if rotated:
+            # copytruncate leaves the live file present and empty.
+            hc.SENT_LOG.write_text("", encoding="utf-8")
+        return self
+
     def run(self):
         facts = {
             "listener": hc.listener_facts(),
@@ -109,6 +136,8 @@ class Fixture:
             "delivery": hc.delivery_facts(),
             "config": hc.config_facts(),
         }
+        facts["spool"] = self.spool_facts
+        facts["reply"] = hc.reply_facts(facts["queue"]["cursor"])
         problems, warnings = hc.assess(facts)
         return facts, problems, warnings
 
@@ -372,6 +401,104 @@ try:
           any(str(missing) in p for p in problems))
 finally:
     hc.runtime_env = original_env
+
+# --- roster mail that was delivered and never answered (#125) ----------------
+#
+# The failure this section is about looks healthier than any other in this file:
+# listener active, dispatcher active, runtime reachable, queue empty. Everything
+# worked. Nothing was answered.
+
+HOUR = 60 * 60
+
+f = Fixture().queue(3, age_seconds=6 * HOUR).drain()
+facts, problems, warnings = f.run()
+check("three roster messages delivered and nothing sent is a warning", True,
+      any("roster message(s) have been delivered" in w for w in warnings))
+check("and never a failure, because delivery itself worked", [], problems)
+check("and counts what was delivered", 3, facts["reply"]["roster_delivered"])
+check("and offers both readings rather than blaming the agent", True,
+      any("nothing was attached to be told" in w for w in warnings))
+code, text = f.exit_code()
+check("so the exit code stays 0", 0, code)
+check("and the report says a reply was not judged to be owed", True,
+      "not judged here" in text)
+
+f = Fixture()
+facts, _, warnings = f.run()
+check("a quiet mailbox says nothing at all", [], warnings)
+check("and reports no roster mail rather than an unanswered count", None,
+      facts["reply"]["unanswered_age_seconds"])
+
+f = Fixture().queue(2, age_seconds=6 * HOUR).drain().sent(2)
+facts, _, warnings = f.run()
+check("roster mail answered after it arrived is silent", [], warnings)
+check("and the send is recorded as seen", 2, facts["reply"]["sends_seen"])
+
+f = Fixture().queue(1, age_seconds=90).drain()
+_, _, warnings = f.run()
+check("a reply still being written is not accused", [], warnings)
+
+# Mail the dispatcher has not handed over yet belongs to the queue check, not
+# this one: an agent cannot answer what it was never given.
+f = Fixture().queue(3, age_seconds=6 * HOUR)
+facts, _, warnings = f.run()
+check("undelivered roster mail is not counted against the agent", 0,
+      facts["reply"]["roster_delivered"])
+check("and produces no unanswered warning", True,
+      not any("roster message(s) have been delivered" in w for w in warnings))
+
+# Absence of the log is not the same fact as a zero in it.
+f = Fixture().queue(1, age_seconds=6 * HOUR).drain()
+facts, _, warnings = f.run()
+check("no sent.log reports absence, not zero sends", (False, None),
+      (facts["reply"]["sent_log_present"], facts["reply"]["sends_seen"]))
+check("and the absence is said out loud, with both readings of it", True,
+      any("never sent anything or predates the log" in w for w in warnings))
+
+f = Fixture().queue(1, age_seconds=6 * HOUR).drain().sent(0 or 1, age_seconds=7 * HOUR)
+_, _, warnings = f.run()
+check("a send older than the newest roster mail does not count as an answer", True,
+      any("roster message(s) have been delivered" in w for w in warnings))
+
+# rotate_logs.py rotates every *.log in the state directory, sent.log included.
+# Reading only the live file would report a host that sent mail yesterday as
+# never having sent anything.
+f = Fixture().queue(1, age_seconds=6 * HOUR).drain().sent(1, rotated=True)
+facts, _, warnings = f.run()
+check("a rotated sent.log is still read", True, facts["reply"]["sent_log_present"])
+check("and its send still answers the roster mail", [], warnings)
+
+# Non-roster mail is reported to the agent and must never be answered, so it
+# cannot be evidence that anything is unanswered.
+f = Fixture()
+stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 6 * HOUR))
+ev.append(hc.JOURNAL, ev.mail_event(
+    account="agent@example.com", mailbox="INBOX", uidvalidity=42, uid=900,
+    sender_name="Stranger", sender_address="s@x.com", subject="unsolicited",
+    sent_at=stamp, roster_match=False, notification_text="[mail] unsolicited",
+    observed_at=stamp))
+f.drain()
+facts, _, warnings = f.run()
+check("mail from outside the roster is never counted as unanswered", 0,
+      facts["reply"]["roster_delivered"])
+check("and raises no warning", [], warnings)
+
+# On Claude Code, delivery means the bytes are in the spool. Mail waiting there
+# for a session that has not started is that runtime's resting state, and
+# spool_facts() already refuses to call it a fault; this check must agree.
+f = (Fixture(runtime="claudecode").queue(2, age_seconds=6 * HOUR)
+     .drain().spool(bytes_unread=400, bytes_total=400))
+facts, _, warnings = f.run()
+check("mail still sitting unread in the Claude Code spool is not unanswered", [],
+      warnings)
+check("though the delivery itself is still counted", 2,
+      facts["reply"]["roster_delivered"])
+
+f = (Fixture(runtime="claudecode").queue(2, age_seconds=6 * HOUR)
+     .drain().spool(bytes_unread=0, bytes_total=400))
+_, _, warnings = f.run()
+check("but a spool a session has read through is answerable, and warns", True,
+      any("roster message(s) have been delivered" in w for w in warnings))
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

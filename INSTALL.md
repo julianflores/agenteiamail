@@ -624,6 +624,16 @@ It says explicitly that reaching a runtime is not proof a delivered event lands
 in front of anybody, because "health: ok" is the phrase people stop reading
 after.
 
+It also reports a `replies` line: how much roster mail has been delivered, and
+what `state/sent.log` records going back out. When roster mail has been delivered
+and nothing has been sent since the newest of it, you get a warning and not a
+failure — delivery worked, and what happened afterwards is the agent's and the
+runtime's. Two things produce that line and it does not guess between them: the
+agent was told and did not reply, or nothing was attached to be told. If it is
+the first, the standing rule under *"`roster.md` decides what a message is"* in
+`AGENTS.md` never made it into the agent's own persistent instructions, which is
+where it has to live.
+
 **Where to put the clone.** The clone *is* the install: credentials, generated
 config, route secrets, the roster and the whole state tree live inside it, so
 choosing where to clone is how you choose where to install.

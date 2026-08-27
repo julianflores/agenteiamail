@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- **`scripts/healthcheck.py` now says when roster mail was delivered and nothing
+  was sent after it**
+  ([#125](https://github.com/julianflores/agenteiamail/issues/125)). Every other
+  check here asks whether mail can move; this one asks whether the loop closes.
+
+  It was unanswerable until four days ago. The record of what came in has always
+  existed, and [#117](https://github.com/julianflores/agenteiamail/issues/117)
+  shipped the record of what went out in 1.9.1 — so the comparison became
+  possible and nothing was reading it. A live OpenClaw host took three roster
+  messages between 16:11 and 17:08, answered none of them for six hours, and
+  every check this project offered reported a healthy install, correctly.
+
+  **A warning and never a failure.** Delivery working is what makes it worth
+  saying at all, and two different things produce the same shape: the agent was
+  told and did not reply, or nothing was attached to be told
+  ([#108](https://github.com/julianflores/agenteiamail/issues/108)). The check
+  reports the shape and names both readings rather than picking one. Mail still
+  queued is not counted against the agent, non-roster mail is never counted at
+  all, and a grace window (`HEALTH_REPLY_GRACE`, one hour) keeps a reply that is
+  still being written from being accused.
+
+  It also reads `sent.log.1`: `rotate_logs.py` rotates every `*.log` in the state
+  directory, `sent.log` included, so reading only the live file would report a
+  host that sent mail yesterday as never having sent anything.
+
 ## 1.9.1 — 2026-08-26
 
 **The session-start hook failed on every healthy Claude Code host.** If you run
