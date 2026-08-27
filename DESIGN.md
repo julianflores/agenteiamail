@@ -286,6 +286,30 @@ taken is recorded.** Everything after that belongs to the runtime, and the value
 of naming the boundary per runtime is that nobody has to guess which half a
 failure fell in.
 
+### Looking past the boundary without pretending to see across it
+
+Naming the boundary is not the same as being able to say which side a failure
+fell on, and for a long time nothing could. A live OpenClaw host took three
+roster messages in one afternoon and answered none of them; the listener was
+active, the dispatcher was active, `ACCEPTED` was recorded three times, and every
+check this project offered said so
+([#125](https://github.com/julianflores/agenteiamail/issues/125)).
+
+`scripts/healthcheck.py` now compares two records this project already keeps —
+roster mail the dispatcher has delivered, and sends recorded in `state/sent.log`
+since [#117](https://github.com/julianflores/agenteiamail/issues/117) — and says
+when roster mail has been delivered and nothing has gone out after it. It is a
+**warning and never a failure**, for the reason this whole section exists: what
+happens after a runtime accepts is not ours, and two very different things
+produce the same shape. Either the agent was told and did not reply — the
+standing rule in `AGENTS.md` never reaching its own persistent instructions — or
+nothing was attached to be told, which is
+[#108](https://github.com/julianflores/agenteiamail/issues/108).
+
+This command cannot tell those apart and does not try. It reports the shape and
+names both readings, which is enough to send a person to the right place, and is
+the most that can be claimed from this side of the line.
+
 ### Supervision inverts on macOS, the way delivery inverts on Claude Code
 
 Everything above assumes a supervisor that starts services at boot and restarts

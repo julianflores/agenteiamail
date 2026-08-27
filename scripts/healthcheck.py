@@ -11,6 +11,11 @@ Exits nonzero when mail cannot be detected or cannot be delivered. A backlog
 waiting on a runtime that is down is a failure; a backlog moving through a
 runtime that is up is not.
 
+One check here asks a question the others do not: whether roster mail that was
+delivered is being answered. It is a warning and never a failure, because what
+happens after a runtime accepts an event is the runtime's and the agent's, not
+this project's. See reply_facts().
+
     scripts/healthcheck.py            what a person reads
     scripts/healthcheck.py --json     the same thing for a script
 """
@@ -40,6 +45,7 @@ CURSOR = STATE_DIR / "dispatch.offset"
 DISPATCH_ERR = STATE_DIR / "dispatch.err.log"
 DELIVERY = STATE_DIR / "delivery.json"
 IDLE_ERR = STATE_DIR / "idle.err.log"
+SENT_LOG = STATE_DIR / "sent.log"
 
 LISTENER_UNIT = "agenteiamail-idle.service"
 DISPATCH_UNIT = "agenteiamail-dispatch.service"
@@ -49,6 +55,13 @@ DISPATCH_LAUNCHD_LABEL = "com.agenteiamail.dispatch"
 # Long enough that a slow delivery is not a fault, short enough that a queue
 # nobody is draining is noticed within a working session.
 STALE_QUEUE = float(os.environ.get("HEALTH_STALE_QUEUE", 15 * 60))
+
+# How long roster mail may sit answered by nothing before that is worth saying
+# out loud. An agent reads the message, does what it asks and then replies, and
+# what it was asked to do can legitimately take a while, so this is deliberately
+# generous: the failure being looked for is a mailbox nobody is working, not a
+# slow reply.
+REPLY_GRACE = float(os.environ.get("HEALTH_REPLY_GRACE", 60 * 60))
 
 
 def load_runtime_env(path=None):
@@ -208,6 +221,105 @@ def delivery_facts():
     return out
 
 
+def _stamp_seconds(stamp):
+    """A `%Y-%m-%dT%H:%M:%SZ` stamp as epoch seconds, or None if it is not one."""
+    try:
+        # timegm, not mktime, for the same reason as queue_facts(): the stamps
+        # this project writes are UTC, and reading them as local time moves every
+        # age by the host's offset.
+        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _send_records():
+    """
+    Every send this command can still see, newest stamp last.
+
+    Two files, not one: `sent.log` matches `rotate_logs.py`'s `*.log` glob, so a
+    weekly rotation leaves it empty with the history in `sent.log.1`. Reading
+    only the live file would report "nothing has ever been sent" on a host that
+    sent something yesterday, which is precisely the wrong answer to give about
+    an audit log.
+    """
+    stamps = []
+    present = False
+    for path in (SENT_LOG, SENT_LOG.with_name(SENT_LOG.name + ".1")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        present = True
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            seconds = _stamp_seconds(line.split("\t", 1)[0].strip())
+            if seconds is not None:
+                stamps.append(seconds)
+    return present, sorted(stamps)
+
+
+def reply_facts(cursor):
+    """
+    Whether roster mail that was delivered is being answered.
+
+    Every other check here asks whether mail can move. This one asks whether the
+    loop closes, which is a different question and was unanswerable until #117
+    started recording sends: the record of what came in has always existed, and
+    there was nothing to compare it against.
+
+    **Reported, never judged**, on the same grounds as spool_facts(). Roster mail
+    with no reply after it is not proof of a fault — the answer may be in
+    progress, the human may have handled it out of band, the message may not have
+    warranted one. What this can say is that mail a human vouched for was handed
+    to the runtime and nothing went back out afterwards, and that a person should
+    look. It cannot say the agent failed, and it must not imply it.
+
+    Only records the dispatcher has already delivered are counted. Mail still
+    queued is queue_facts()'s subject, and holding an agent responsible for a
+    message it was never handed would put the blame one process too far along.
+
+    The counts are "since the journal was last compacted", never "since this
+    install began": the journal is a queue the dispatcher empties once everything
+    in it has been delivered. Both callers of this say so in what they print.
+    """
+    out = {"sent_log": str(SENT_LOG), "sent_log_present": False,
+           "sends_seen": None, "last_sent_at": None,
+           "roster_delivered": 0, "roster_newest_at": None,
+           "unanswered_age_seconds": None}
+
+    present, stamps = _send_records()
+    out["sent_log_present"] = present
+    if present:
+        out["sends_seen"] = len(stamps)
+        if stamps:
+            out["last_sent_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                time.gmtime(stamps[-1]))
+
+    newest = None
+    for record, end in ev.read_from(JOURNAL, 0):
+        if isinstance(record, ev.Corrupt):
+            break
+        if end > cursor:
+            break
+        if record.get("event_type") != ev.MAIL_RECEIVED:
+            continue
+        if not record.get("roster_match"):
+            continue
+        out["roster_delivered"] += 1
+        seen = _stamp_seconds(record.get("observed_at"))
+        if seen is not None and (newest is None or seen > newest):
+            newest = seen
+
+    if newest is None:
+        return out
+    out["roster_newest_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(newest))
+    if stamps and stamps[-1] >= newest:
+        return out
+    out["unanswered_age_seconds"] = max(0, int(time.time() - newest))
+    return out
+
+
 def spool_facts(selected):
     """
     How much of the Claude Code spool no session has picked up yet.
@@ -361,6 +473,37 @@ def assess(facts):
             "'scripts/install.sh --runtime RUNTIME --migrate' to finish it or "
             "roll it back")
 
+    # A warning and never a problem. Delivery is working in this case — that is
+    # what makes it worth saying at all — and the two readings of it are answered
+    # in different places: the agent was told and did not act, or nothing was
+    # attached to be told (#108). This command cannot tell them apart, so it
+    # reports the shape and says so rather than picking one.
+    reply = facts.get("reply") or {}
+    unanswered = reply.get("unanswered_age_seconds")
+    # On Claude Code, "delivered" means the bytes are in the spool, and mail
+    # waiting there for a session that has not started yet is the resting state
+    # of that runtime rather than a fault — spool_facts() says so, and this must
+    # agree with it. Unread bytes mean the mail demonstrably has not reached an
+    # agent, so there is nobody to have failed to answer it.
+    spool = facts.get("spool") or {}
+    unread_in_spool = bool(spool.get("bytes_unread"))
+    if unanswered is not None and unanswered > REPLY_GRACE and not unread_in_spool:
+        warnings.append(
+            f"{reply['roster_delivered']} roster message(s) have been delivered "
+            f"and nothing has been sent since the newest one, {unanswered // 60} "
+            "minutes ago. Delivery is healthy, so this is about what happened "
+            "after it: either the agent was told and did not reply, or nothing "
+            "was attached to be told. The standing rule is in AGENTS.md, "
+            "\"roster.md decides what a message is\" — check it reached the "
+            "agent's own persistent instructions")
+        if not reply.get("sent_log_present"):
+            # Two readings again, and both are worth the extra sentence: an
+            # install that has genuinely never replied to anyone, or one older
+            # than the record itself, which only exists from 1.9.1.
+            warnings.append(
+                f"there is no send record at {reply['sent_log']} at all, so this "
+                "install has either never sent anything or predates the log")
+
     if not config["env_present"]:
         problems.append(f"no credentials at {config['env']}")
     elif config["env_mode"] not in ("0o600", "0o400"):
@@ -414,6 +557,21 @@ def render(facts, problems, warnings):
                + f"  (cursor {queue['cursor']} of {queue['journal_bytes']} bytes)")
     if queue["damaged_at"] is not None:
         out.append(f"             DAMAGED RECORD at byte {queue['damaged_at']}")
+    reply = facts.get("reply")
+    if reply:
+        if reply["sent_log_present"]:
+            sends = f"{reply['sends_seen']} send(s) recorded"
+            if reply["last_sent_at"]:
+                sends += f", last {reply['last_sent_at']}"
+        else:
+            sends = "no send record yet"
+        out.append(f"replies      {reply['roster_delivered']} roster message(s) "
+                   f"delivered; {sends}")
+        if reply["unanswered_age_seconds"] is not None:
+            out.append(f"             nothing sent since the newest one at "
+                       f"{reply['roster_newest_at']}")
+        out.append("             counted since the journal was last compacted, and "
+                   "whether a reply was owed is not judged here")
     out.append(f"credentials  {config['env']}"
                + (f"  mode {config['env_mode']}" if config["env_present"] else "  MISSING"))
     out.append(f"repo         {config['repo']}")
@@ -456,6 +614,7 @@ def main(argv=None):
         "config": config_facts(),
     }
     facts["spool"] = spool_facts(facts["runtime"].get("selected"))
+    facts["reply"] = reply_facts(facts["queue"]["cursor"])
     problems, warnings = assess(facts)
 
     if args.json:
